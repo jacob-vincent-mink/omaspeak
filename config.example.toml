@@ -1,0 +1,32 @@
+[backend]
+kind = "sherpa-onnx"
+runtime = "default"
+device = "auto"
+threads = 2
+fallback = "error"
+device_id = 0
+provider_config = ""
+
+[backend.options]
+
+[model]
+family = "piper"
+name = "en_US-lessac-medium"
+directory = ""
+model_file = "en_US-lessac-medium.onnx"
+tokens_file = "tokens.txt"
+data_directory = "espeak-ng-data"
+voice = 0
+noise_scale = 0.667
+noise_scale_w = 0.8
+length_scale = 1.0
+
+[model.options]
+
+[audio]
+device = "default"
+volume = 1.0
+
+[daemon]
+queue_capacity = 8
+max_text_bytes = 65536
