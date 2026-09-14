@@ -27,6 +27,25 @@ fn paths(root: &Path) -> AppPaths {
     }
 }
 
+fn create_stale_stream_socket(path: &Path) -> bool {
+    let listener = match UnixListener::bind(path) {
+        Ok(listener) => listener,
+        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => return false,
+        Err(error) => panic!("bind stale test socket: {error}"),
+    };
+    drop(listener);
+
+    for _ in 0..100 {
+        match UnixStream::connect(path) {
+            Err(error) if indicates_stale_socket(error.kind()) => return true,
+            Err(error) => panic!("unexpected stale socket error: {error}"),
+            Ok(stream) => drop(stream),
+        }
+        thread::sleep(Duration::from_millis(1));
+    }
+    panic!("closed Unix listener continued accepting connections")
+}
+
 fn request(command: Command) -> Request {
     Request {
         protocol: 1,
@@ -1000,12 +1019,9 @@ fn stale_socket_falls_back_locally_and_offline_commands_clean_it_up() {
     fs::create_dir_all(&paths.runtime_dir).unwrap();
     let socket = paths.socket();
 
-    let listener = match UnixListener::bind(&socket) {
-        Ok(listener) => listener,
-        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => return,
-        Err(error) => panic!("bind stale test socket: {error}"),
-    };
-    drop(listener);
+    if !create_stale_stream_socket(&socket) {
+        return;
+    }
     let local_called = Arc::new(AtomicUsize::new(0));
     let called = local_called.clone();
     let response = send_or_handle_locally(&socket, request(Command::Status), move |_| {
@@ -1021,13 +1037,11 @@ fn stale_socket_falls_back_locally_and_offline_commands_clean_it_up() {
     assert_eq!(local_called.load(Ordering::Relaxed), 1);
     assert!(!socket.exists());
 
-    let listener = UnixListener::bind(&socket).unwrap();
-    drop(listener);
+    assert!(create_stale_stream_socket(&socket));
     print_status(&paths.config_file, &paths, false).unwrap();
     assert!(!socket.exists());
 
-    let listener = UnixListener::bind(&socket).unwrap();
-    drop(listener);
+    assert!(create_stale_stream_socket(&socket));
     assert_eq!(
         stop(&paths).unwrap_err().to_string(),
         "daemon is not running"
