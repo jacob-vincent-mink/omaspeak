@@ -512,6 +512,7 @@ fn direct_openvino_entry_points_fail_cleanly_before_native_execution() {
         onnxruntime: root.join("missing-libonnxruntime.so"),
         provider: None,
     };
+    assert!(probe_onnx_runtime(&runtime, Runtime::Default).is_err());
     let error = DirectOrtBackend::create(&config, &app_paths, runtime, Runtime::Default)
         .err()
         .expect("missing ONNX Runtime should fail");

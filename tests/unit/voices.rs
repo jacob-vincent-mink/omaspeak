@@ -59,3 +59,43 @@ fn catalog_inventory_is_available_before_download() {
     config.model.name = "missing".into();
     assert!(available(&config, &paths).is_err());
 }
+
+#[test]
+fn installed_voice_metadata_rejects_unsupported_empty_and_corrupt_models() {
+    let (mut config, paths) = fixture("invalid");
+    config.model.family = "other".into();
+    assert!(
+        installed(&config, &paths)
+            .unwrap_err()
+            .to_string()
+            .contains("family")
+    );
+
+    config.model.family = "supertonic".into();
+    config.model.voice_style.clear();
+    assert!(
+        installed(&config, &paths)
+            .unwrap_err()
+            .to_string()
+            .contains("not configured")
+    );
+
+    config.model.voice_style = "voice.bin".into();
+    let directory = config.model_directory(&paths);
+    fs::create_dir_all(&directory).unwrap();
+    let invalid_dimensions = [2_i64, 50, 256, 3, 8, 16];
+    fs::write(
+        directory.join("voice.bin"),
+        invalid_dimensions
+            .into_iter()
+            .flat_map(i64::to_le_bytes)
+            .collect::<Vec<_>>(),
+    )
+    .unwrap();
+    assert!(
+        installed(&config, &paths)
+            .unwrap_err()
+            .to_string()
+            .contains("invalid Supertonic voice dimensions")
+    );
+}

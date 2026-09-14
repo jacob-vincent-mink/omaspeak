@@ -2708,6 +2708,28 @@ fn filesystem_daemon_and_report_branches_need_no_native_runtime() {
 }
 
 #[test]
+fn hidden_inventory_probe_dispatches_and_rejects_invalid_candidates() {
+    let root = sandbox();
+    let config = Config::default();
+    run(Cli {
+        config: Some(root.join("config.toml")),
+        command: TopCommand::InventoryProbe {
+            candidate: serde_json::to_string(&config.backend).unwrap(),
+        },
+    })
+    .unwrap();
+    assert!(
+        run(Cli {
+            config: Some(root.join("config.toml")),
+            command: TopCommand::InventoryProbe {
+                candidate: "not json".into(),
+            },
+        })
+        .is_err()
+    );
+}
+
+#[test]
 fn noninteractive_runtime_setup_persists_selection_and_rejects_an_invalid_library() {
     let root = sandbox();
     let paths = paths(&root);

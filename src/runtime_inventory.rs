@@ -333,6 +333,57 @@ pub(crate) fn verify_ort_version(path: &Path) -> Result<()> {
 }
 
 pub fn child(config: &BackendConfig) -> Probe {
+    child_with(config, native_openvino_probe, native_ort_probe)
+}
+
+fn native_openvino_probe(paths: runtime::OpenvinoRuntimePaths) -> Result<(String, Vec<String>)> {
+    let devices = crate::supertonic::probe_runtime(paths, "auto")?;
+    let version = openvino::version();
+    Ok((
+        format!(
+            "OpenVINO {} ({})",
+            version.build_number, version.description
+        ),
+        devices,
+    ))
+}
+
+fn native_ort_probe(ort_path: &Path, provider: Option<&Path>) -> Result<Vec<(u32, u32, String)>> {
+    verify_ort_version(ort_path)?;
+    ort::init_from(ort_path)?
+        .with_name("omaspeak-probe")
+        .commit();
+    let Some(provider) = provider else {
+        return Ok(Vec::new());
+    };
+    let environment = ort::environment::Environment::current()?;
+    let _registration = environment
+        .register_ep_library("omaspeak-cuda", provider)
+        .context("register selected CUDA provider library")?;
+    Ok(environment
+        .devices()
+        .filter(|device| device.ep().ok() == Some("CUDAExecutionProvider"))
+        .enumerate()
+        .map(|(ordinal, device)| {
+            let hardware = device.hardware_device();
+            (
+                ordinal as u32,
+                hardware.id(),
+                format!(
+                    "CUDA ordinal {ordinal}, hardware {} ({:?})",
+                    hardware.id(),
+                    hardware.ty()
+                ),
+            )
+        })
+        .collect())
+}
+
+fn child_with(
+    config: &BackendConfig,
+    mut openvino_probe: impl FnMut(runtime::OpenvinoRuntimePaths) -> Result<(String, Vec<String>)>,
+    mut ort_probe: impl FnMut(&Path, Option<&Path>) -> Result<Vec<(u32, u32, String)>>,
+) -> Probe {
     let mut result = Probe::default();
     let attempt = (|| -> Result<()> {
         if config.runtime == Runtime::Openvino {
@@ -346,12 +397,8 @@ pub fn child(config: &BackendConfig) -> Probe {
                     .clone()
                     .context("missing plugins.xml")?,
             };
-            let devices = crate::supertonic::probe_runtime(paths, "auto")?;
-            let version = openvino::version();
-            result.evidence.versions.push(format!(
-                "OpenVINO {} ({})",
-                version.build_number, version.description
-            ));
+            let (version, devices) = openvino_probe(paths)?;
+            result.evidence.versions.push(version);
             result.loadable = true;
             result.evidence.provider_registration = true;
             result.evidence.available_devices = devices;
@@ -377,41 +424,21 @@ pub fn child(config: &BackendConfig) -> Probe {
                 .onnxruntime_library
                 .as_deref()
                 .context("missing ORT library")?;
-            verify_ort_version(ort_path)?;
+            let provider = if config.runtime == Runtime::Cuda {
+                Some(
+                    config
+                        .provider_library
+                        .as_deref()
+                        .context("missing CUDA provider")?,
+                )
+            } else {
+                None
+            };
+            let devices = ort_probe(ort_path, provider)?;
             result.evidence.versions.push("ONNX Runtime 1.29.0".into());
-            ort::init_from(ort_path)?
-                .with_name("omaspeak-probe")
-                .commit();
-            let environment = ort::environment::Environment::current()?;
             if config.runtime == Runtime::Cuda {
-                let _registration = environment
-                    .register_ep_library(
-                        "omaspeak-cuda",
-                        config
-                            .provider_library
-                            .as_deref()
-                            .context("missing CUDA provider")?,
-                    )
-                    .context("register selected CUDA provider library")?;
                 result.loadable = true;
                 result.evidence.provider_registration = true;
-                let devices = environment
-                    .devices()
-                    .filter(|device| device.ep().ok() == Some("CUDAExecutionProvider"))
-                    .enumerate()
-                    .map(|(ordinal, device)| {
-                        let hardware = device.hardware_device();
-                        (
-                            ordinal as u32,
-                            hardware.id(),
-                            format!(
-                                "CUDA ordinal {ordinal}, hardware {} ({:?})",
-                                hardware.id(),
-                                hardware.ty()
-                            ),
-                        )
-                    })
-                    .collect::<Vec<_>>();
                 let (available, selected) = cuda_device_evidence(devices, config.device_id)?;
                 result.evidence.available_devices = available;
                 result.evidence.selected_device = Some(selected);

@@ -47,3 +47,14 @@ fn setup_reload_only_restarts_a_service_that_was_active() {
     assert!(reload_if_was_active_with(true, || Ok(()), || true).unwrap());
     assert!(reload_if_was_active_with(true, || Ok(()), || false).is_err());
 }
+
+#[test]
+fn atomic_unit_write_creates_parent_and_replaces_the_target() {
+    let root = std::env::temp_dir().join(format!("omaspeak-unit-write-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    let path = root.join("nested/omaspeak.service");
+    write_atomic(&path, b"first").unwrap();
+    write_atomic(&path, b"second").unwrap();
+    assert_eq!(fs::read(&path).unwrap(), b"second");
+    assert!(!path.with_extension("tmp").exists());
+}

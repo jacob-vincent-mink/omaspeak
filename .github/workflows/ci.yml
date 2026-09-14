@@ -7,6 +7,9 @@ on:
 jobs:
   rust:
     runs-on: ubuntu-latest
+    env:
+      ORT_VERSION: 1.29.0
+      ORT_ARCHIVE_SHA256: c3fddc4f139a045b0c4902c57410f0694f1c2fdf9b6939fbe38b1aeae7cd14ba
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -21,6 +24,24 @@ jobs:
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo deny check licenses
       - run: cargo about generate about.hbs > /dev/null
-      # Runtime inventory tests launch the instrumented CLI as child processes;
-      # serialize tests so their LLVM profiles cannot clobber each other.
+
+      # Exercise the real default-runtime path that every release ships. A clean
+      # runner otherwise skips those tests because the CPU ORT payload is absent,
+      # which makes line coverage depend on the developer machine.
+      - name: Stage the pinned CPU runtime fixture
+        run: |
+          set -euo pipefail
+          archive="${RUNNER_TEMP}/onnxruntime-linux-x64-${ORT_VERSION}.tgz"
+          root="${RUNNER_TEMP}/onnxruntime-linux-x64-${ORT_VERSION}"
+          curl -fsSL --retry 3 -o "${archive}" \
+            "https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}/onnxruntime-linux-x64-${ORT_VERSION}.tgz"
+          printf '%s  %s\n' "${ORT_ARCHIVE_SHA256}" "${archive}" | sha256sum -c -
+          tar -C "${RUNNER_TEMP}" -xzf "${archive}"
+          mkdir -p target/debug
+          cp "${root}/lib/libonnxruntime.so.${ORT_VERSION}" target/debug/
+          ln -s "libonnxruntime.so.${ORT_VERSION}" target/debug/libonnxruntime.so.1
+          ln -s libonnxruntime.so.1 target/debug/libonnxruntime.so
+
+      # Runtime inventory tests launch instrumented CLI child processes. Keep
+      # their profile writes ordered so every child is included in the report.
       - run: cargo llvm-cov --all-targets --locked --fail-under-lines 90.01 -- --test-threads=1
