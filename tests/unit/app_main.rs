@@ -521,18 +521,24 @@ fn cli_parser_and_catalog_helpers_cover_command_surface() {
         ],
         vec!["omaspeak", "setup", "systemd", "--no-start"],
         vec!["omaspeak", "setup", "menu", "--status"],
-        vec![
-            "omaspeak",
-            "setup",
-            "all",
-            "--no-start",
-            "--progress-format",
-            "json",
-        ],
+        vec!["omaspeak", "setup", "all", "--progress-format", "json"],
     ];
     for args in commands {
         assert!(Cli::try_parse_from(args).is_ok());
     }
+    use clap::CommandFactory as _;
+    let mut command = Cli::command();
+    let setup = command.find_subcommand_mut("setup").unwrap();
+    let all = setup.find_subcommand_mut("all").unwrap();
+    let help = all.render_long_help().to_string();
+    assert!(help.contains("leaves the systemd unit unchanged"));
+    assert!(help.contains("omaspeak setup systemd"));
+    assert!(help.contains("already-active daemon is safely restarted"));
+    assert!(!help.contains("--no-start"));
+    assert!(
+        Cli::try_parse_from(["omaspeak", "setup", "all", "--no-start"]).is_err(),
+        "service lifecycle flags belong to the explicit setup systemd command"
+    );
     assert!(Cli::try_parse_from(["omaspeak", "unknown"]).is_err());
     for args in [
         ["omaspeak", "setup", "model", "--list", "--json"],
@@ -1229,9 +1235,15 @@ fn runtime_catalog_covers_each_device_matrix_and_back_at_device_picker() {
 }
 
 #[test]
-fn confirmed_full_setup_applies_runtime_model_and_install_steps() {
+fn confirmed_full_setup_applies_runtime_model_and_launcher_but_leaves_service_untouched() {
+    use std::cell::Cell;
+
     let root = sandbox();
     let paths = paths(&root);
+    let service = app_setup::systemd::service_path(&paths);
+    fs::create_dir_all(service.parent().unwrap()).unwrap();
+    fs::write(&service, "existing service").unwrap();
+    let reload_called = Cell::new(false);
     let mut selector = ScriptedSelector::new([Some(0), Some(1), Some(1), Some(0)]);
     let result = guided_full_setup_with(
         &paths.config_file,
@@ -1244,12 +1256,11 @@ fn confirmed_full_setup_applies_runtime_model_and_install_steps() {
             fs::write(&path, "launcher")?;
             Ok(path)
         },
-        |paths, _, start| {
-            assert!(start);
-            let path = paths.data_dir.join("systemd/omaspeak.service");
-            fs::create_dir_all(path.parent().unwrap())?;
-            fs::write(&path, "service")?;
-            Ok(path)
+        || true,
+        |was_active| {
+            assert!(was_active);
+            reload_called.set(true);
+            Ok(true)
         },
     );
     // Fake model operations do not install bytes, so the final health check
@@ -1265,7 +1276,8 @@ fn confirmed_full_setup_applies_runtime_model_and_install_steps() {
             .join("applications/omaspeak.desktop")
             .is_file()
     );
-    assert!(paths.data_dir.join("systemd/omaspeak.service").is_file());
+    assert_eq!(fs::read_to_string(service).unwrap(), "existing service");
+    assert!(reload_called.get());
 }
 
 #[test]
@@ -1292,7 +1304,9 @@ fn daemon_socket_preparation_creates_private_dirs_and_removes_stale_files() {
 }
 
 #[test]
-fn setup_all_completes_each_install_step_and_both_output_formats() {
+fn setup_all_installs_model_and_launcher_but_leaves_service_untouched() {
+    use std::cell::Cell;
+
     for (name, format) in [
         ("all-human", ProgressFormat::Human),
         ("all-json", ProgressFormat::Json),
@@ -1300,14 +1314,20 @@ fn setup_all_completes_each_install_step_and_both_output_formats() {
         let root = sandbox().join(name);
         fs::create_dir_all(&root).unwrap();
         let paths = paths(&root);
+        let service = app_setup::systemd::service_path(&paths);
+        if matches!(format, ProgressFormat::Json) {
+            fs::create_dir_all(service.parent().unwrap()).unwrap();
+            fs::write(&service, "existing service").unwrap();
+        }
         let operations = FakeModelOperations { installed: true };
+        let service_was_active = matches!(format, ProgressFormat::Json);
+        let reload_called = Cell::new(false);
         let result = setup_all(
             &paths.config_file,
             &paths,
             &operations,
             "en_US-lessac-medium",
             None,
-            true,
             format,
             |paths| {
                 let path = paths.data_dir.join("applications/omaspeak.desktop");
@@ -1315,17 +1335,22 @@ fn setup_all_completes_each_install_step_and_both_output_formats() {
                 fs::write(&path, b"launcher")?;
                 Ok(path)
             },
-            |paths, _, start| {
-                assert!(!start);
-                let path = paths.data_dir.join("systemd/omaspeak.service");
-                fs::create_dir_all(path.parent().unwrap())?;
-                fs::write(&path, b"service")?;
-                Ok(path)
+            || service_was_active,
+            |was_active| {
+                assert_eq!(was_active, service_was_active);
+                reload_called.set(true);
+                Ok(was_active)
             },
         );
         // The final health check correctly reports that the fake install did not
         // place real model bytes, after every setup action has completed.
         assert!(result.is_err());
         assert!(paths.config_file.is_file());
+        assert!(reload_called.get());
+        if matches!(format, ProgressFormat::Json) {
+            assert_eq!(fs::read_to_string(service).unwrap(), "existing service");
+        } else {
+            assert!(!service.exists());
+        }
     }
 }

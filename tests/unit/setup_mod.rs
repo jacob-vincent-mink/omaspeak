@@ -61,6 +61,13 @@ fn checks_report_malformed_missing_and_custom_states() {
             .iter()
             .any(|check| check.name == "engine" && !check.ok)
     );
+    let systemd = present
+        .iter()
+        .find(|check| check.name == "systemd")
+        .unwrap();
+    assert!(systemd.ok);
+    assert!(systemd.detail.contains("optional") || systemd.detail.contains("active"));
+    assert!(systemd.remediation.is_none());
 }
 
 #[test]

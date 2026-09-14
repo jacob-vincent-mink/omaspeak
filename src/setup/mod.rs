@@ -128,16 +128,36 @@ pub fn checks(path: &Path, paths: &AppPaths) -> Vec<Check> {
         )
     });
     let service = systemd::service_path(paths);
-    result.push(if command_exists("systemctl") && service.is_file() {
-        ok("systemd", service.display().to_string())
+    let systemctl_available = command_exists("systemctl");
+    let service_active = systemctl_available && systemd::is_active();
+    result.push(if service_active {
+        if service.is_file() {
+            ok("systemd", format!("active: {}", service.display()))
+        } else {
+            ok(
+                "systemd",
+                "active (unit is managed outside Omaspeak's user config)",
+            )
+        }
+    } else if service.is_file() {
+        if !systemctl_available {
+            ok(
+                "systemd",
+                format!(
+                    "unit installed at {}; systemctl is unavailable",
+                    service.display()
+                ),
+            )
+        } else {
+            ok(
+                "systemd",
+                format!("installed but inactive (optional): {}", service.display()),
+            )
+        }
     } else {
-        fail(
+        ok(
             "systemd",
-            format!(
-                "systemctl or user service is missing: {}",
-                service.display()
-            ),
-            "run `omaspeak setup systemd`",
+            format!("not installed (optional): {}", service.display()),
         )
     });
     result

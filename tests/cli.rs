@@ -432,6 +432,14 @@ fn systemd_lifecycle_uses_user_manager_and_propagates_failures() {
             .status
             .success()
     );
+    let active_check = run_with_path(&root, &["setup", "check", "--json"], &success);
+    assert!(stdout(&active_check).contains("active:"));
+    fs::remove_file(root.join("config/systemd/user/omaspeak.service")).unwrap();
+    let external_active_check = run_with_path(&root, &["setup", "check", "--json"], &success);
+    assert!(
+        stdout(&external_active_check)
+            .contains("active (unit is managed outside Omaspeak's user config)")
+    );
     assert!(
         run_with_path(&root, &["setup", "systemd"], &success)
             .status
@@ -452,6 +460,8 @@ fn systemd_lifecycle_uses_user_manager_and_propagates_failures() {
     for expected in [
         "--user daemon-reload",
         "--user enable omaspeak.service",
+        "--user restart omaspeak.service",
+        "--user is-active --quiet omaspeak.service",
         "--user status omaspeak.service --no-pager",
         "--user disable --now omaspeak.service",
     ] {
@@ -468,6 +478,8 @@ fn systemd_lifecycle_uses_user_manager_and_propagates_failures() {
             .status
             .success()
     );
+    let inactive_check = run_with_path(&root, &["setup", "check", "--json"], &failure);
+    assert!(stdout(&inactive_check).contains("installed but inactive (optional)"));
     assert!(
         !run_with_path(&root, &["setup", "systemd", "--status"], &failure)
             .status

@@ -173,13 +173,13 @@ fn render(
         SetAttribute(Attribute::Bold),
         Print(title),
         SetAttribute(Attribute::Reset),
-        Print("\n\n"),
+        Print("\r\n\r\n"),
         Print(help),
-        Print("\n"),
+        Print("\r\n"),
         SetForegroundColor(Color::DarkGrey),
         Print("↑↓ navigate · Enter select · Esc cancel"),
         ResetColor,
-        Print("\n\n")
+        Print("\r\n\r\n")
     )?;
 
     for (index, item) in items.iter().enumerate() {
@@ -198,11 +198,11 @@ fn render(
             Print(&item.label),
             SetAttribute(Attribute::Reset),
             ResetColor,
-            Print("\n      "),
+            Print("\r\n      "),
             SetForegroundColor(Color::DarkGrey),
             Print(&item.detail),
             ResetColor,
-            Print("\n\n")
+            Print("\r\n\r\n")
         )?;
     }
     output.flush()?;

@@ -44,8 +44,10 @@ omaspeak setup
 Use the arrow keys and Enter to choose `Full setup`, `Runtime`, `Model`, or
 `Check`. Full setup walks through the runtime, compatible device, and model,
 then shows a summary before it changes the config, downloads model assets, or
-installs the desktop launcher and enables and starts the systemd user service. The runtime and model
-flows can also be opened directly:
+installs the desktop launcher. It does not install, enable, or start a service.
+If the daemon is already active, setup safely restarts it after Apply so it
+loads the new configuration; an inactive service remains inactive. The runtime
+and model flows can also be opened directly:
 
 ```bash
 omaspeak setup runtime   # choose a compiled runtime, then a compatible device
@@ -61,11 +63,14 @@ only offers catalog models validated for that device.
 For scripts or redirected input/output, setup remains noninteractive. This
 one-command network install downloads and activates the default
 `en_US-lessac-medium` model, writes the config, installs the desktop launcher
-and systemd user service, then runs the checks:
+and then runs the checks. It does not install or start a service:
 
 ```bash
 omaspeak setup all
 ```
+
+If the daemon is already active, `setup all` safely restarts it after the model
+and configuration changes succeed. It never starts an inactive service.
 
 Useful setup subcommands:
 
@@ -76,7 +81,8 @@ omaspeak setup model --download supertonic-3-int8     # multilingual int8 evalua
 omaspeak setup model --download supertonic-3-npu      # validated Intel NPU model mix
 omaspeak setup model --verify en_US-lessac-medium     # re-verify an installed model
 omaspeak setup model --download en_US-lessac-medium --archive /path/to/vits-piper-en_US-lessac-medium.tar.bz2
-omaspeak setup check                        # verify config, backend, model, engine, audio, launcher, service
+omaspeak setup check                        # verify config, backend, model, engine, audio, launcher; report optional service
+omaspeak setup systemd                      # explicitly install, enable, and start the systemd user service
 omaspeak setup runtime --json               # machine-readable runtimes, devices, capabilities, and models
 omaspeak setup systemd --status             # show systemd user service status
 omaspeak setup systemd --uninstall          # remove the systemd user service

@@ -5,6 +5,16 @@ fn key(code: KeyCode) -> Event {
     Event::Key(KeyEvent::new(code, KeyModifiers::NONE))
 }
 
+fn assert_no_bare_line_feeds(output: &[u8]) {
+    assert!(
+        output
+            .iter()
+            .enumerate()
+            .all(|(index, byte)| *byte != b'\n' || index > 0 && output[index - 1] == b'\r'),
+        "raw-mode rendering must return to column zero before every line feed"
+    );
+}
+
 #[test]
 fn item_constructors_preserve_metadata() {
     assert_eq!(
@@ -104,6 +114,8 @@ fn menu_renders_metadata_and_processes_arrow_enter_and_cancel() {
     assert!(rendered.contains("CUDA"));
     assert!(rendered.contains("Unavailable in this build"));
     assert!(rendered.contains("Esc cancel"));
+    assert!(rendered.contains("\r\n      "));
+    assert_no_bare_line_feeds(rendered.as_bytes());
 
     let mut events = VecDeque::from([key(KeyCode::Char('q'))]);
     assert_eq!(

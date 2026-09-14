@@ -105,20 +105,21 @@ enum ConfigCommand {
 
 #[derive(Subcommand)]
 enum SetupCommand {
-    /// Check the active model, runtime, audio, launcher, and service.
+    /// Check the active model, runtime, audio, launcher, and optional service.
     Check {
         /// Print machine-readable check results.
         #[arg(long)]
         json: bool,
     },
-    /// Install the model, launcher, and service in one scriptable command.
+    /// Install the model and launcher in one scriptable command.
+    ///
+    /// This leaves the systemd unit unchanged; use `omaspeak setup systemd`
+    /// explicitly. An already-active daemon is safely restarted after setup.
     All {
         #[arg(long, default_value = "en_US-lessac-medium")]
         model: String,
         #[arg(long)]
         archive: Option<PathBuf>,
-        #[arg(long)]
-        no_start: bool,
         #[arg(long, value_enum, default_value_t)]
         progress_format: ProgressFormat,
     },
@@ -1047,7 +1048,6 @@ fn setup(command: Option<SetupCommand>, config_path: &Path, paths: &AppPaths) ->
         SetupCommand::All {
             model,
             archive,
-            no_start,
             progress_format,
         } => setup_all(
             config_path,
@@ -1055,10 +1055,10 @@ fn setup(command: Option<SetupCommand>, config_path: &Path, paths: &AppPaths) ->
             &BuiltinModels,
             &model,
             archive.as_deref(),
-            no_start,
             progress_format,
             app_setup::menu::install,
-            app_setup::systemd::install,
+            app_setup::systemd::is_active,
+            app_setup::systemd::reload_if_was_active,
         ),
     }
 }
@@ -1076,7 +1076,7 @@ fn guided_setup(
     let actions = [
         MenuItem::available(
             "Full setup",
-            "Choose a runtime, device, and model; then install the launcher and enable and start the service.",
+            "Choose a runtime, device, and model, then install the desktop launcher. This never installs or starts a service; an active daemon restarts after Apply.",
         ),
         MenuItem::available(
             "Runtime",
@@ -1088,7 +1088,7 @@ fn guided_setup(
         ),
         MenuItem::available(
             "Check",
-            "Check the current model, runtime, audio, and service setup.",
+            "Check the current model, runtime, audio, launcher, and optional service.",
         ),
     ];
     let Some(selected) = selector.select(
@@ -1122,7 +1122,8 @@ fn guided_full_setup(
         operations,
         selector,
         app_setup::menu::install,
-        app_setup::systemd::install,
+        app_setup::systemd::is_active,
+        app_setup::systemd::reload_if_was_active,
     )
 }
 
@@ -1132,8 +1133,10 @@ fn guided_full_setup_with(
     operations: &impl ModelSetupOperations,
     selector: &mut impl SetupSelector,
     install_launcher: impl FnOnce(&AppPaths) -> Result<PathBuf>,
-    install_service: impl FnOnce(&AppPaths, &Path, bool) -> Result<PathBuf>,
+    service_is_active: impl FnOnce() -> bool,
+    reload_service: impl FnOnce(bool) -> Result<bool>,
 ) -> Result<()> {
+    let service_was_active = service_is_active();
     let Some((runtime, device)) = choose_runtime(config_path, selector)? else {
         println!("Setup cancelled.");
         return Ok(());
@@ -1152,12 +1155,12 @@ fn guided_full_setup_with(
     let confirmation = [
         MenuItem::available(
             "Apply setup",
-            "Download and activate the model, install the launcher, then enable and start the service.",
+            "Download and activate the model, then install the desktop launcher. An active daemon restarts; an inactive service remains inactive.",
         ),
         MenuItem::available("Cancel", "Leave the current configuration unchanged."),
     ];
     let summary = format!(
-        "Runtime: {} · Device: {} · Model: {}",
+        "Runtime: {} · Device: {} · Model: {} · Service unit: unchanged (`omaspeak setup systemd` installs it)",
         runtime_name(runtime),
         device,
         model
@@ -1173,10 +1176,10 @@ fn guided_full_setup_with(
         operations,
         &model,
         None,
-        false,
         ProgressFormat::Human,
         install_launcher,
-        install_service,
+        || service_was_active,
+        reload_service,
     )
 }
 
@@ -1455,26 +1458,36 @@ fn setup_all(
     operations: &impl ModelSetupOperations,
     model: &str,
     archive: Option<&Path>,
-    no_start: bool,
     progress_format: ProgressFormat,
     install_launcher: impl FnOnce(&AppPaths) -> Result<PathBuf>,
-    install_service: impl FnOnce(&AppPaths, &Path, bool) -> Result<PathBuf>,
+    service_is_active: impl FnOnce() -> bool,
+    reload_service: impl FnOnce(bool) -> Result<bool>,
 ) -> Result<()> {
+    let service_was_active = service_is_active();
     let spec = operations.resolve(model)?;
     let mut config = app_setup::ensure_config(config_path)?;
     let directory = operations.install(paths, spec, archive, progress_format)?;
     spec.activate(&mut config);
     config.save(config_path)?;
     let launcher = install_launcher(paths)?;
-    let service = install_service(paths, config_path, !no_start)?;
+    let service_restarted = reload_service(service_was_active)?;
+    let service = app_setup::systemd::service_path(paths);
+    let service_installed = service.is_file();
     match progress_format {
         ProgressFormat::Human => {
+            let service_detail = if service_restarted {
+                "active daemon restarted; unit unchanged".into()
+            } else if service_installed {
+                format!("unchanged (installed at {})", service.display())
+            } else {
+                "unchanged (optional; run `omaspeak setup systemd` to install)".into()
+            };
             println!(
                 "model: {}\nconfig: {}\nlauncher: {}\nservice: {}",
                 directory.display(),
                 config_path.display(),
                 launcher.display(),
-                service.display()
+                service_detail,
             );
             app_setup::print_checks(config_path, paths, false)
         }
@@ -1486,7 +1499,15 @@ fn setup_all(
                     "model": directory,
                     "config": config_path,
                     "launcher": launcher,
-                    "service": service,
+                    "service": {
+                        "installed": service_installed,
+                        "active_before": service_was_active,
+                        "restarted": service_restarted,
+                        "unit_modified": false,
+                        "optional": true,
+                        "path": service,
+                        "install_command": "omaspeak setup systemd"
+                    },
                 }))?
             );
             app_setup::print_checks_event(config_path, paths)
