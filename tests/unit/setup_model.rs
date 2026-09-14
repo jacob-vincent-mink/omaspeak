@@ -2,7 +2,7 @@ use super::*;
 use bzip2::Compression;
 use bzip2::write::BzEncoder;
 
-use crate::catalog::RequiredFile;
+use crate::catalog::{RequiredFile, SupplementalFile};
 
 fn temp(name: &str) -> PathBuf {
     let path =
@@ -30,6 +30,24 @@ fn archive(root: &str, path: &str, bytes: &[u8]) -> Vec<u8> {
     builder
         .append_data(&mut header, format!("{root}/{path}"), bytes)
         .unwrap();
+    builder.into_inner().unwrap().finish().unwrap()
+}
+
+fn archive_with_superseded(root: &str) -> Vec<u8> {
+    let encoder = BzEncoder::new(Vec::new(), Compression::best());
+    let mut builder = tar::Builder::new(encoder);
+    for (path, bytes) in [
+        ("model.bin", &b"tiny model"[..]),
+        ("model.int8", &b"superseded"[..]),
+    ] {
+        let mut header = tar::Header::new_gnu();
+        header.set_size(bytes.len() as u64);
+        header.set_mode(0o644);
+        header.set_cksum();
+        builder
+            .append_data(&mut header, format!("{root}/{path}"), bytes)
+            .unwrap();
+    }
     builder.into_inner().unwrap().finish().unwrap()
 }
 
@@ -95,6 +113,40 @@ fn spec(archive_bytes: &[u8], url: &str) -> &'static ModelSpec {
         steps: 5,
         npu_capable: false,
         required_files: required,
+        supplemental_files: &[],
+    }))
+}
+
+fn spec_with_supplement(archive_bytes: &[u8]) -> &'static ModelSpec {
+    let required: &'static [RequiredFile] = Box::leak(
+        vec![
+            RequiredFile {
+                path: "model.bin",
+                size: 10,
+                sha256: leak(digest(b"tiny model")),
+            },
+            RequiredFile {
+                path: "extra/model.fp32",
+                size: 11,
+                sha256: leak(digest(b"float model")),
+            },
+        ]
+        .into_boxed_slice(),
+    );
+    let supplemental_files: &'static [SupplementalFile] = Box::leak(
+        vec![SupplementalFile {
+            path: "extra/model.fp32",
+            supersedes: "model.int8",
+            url: "http://unused.invalid/model.fp32",
+            size: 11,
+            sha256: leak(digest(b"float model")),
+        }]
+        .into_boxed_slice(),
+    );
+    Box::leak(Box::new(ModelSpec {
+        supplemental_files,
+        required_files: required,
+        ..*spec(archive_bytes, "http://unused.invalid/model")
     }))
 }
 
@@ -152,6 +204,67 @@ fn local_archive_install_is_verified_idempotent_and_repairable() {
     assert!(verify(&paths, spec).is_err());
     install(&paths, spec, Some(&archive_path), ProgressFormat::Human).unwrap();
     verify(&paths, spec).unwrap();
+}
+
+#[test]
+fn supplemental_asset_is_cached_verified_and_installed_with_the_archive() {
+    let root = temp("supplement");
+    let archive_bytes = archive_with_superseded("tiny-root");
+    let archive_path = root.join("tiny.tar.bz2");
+    fs::write(&archive_path, &archive_bytes).unwrap();
+    let spec = spec_with_supplement(&archive_bytes);
+    let paths = paths(&root);
+    let downloads = paths.data_dir.join("downloads");
+    fs::create_dir_all(&downloads).unwrap();
+    fs::write(downloads.join("tiny.extra-model.fp32"), b"float model").unwrap();
+
+    let installed = install(&paths, spec, Some(&archive_path), ProgressFormat::Json).unwrap();
+    assert_eq!(
+        fs::read(installed.join("extra/model.fp32")).unwrap(),
+        b"float model"
+    );
+    assert!(!installed.join("model.int8").exists());
+    verify(&paths, spec).unwrap();
+
+    fs::write(installed.join("extra/model.fp32"), b"broken file").unwrap();
+    install(&paths, spec, Some(&archive_path), ProgressFormat::Human).unwrap();
+    verify(&paths, spec).unwrap();
+}
+
+#[test]
+fn supplemental_download_and_paths_are_strictly_verified() {
+    let root = temp("supplement-verify");
+    let archive_bytes = archive("tiny-root", "model.bin", b"tiny model");
+    let spec = spec_with_supplement(&archive_bytes);
+    let asset = &spec.supplemental_files[0];
+    let part = root.join("download.part");
+    let target = root.join("download");
+    write_pinned_download(
+        &b"float model"[..],
+        &part,
+        &target,
+        asset.size,
+        asset.sha256,
+        spec,
+        ProgressFormat::Json,
+    )
+    .unwrap();
+    verify_pinned_file(&target, asset.size, asset.sha256).unwrap();
+    assert!(
+        write_pinned_download(
+            &b"short"[..],
+            &part,
+            &target,
+            asset.size,
+            asset.sha256,
+            spec,
+            ProgressFormat::Human,
+        )
+        .is_err()
+    );
+    assert!(validate_relative_file("../escape").is_err());
+    assert!(validate_relative_file("/absolute").is_err());
+    assert!(validate_relative_file("").is_err());
 }
 
 #[test]

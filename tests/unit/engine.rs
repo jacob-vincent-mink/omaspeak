@@ -268,6 +268,76 @@ fn supertonic_npu_defaults_to_the_validated_mixed_component_allowlist() {
 }
 
 #[test]
+fn npu_catalog_model_submits_all_supertonic_components_and_remains_overridable() {
+    let root = temp("supertonic-npu-catalog-components");
+    let paths = paths(&root);
+    let mut config = Config::default();
+    crate::catalog::model("supertonic-3-npu")
+        .unwrap()
+        .activate(&mut config);
+    let directory = config.model_directory(&paths);
+    fs::create_dir_all(&directory).unwrap();
+    for asset in [
+        &config.model.duration_predictor,
+        &config.model.text_encoder,
+        &config.model.vector_estimator,
+        &config.model.vocoder,
+        &config.model.tts_json,
+        &config.model.unicode_indexer,
+        &config.model.voice_style,
+    ] {
+        fs::write(directory.join(asset), b"fixture").unwrap();
+    }
+    config.backend.runtime = Runtime::Openvino;
+    config.backend.device = "npu".into();
+
+    let native = build_sherpa_config(&config, &paths, Runtime::Openvino).unwrap();
+    let provider = native.model.provider.unwrap();
+    let provider_path = PathBuf::from(provider.strip_prefix("openvino:").unwrap());
+    let contents = fs::read_to_string(&provider_path).unwrap();
+    assert!(contents.contains("SherpaOnnx.SupertonicComponents=all\n"));
+
+    fs::write(directory.join("vector_estimator.int8.onnx"), b"fixture").unwrap();
+    config.model.vector_estimator = "vector_estimator.int8.onnx".into();
+    build_sherpa_config(&config, &paths, Runtime::Openvino).unwrap();
+    let contents = fs::read_to_string(&provider_path).unwrap();
+    assert!(
+        contents
+            .contains("SherpaOnnx.SupertonicComponents=duration_predictor,text_encoder,vocoder\n")
+    );
+
+    config.model.vector_estimator = "vector_estimator.onnx".into();
+    let custom_directory = root.join("custom-model");
+    fs::create_dir_all(&custom_directory).unwrap();
+    for asset in [
+        &config.model.duration_predictor,
+        &config.model.text_encoder,
+        &config.model.vector_estimator,
+        &config.model.vocoder,
+        &config.model.tts_json,
+        &config.model.unicode_indexer,
+        &config.model.voice_style,
+    ] {
+        fs::write(custom_directory.join(asset), b"fixture").unwrap();
+    }
+    config.model.directory = custom_directory.display().to_string();
+    build_sherpa_config(&config, &paths, Runtime::Openvino).unwrap();
+    let contents = fs::read_to_string(&provider_path).unwrap();
+    assert!(
+        contents
+            .contains("SherpaOnnx.SupertonicComponents=duration_predictor,text_encoder,vocoder\n")
+    );
+
+    config.backend.options.insert(
+        "SherpaOnnx.SupertonicComponents".into(),
+        "vector_estimator".into(),
+    );
+    build_sherpa_config(&config, &paths, Runtime::Openvino).unwrap();
+    let contents = fs::read_to_string(provider_path).unwrap();
+    assert!(contents.contains("SherpaOnnx.SupertonicComponents=vector_estimator\n"));
+}
+
+#[test]
 fn supertonic_gpu_defaults_to_the_validated_vector_estimator_placement() {
     let root = temp("supertonic-gpu-components");
     let paths = paths(&root);

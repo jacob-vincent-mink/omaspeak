@@ -1,5 +1,9 @@
 # Dell XPS Supertonic OpenVINO results
 
+> A later diagnosis found the fully INT8 NPU failure and validated an official
+> FP32 vector estimator with all-component NPU submission. See
+> [`NPU-VECTOR-DIAGNOSIS-2026-09-14.md`](NPU-VECTOR-DIAGNOSIS-2026-09-14.md).
+
 On 2026-09-14, Omaspeak synthesized `Omaspeak now supports Supertonic.` with
 the official Supertonic 3 int8 model on a Dell XPS with an Intel Panther Lake
 Arc B390 iGPU (`8086:b080`) and Series 3 NPU (`8086:b03e`). The host ran Linux

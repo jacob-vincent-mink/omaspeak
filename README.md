@@ -47,6 +47,7 @@ Useful setup subcommands:
 omaspeak setup model --list                 # list catalog models and install status
 omaspeak setup model --download en_US-lessac-medium   # download, verify, and install a model
 omaspeak setup model --download supertonic-3-int8     # multilingual int8 evaluation model
+omaspeak setup model --download supertonic-3-npu      # validated Intel NPU model mix
 omaspeak setup model --verify en_US-lessac-medium     # re-verify an installed model
 omaspeak setup model --download en_US-lessac-medium --archive /path/to/vits-piper-en_US-lessac-medium.tar.bz2
 omaspeak setup check                        # verify config, backend, model, engine, audio, launcher, service
@@ -57,7 +58,7 @@ omaspeak setup menu --status                # show desktop launcher status
 omaspeak setup menu --uninstall             # remove the desktop launcher
 ```
 
-`--archive` installs from an already-downloaded pinned archive instead of fetching it; it is still size and SHA256 verified before extraction. Downloaded archives and installed model assets are size + SHA256 verified against the pinned catalog, and installs are atomic: a verified extraction is staged, then renamed into place, with the previous model restored on failure.
+`--archive` installs from an already-downloaded pinned archive instead of fetching it; it is still size and SHA256 verified before extraction. A model can also declare checksum-pinned supplemental assets; these are downloaded even with `--archive` unless they are already in Omaspeak's verified download cache. Downloaded archives, supplements, and installed model assets are size + SHA256 verified against the pinned catalog. Installs are atomic: extraction and supplements are prepared in a staging directory, then renamed into place, with the previous model restored on failure.
 
 Piper remains the default CPU model. The catalog also pins the official
 Supertonic 3 int8 archive and verifies each of its four ONNX graphs, TTS
@@ -69,6 +70,29 @@ omaspeak setup model --download supertonic-3-int8
 omaspeak config set model.language en
 omaspeak config set model.steps 5
 ```
+
+For Intel NPU use, `supertonic-3-npu` combines the same pinned INT8 archive
+with Supertone's official FP32 vector estimator. Its download is about 368 MiB
+and its installed model is about 309 MiB. This avoids a numerical failure in
+the INT8 vector graph on the tested Panther Lake NPU, where 22 of 38 dynamic
+INT8 MatMul rescaling outputs became zero. Omaspeak verifies the supplemental
+model's 256,534,781-byte payload against SHA256
+`883ac868ea0275ef0e991524dc64f16b3c0376efd7c320af6b53f5b780d7c61c`
+from Supertone's immutable `724fb5abbf5502583fb520898d45929e62f02c0b`
+revision, and removes the superseded INT8 vector graph before activating the
+model.
+
+```bash
+omaspeak setup model --download supertonic-3-npu
+omaspeak config set backend.runtime openvino
+omaspeak config set backend.device npu
+```
+
+For this catalog entry, the generated NPU provider config submits all four
+Supertonic components to OpenVINO. An explicit
+`backend.options.SherpaOnnx.SupertonicComponents` value still overrides that
+default. The original `supertonic-3-int8` catalog entry and custom Supertonic
+models retain the validated mixed placement.
 
 Supertonic supports `en`, `ko`, `ja`, `ar`, `bg`, `cs`, `da`, `de`, `el`,
 `es`, `et`, `fi`, `fr`, `hi`, `hr`, `hu`, `id`, `it`, `lt`, `lv`, `nl`,
@@ -132,14 +156,16 @@ Host-specific OpenVINO hardware properties belong in ONNX Runtime's inline
 load_config = '{"NPU":{"NPU_PLATFORM":"5010"}}'
 ```
 
-The current full-model Supertonic NPU path does not pass speech-accuracy
-validation. On exact `NPU`, Omaspeak therefore defaults Supertonic to the
-largest validated mixed placement: `duration_predictor,text_encoder,vocoder`
-on OpenVINO NPU and `vector_estimator` on ORT CPU. The reserved
-`SherpaOnnx.SupertonicComponents` backend option can override that allowlist for
-experiments. Hardware evaluation must include output-accuracy checks in
-addition to successful execution and device activity, so the catalog does not
-yet mark Supertonic as generally NPU-capable.
+The fully INT8 `supertonic-3-int8` vector estimator does not pass NPU
+speech-accuracy validation. On exact `NPU`, that entry and custom Supertonic
+models therefore default to the largest validated mixed placement:
+`duration_predictor,text_encoder,vocoder` on OpenVINO NPU and
+`vector_estimator` on ORT CPU. The NPU-specific `supertonic-3-npu` catalog entry
+uses the official FP32 vector estimator and submits all four components to
+OpenVINO; it is marked `npu_capable=true`. The reserved
+`SherpaOnnx.SupertonicComponents` backend option can override either default.
+Hardware evaluation must include output-accuracy checks in addition to
+successful execution and device activity.
 On exact `GPU`, the validated default places only `vector_estimator` on the
 OpenVINO GPU and runs the other components on ORT CPU; it also sets `FP32`,
 disables the QDQ optimizer, and disables dynamic shapes. Other GPU component

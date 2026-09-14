@@ -300,9 +300,21 @@ fn generate_openvino_provider_config(config: &Config, paths: &AppPaths) -> Resul
         options.insert("enable_qdq_optimizer".to_owned(), "True".to_owned());
         options.insert("disable_dynamic_shapes".to_owned(), "True".to_owned());
         if config.model.family == "supertonic" {
+            let components = crate::catalog::model(&config.model.name)
+                .filter(|spec| {
+                    spec.npu_capable
+                        && spec.family == config.model.family
+                        && spec.duration_predictor == config.model.duration_predictor
+                        && spec.text_encoder == config.model.text_encoder
+                        && spec.vector_estimator == config.model.vector_estimator
+                        && spec.vocoder == config.model.vocoder
+                        && config.model_directory(paths)
+                            == crate::setup::model::model_directory(paths, spec)
+                })
+                .map_or("duration_predictor,text_encoder,vocoder", |_| "all");
             options.insert(
                 "SherpaOnnx.SupertonicComponents".to_owned(),
-                "duration_predictor,text_encoder,vocoder".to_owned(),
+                components.to_owned(),
             );
         }
     } else if config.model.family == "supertonic" && device == "GPU" {

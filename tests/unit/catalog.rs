@@ -14,6 +14,11 @@ fn every_model_references_a_backend() {
             assert_eq!(required.sha256.len(), 64);
             assert!(required.size > 0);
         }
+        for supplemental in model.supplemental_files {
+            assert_eq!(supplemental.sha256.len(), 64);
+            assert!(supplemental.size > 0);
+            assert!(supplemental.url.starts_with("https://"));
+        }
     }
 }
 
@@ -43,4 +48,11 @@ fn lookup_and_activation_populate_config() {
     assert_eq!(config.model.language, "en");
     assert_eq!(config.model.steps, 5);
     assert!(config.model.model_file.is_empty());
+
+    let npu = model("supertonic-3-npu").unwrap();
+    assert!(npu.npu_capable);
+    assert_eq!(npu.supplemental_files.len(), 1);
+    npu.activate(&mut config);
+    assert_eq!(config.model.name, "supertonic-3-npu");
+    assert_eq!(config.model.vector_estimator, "vector_estimator.onnx");
 }

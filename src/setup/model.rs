@@ -7,7 +7,7 @@ use bzip2::read::BzDecoder;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
-use crate::catalog::ModelSpec;
+use crate::catalog::{ModelSpec, SupplementalFile};
 use crate::paths::AppPaths;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, clap::ValueEnum)]
@@ -54,6 +54,11 @@ pub fn install(
         None => download_archive(paths, spec, progress)?,
     };
     verify_archive(&archive, spec)?;
+    let supplemental_files = spec
+        .supplemental_files
+        .iter()
+        .map(|asset| download_supplemental(paths, spec, asset, progress))
+        .collect::<Result<Vec<_>>>()?;
 
     let staging =
         paths
@@ -65,9 +70,31 @@ pub fn install(
     }
     fs::create_dir_all(&staging)?;
     emit(progress, "extract", spec, None, None)?;
-    let extracted = extract_archive(&archive, &staging, spec)
-        .with_context(|| format!("extract model archive {}", archive.display()))?;
-    verify_directory(&extracted, spec)?;
+    let prepare = || -> Result<PathBuf> {
+        let extracted = extract_archive(&archive, &staging, spec)
+            .with_context(|| format!("extract model archive {}", archive.display()))?;
+        for (asset, source) in spec.supplemental_files.iter().zip(&supplemental_files) {
+            install_supplemental(source, &extracted, asset)?;
+            if !asset.supersedes.is_empty() && asset.supersedes != asset.path {
+                validate_relative_file(asset.supersedes)?;
+                let superseded = extracted.join(asset.supersedes);
+                if superseded.exists() {
+                    fs::remove_file(&superseded).with_context(|| {
+                        format!("remove superseded model asset {}", superseded.display())
+                    })?;
+                }
+            }
+        }
+        verify_directory(&extracted, spec)?;
+        Ok(extracted)
+    };
+    let extracted = match prepare() {
+        Ok(extracted) => extracted,
+        Err(error) => {
+            let _ = fs::remove_dir_all(&staging);
+            return Err(error).context("prepare verified model installation");
+        }
+    };
 
     let old =
         paths
@@ -107,15 +134,187 @@ pub fn install(
     Ok(target)
 }
 
+fn download_supplemental(
+    paths: &AppPaths,
+    spec: &ModelSpec,
+    asset: &SupplementalFile,
+    progress: ProgressFormat,
+) -> Result<PathBuf> {
+    validate_relative_file(asset.path)?;
+    let cache_name = format!("{}.{}", spec.id, asset.path.replace(['/', '\\'], "-"));
+    let target = paths.data_dir.join("downloads").join(cache_name);
+    if verify_pinned_file(&target, asset.size, asset.sha256).is_ok() {
+        emit(
+            progress,
+            "supplement-cached",
+            spec,
+            Some(asset.size),
+            Some(asset.size),
+        )?;
+        return Ok(target);
+    }
+
+    let part = target.with_extension("part");
+    let _ = fs::remove_file(&part);
+    emit(
+        progress,
+        "supplement-download-start",
+        spec,
+        Some(0),
+        Some(asset.size),
+    )?;
+    let response = ureq::get(asset.url)
+        .call()
+        .with_context(|| format!("download supplemental model asset {}", asset.url))?;
+    write_pinned_download(
+        response.into_reader(),
+        &part,
+        &target,
+        asset.size,
+        asset.sha256,
+        spec,
+        progress,
+    )?;
+    Ok(target)
+}
+
+fn write_pinned_download(
+    mut input: impl Read,
+    part: &Path,
+    target: &Path,
+    expected_size: u64,
+    expected_sha256: &str,
+    spec: &ModelSpec,
+    progress: ProgressFormat,
+) -> Result<()> {
+    let result = (|| -> Result<()> {
+        let file = File::create(part)?;
+        let mut output = BufWriter::new(file);
+        let mut hasher = Sha256::new();
+        let mut total = 0_u64;
+        let mut reported = 0_u64;
+        let mut buffer = [0_u8; 128 * 1024];
+        loop {
+            let count = input.read(&mut buffer)?;
+            if count == 0 {
+                break;
+            }
+            total += count as u64;
+            if total > expected_size {
+                bail!("download exceeded expected size for {}", spec.id);
+            }
+            hasher.update(&buffer[..count]);
+            output.write_all(&buffer[..count])?;
+            if should_report_progress(total, reported, expected_size) {
+                emit(
+                    progress,
+                    "supplement-download-progress",
+                    spec,
+                    Some(total),
+                    Some(expected_size),
+                )?;
+                reported = total;
+            }
+        }
+        output.flush()?;
+        output.get_ref().sync_all()?;
+        if total != expected_size {
+            bail!(
+                "downloaded {} bytes for {}, expected {}",
+                total,
+                spec.id,
+                expected_size
+            );
+        }
+        if format!("{:x}", hasher.finalize()) != expected_sha256 {
+            bail!("download checksum mismatch for {}", spec.id);
+        }
+        fs::rename(part, target)?;
+        emit(
+            progress,
+            "supplement-downloaded",
+            spec,
+            Some(total),
+            Some(total),
+        )?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(part);
+    }
+    result
+}
+
+fn install_supplemental(source: &Path, directory: &Path, asset: &SupplementalFile) -> Result<()> {
+    validate_relative_file(asset.path)?;
+    verify_pinned_file(source, asset.size, asset.sha256)?;
+    let target = directory.join(asset.path);
+    let parent = target
+        .parent()
+        .context("supplemental model asset has no parent directory")?;
+    fs::create_dir_all(parent)?;
+    let file_name = target
+        .file_name()
+        .context("supplemental model asset has no file name")?
+        .to_string_lossy();
+    let part = parent.join(format!(".{file_name}.part-{}", std::process::id()));
+    let _ = fs::remove_file(&part);
+    let result = (|| -> Result<()> {
+        fs::copy(source, &part)?;
+        verify_pinned_file(&part, asset.size, asset.sha256)?;
+        fs::rename(&part, &target)?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&part);
+    }
+    result
+}
+
+fn validate_relative_file(path: &str) -> Result<()> {
+    let path = Path::new(path);
+    if path.as_os_str().is_empty()
+        || path
+            .components()
+            .any(|part| !matches!(part, Component::Normal(_)))
+    {
+        bail!(
+            "supplemental model asset has unsafe path {}",
+            path.display()
+        );
+    }
+    Ok(())
+}
+
+fn verify_pinned_file(path: &Path, expected_size: u64, expected_sha256: &str) -> Result<()> {
+    let metadata = fs::symlink_metadata(path)
+        .with_context(|| format!("model asset is missing: {}", path.display()))?;
+    if !metadata.file_type().is_file() || metadata.len() != expected_size {
+        bail!("model asset has wrong size: {}", path.display());
+    }
+    if sha256_file(path)? != expected_sha256 {
+        bail!("model asset checksum mismatch: {}", path.display());
+    }
+    Ok(())
+}
+
 fn download_archive(
     paths: &AppPaths,
     spec: &ModelSpec,
     progress: ProgressFormat,
 ) -> Result<PathBuf> {
+    let cache_id = crate::catalog::models()
+        .iter()
+        .find(|candidate| {
+            candidate.archive_size == spec.archive_size
+                && candidate.archive_sha256 == spec.archive_sha256
+                && candidate.archive_url == spec.archive_url
+        })
+        .map_or(spec.id, |candidate| candidate.id);
     let target = paths
         .data_dir
         .join("downloads")
-        .join(format!("{}.tar.bz2", spec.id));
+        .join(format!("{cache_id}.tar.bz2"));
     if verify_archive(&target, spec).is_ok() {
         emit(
             progress,
@@ -201,9 +400,9 @@ fn should_report_progress(current: u64, last: u64, total: u64) -> bool {
 }
 
 fn verify_archive(path: &Path, spec: &ModelSpec) -> Result<()> {
-    let metadata = fs::metadata(path)
+    let metadata = fs::symlink_metadata(path)
         .with_context(|| format!("model archive is missing: {}", path.display()))?;
-    if metadata.len() != spec.archive_size {
+    if !metadata.file_type().is_file() || metadata.len() != spec.archive_size {
         bail!("archive size mismatch for {}", path.display());
     }
     let digest = sha256_file(path)?;
@@ -246,9 +445,9 @@ fn extract_archive(archive: &Path, staging: &Path, spec: &ModelSpec) -> Result<P
 fn verify_directory(directory: &Path, spec: &ModelSpec) -> Result<()> {
     for required in spec.required_files {
         let path = directory.join(required.path);
-        let metadata = fs::metadata(&path)
+        let metadata = fs::symlink_metadata(&path)
             .with_context(|| format!("required model asset is missing: {}", path.display()))?;
-        if metadata.len() != required.size {
+        if !metadata.file_type().is_file() || metadata.len() != required.size {
             bail!("model asset has wrong size: {}", path.display());
         }
         if sha256_file(&path)? != required.sha256 {
@@ -281,7 +480,7 @@ fn emit(
 ) -> Result<()> {
     match format {
         ProgressFormat::Human => match (current, total) {
-            (Some(current), Some(total)) if event == "download-progress" => {
+            (Some(current), Some(total)) if event.ends_with("download-progress") => {
                 eprint!(
                     "\rDownloading {}: {:>3}%",
                     spec.id,
@@ -290,7 +489,7 @@ fn emit(
                 std::io::stderr().flush()?;
             }
             _ => {
-                if event == "downloaded" {
+                if event.ends_with("downloaded") {
                     eprintln!();
                 }
                 eprintln!("{}: {}", event, spec.id);

@@ -18,6 +18,15 @@ pub struct RequiredFile {
 }
 
 #[derive(Clone, Copy, Debug, Serialize)]
+pub struct SupplementalFile {
+    pub path: &'static str,
+    pub supersedes: &'static str,
+    pub url: &'static str,
+    pub size: u64,
+    pub sha256: &'static str,
+}
+
+#[derive(Clone, Copy, Debug, Serialize)]
 pub struct ModelSpec {
     pub id: &'static str,
     pub backend: &'static str,
@@ -42,6 +51,7 @@ pub struct ModelSpec {
     pub steps: i32,
     pub npu_capable: bool,
     pub required_files: &'static [RequiredFile],
+    pub supplemental_files: &'static [SupplementalFile],
 }
 
 const BACKENDS: &[BackendSpec] = &[BackendSpec {
@@ -117,6 +127,52 @@ const SUPERTONIC_FILES: &[RequiredFile] = &[
     },
 ];
 
+const SUPERTONIC_NPU_FILES: &[RequiredFile] = &[
+    RequiredFile {
+        path: "duration_predictor.int8.onnx",
+        size: 3_700_147,
+        sha256: "c3eb91414d5ff8a7a239b7fe9e34e7e2bf8a8140d8375ffb14718b1c639325db",
+    },
+    RequiredFile {
+        path: "text_encoder.int8.onnx",
+        size: 36_416_150,
+        sha256: "c7befd5ea8c3119769e8a6c1486c4edc6a3bc8365c67621c881bbb774b9902ff",
+    },
+    RequiredFile {
+        path: "vector_estimator.onnx",
+        size: 256_534_781,
+        sha256: "883ac868ea0275ef0e991524dc64f16b3c0376efd7c320af6b53f5b780d7c61c",
+    },
+    RequiredFile {
+        path: "vocoder.int8.onnx",
+        size: 25_991_073,
+        sha256: "e923d60f53f95eb1ce235f1dc33ec56d9c057823c96fa6f8acf98f32b0da6152",
+    },
+    RequiredFile {
+        path: "tts.json",
+        size: 8_253,
+        sha256: "42078d3aef1cd43ab43021f3c54f47d2d75ceb4e75f627f118890128b06a0d09",
+    },
+    RequiredFile {
+        path: "unicode_indexer.bin",
+        size: 262_144,
+        sha256: "8402ca48e5189a8950138580b0fff64db6f072f24ac07cd54ba8b2fbb9883b30",
+    },
+    RequiredFile {
+        path: "voice.bin",
+        size: 517_168,
+        sha256: "67d5209b0ee8ce6c74105ffbe12fe6a7628aea3b4ba2fcb308a4a67938a93ce8",
+    },
+];
+
+const SUPERTONIC_NPU_SUPPLEMENTS: &[SupplementalFile] = &[SupplementalFile {
+    path: "vector_estimator.onnx",
+    supersedes: "vector_estimator.int8.onnx",
+    url: "https://huggingface.co/Supertone/supertonic-3/resolve/724fb5abbf5502583fb520898d45929e62f02c0b/onnx/vector_estimator.onnx?download=true",
+    size: 256_534_781,
+    sha256: "883ac868ea0275ef0e991524dc64f16b3c0376efd7c320af6b53f5b780d7c61c",
+}];
+
 const MODELS: &[ModelSpec] = &[
     ModelSpec {
         id: "en_US-lessac-medium",
@@ -142,6 +198,7 @@ const MODELS: &[ModelSpec] = &[
         steps: 5,
         npu_capable: false,
         required_files: LESSAC_FILES,
+        supplemental_files: &[],
     },
     ModelSpec {
         id: "supertonic-3-int8",
@@ -167,6 +224,33 @@ const MODELS: &[ModelSpec] = &[
         steps: 5,
         npu_capable: false,
         required_files: SUPERTONIC_FILES,
+        supplemental_files: &[],
+    },
+    ModelSpec {
+        id: "supertonic-3-npu",
+        backend: "sherpa-onnx",
+        family: "supertonic",
+        name: "supertonic-3-npu",
+        description: "Supertonic 3 for Intel NPU (FP32 vector estimator; 31 languages)",
+        archive_url: "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/sherpa-onnx-supertonic-3-tts-int8-2026-05-11.tar.bz2",
+        archive_size: 128_774_318,
+        archive_sha256: "82fa96f91c4ef8abaae3a14a3f4153facf88bed821d1f7331cec2700f432c427",
+        archive_root: "sherpa-onnx-supertonic-3-tts-int8-2026-05-11",
+        model_file: "",
+        tokens_file: "",
+        data_directory: "",
+        duration_predictor: "duration_predictor.int8.onnx",
+        text_encoder: "text_encoder.int8.onnx",
+        vector_estimator: "vector_estimator.onnx",
+        vocoder: "vocoder.int8.onnx",
+        tts_json: "tts.json",
+        unicode_indexer: "unicode_indexer.bin",
+        voice_style: "voice.bin",
+        language: "en",
+        steps: 5,
+        npu_capable: true,
+        required_files: SUPERTONIC_NPU_FILES,
+        supplemental_files: SUPERTONIC_NPU_SUPPLEMENTS,
     },
 ];
 
