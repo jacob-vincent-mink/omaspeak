@@ -74,23 +74,48 @@ impl Engine {
     pub fn load_with(
         config: &Config,
         paths: &AppPaths,
-        create_backend: impl FnOnce(&Config, &AppPaths, Runtime) -> Result<Box<dyn TtsBackend>>,
+        create_backend: impl FnMut(&Config, &AppPaths, Runtime) -> Result<Box<dyn TtsBackend>>,
+    ) -> Result<Self> {
+        Self::load_with_capabilities(config, paths, compiled_capabilities(), create_backend)
+    }
+
+    fn load_with_capabilities(
+        config: &Config,
+        paths: &AppPaths,
+        capabilities: &[&str],
+        mut create_backend: impl FnMut(&Config, &AppPaths, Runtime) -> Result<Box<dyn TtsBackend>>,
     ) -> Result<Self> {
         config.backend.validate_shape()?;
-        let (effective_runtime, fallback_used) = match config
-            .backend
-            .validate_capabilities(compiled_capabilities())
-        {
-            Ok(()) => (config.backend.runtime, false),
-            Err(error) if config.backend.fallback == Fallback::Cpu => {
-                eprintln!("omaspeak: warning: {error}; falling back to cpu");
-                (Runtime::Default, true)
-            }
-            Err(error) => return Err(error.into()),
-        };
+        let (mut effective_runtime, mut fallback_used) =
+            match config.backend.validate_capabilities(capabilities) {
+                Ok(()) => (config.backend.runtime, false),
+                Err(error) if config.backend.fallback == Fallback::Cpu => {
+                    eprintln!("omaspeak: warning: {error}; falling back to cpu");
+                    (Runtime::Default, true)
+                }
+                Err(error) => return Err(error.into()),
+            };
 
         let started = Instant::now();
-        let backend = create_backend(config, paths, effective_runtime)?;
+        let backend = match create_backend(config, paths, effective_runtime) {
+            Ok(backend) => backend,
+            Err(accelerator_error)
+                if effective_runtime != Runtime::Default
+                    && config.backend.fallback == Fallback::Cpu =>
+            {
+                eprintln!(
+                    "omaspeak: warning: accelerated backend initialization failed: {accelerator_error:#}; falling back to cpu"
+                );
+                effective_runtime = Runtime::Default;
+                fallback_used = true;
+                create_backend(config, paths, Runtime::Default).with_context(|| {
+                    format!(
+                        "accelerated backend initialization failed ({accelerator_error:#}); CPU fallback also failed"
+                    )
+                })?
+            }
+            Err(error) => return Err(error),
+        };
         let load_time = started.elapsed();
         let sample_rate = backend.sample_rate();
         let backend_kind = backend.kind();
@@ -176,7 +201,7 @@ fn build_sherpa_config(
     };
     let provider = match runtime {
         Runtime::Default => "cpu".to_owned(),
-        Runtime::Cuda => "cuda".to_owned(),
+        Runtime::Cuda => cuda_provider(config, paths)?,
         Runtime::Openvino => openvino_provider(config, paths)?,
     };
     let mut model = OfflineTtsModelConfig {
@@ -249,27 +274,73 @@ fn openvino_provider(config: &Config, paths: &AppPaths) -> Result<String> {
     let provider_config = if supplied.is_empty() {
         generate_openvino_provider_config(config, paths)?
     } else {
-        let supplied = PathBuf::from(supplied);
-        let supplied = if supplied.is_absolute() {
-            supplied
-        } else {
-            paths
-                .config_file
-                .parent()
-                .unwrap_or_else(|| Path::new("."))
-                .join(supplied)
-        };
-        if !supplied.is_file() {
-            bail!(
-                "OpenVINO provider config is not an existing file: {}",
-                supplied.display()
-            );
-        }
-        supplied
-            .canonicalize()
-            .with_context(|| format!("resolve OpenVINO provider config {}", supplied.display()))?
+        resolve_provider_config(supplied, paths, "OpenVINO")?
     };
     Ok(format!("openvino:{}", provider_config.display()))
+}
+
+fn cuda_provider(config: &Config, paths: &AppPaths) -> Result<String> {
+    config.backend.validate_shape()?;
+    let supplied = config.backend.provider_config.trim();
+    let provider_config = if supplied.is_empty() {
+        generate_cuda_provider_config(config, paths)?
+    } else {
+        resolve_provider_config(supplied, paths, "CUDA")?
+    };
+    Ok(format!("cuda:{}", provider_config.display()))
+}
+
+fn resolve_provider_config(supplied: &str, paths: &AppPaths, runtime: &str) -> Result<PathBuf> {
+    let supplied = PathBuf::from(supplied);
+    let supplied = if supplied.is_absolute() {
+        supplied
+    } else {
+        paths
+            .config_file
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join(supplied)
+    };
+    if !supplied.is_file() {
+        bail!(
+            "{runtime} provider config is not an existing file: {}",
+            supplied.display()
+        );
+    }
+    supplied
+        .canonicalize()
+        .with_context(|| format!("resolve {runtime} provider config {}", supplied.display()))
+}
+
+fn generate_cuda_provider_config(config: &Config, paths: &AppPaths) -> Result<PathBuf> {
+    let directory = paths
+        .state_dir
+        .join("cache")
+        .join("cuda")
+        .join(format!("device-{}", config.backend.device_id));
+    create_private_directory(&directory)?;
+    let directory = directory
+        .canonicalize()
+        .with_context(|| format!("resolve CUDA cache directory {}", directory.display()))?;
+
+    let mut options = config.backend.options.clone();
+    if options.contains_key("device_id") {
+        bail!("backend.options.device_id is managed by backend.device_id");
+    }
+    options
+        .entry("cudnn_conv_algo_search".to_owned())
+        .or_insert_with(|| "HEURISTIC".to_owned());
+    options.insert("device_id".to_owned(), config.backend.device_id.to_string());
+    let mut contents = String::new();
+    for (key, value) in options {
+        contents.push_str(&key);
+        contents.push('=');
+        contents.push_str(&value);
+        contents.push('\n');
+    }
+    let provider_config = directory.join("provider.config");
+    write_private_atomic(&provider_config, contents.as_bytes())?;
+    Ok(provider_config)
 }
 
 fn generate_openvino_provider_config(config: &Config, paths: &AppPaths) -> Result<PathBuf> {
@@ -356,10 +427,10 @@ fn generate_openvino_provider_config(config: &Config, paths: &AppPaths) -> Resul
 
 fn create_private_directory(path: &Path) -> Result<()> {
     fs::create_dir_all(path)
-        .with_context(|| format!("create private OpenVINO directory {}", path.display()))?;
+        .with_context(|| format!("create private runtime directory {}", path.display()))?;
     #[cfg(unix)]
     fs::set_permissions(path, fs::Permissions::from_mode(0o700))
-        .with_context(|| format!("protect OpenVINO directory {}", path.display()))?;
+        .with_context(|| format!("protect runtime directory {}", path.display()))?;
     Ok(())
 }
 
@@ -367,7 +438,7 @@ fn write_private_atomic(path: &Path, contents: &[u8]) -> Result<()> {
     static TEMPORARY_ID: AtomicU64 = AtomicU64::new(0);
     let parent = path
         .parent()
-        .context("OpenVINO provider config has no parent directory")?;
+        .context("provider config has no parent directory")?;
     let unique = TEMPORARY_ID.fetch_add(1, Ordering::Relaxed);
     let temporary = parent.join(format!(
         ".provider.config.{}.{}.tmp",
@@ -387,7 +458,7 @@ fn write_private_atomic(path: &Path, contents: &[u8]) -> Result<()> {
         file.sync_all()
             .with_context(|| format!("sync temporary provider config {}", temporary.display()))?;
         fs::rename(&temporary, path)
-            .with_context(|| format!("install OpenVINO provider config {}", path.display()))?;
+            .with_context(|| format!("install provider config {}", path.display()))?;
         Ok(())
     })();
     if result.is_err() {

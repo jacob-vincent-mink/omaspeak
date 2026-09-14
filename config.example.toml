@@ -8,6 +8,11 @@ device_id = 0
 provider_config = ""
 
 [backend.options]
+# CUDA EP V2 examples (used when runtime = "cuda"):
+# cudnn_conv_algo_search = "HEURISTIC"
+# gpu_mem_limit = "4294967296"
+# do_copy_in_default_stream = "1"
+# OpenVINO examples (used when runtime = "openvino"):
 # ProfilingFilePrefix = "/tmp/omaspeak-openvino"
 # disable_dynamic_shapes = "False" # overrides the generated NPU default of True
 # load_config = '{"NPU":{"NPU_PLATFORM":"5010"}}' # host-specific ORT device properties

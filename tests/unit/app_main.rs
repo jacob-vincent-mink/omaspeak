@@ -13,6 +13,7 @@ fn sandbox() -> PathBuf {
         std::process::id(),
         NEXT.fetch_add(1, Ordering::Relaxed)
     ));
+    let _ = fs::remove_dir_all(&path);
     fs::create_dir_all(&path).unwrap();
     path
 }
@@ -270,12 +271,18 @@ fn socket_client_sends_newline_delimited_request_and_decodes_response() {
         stream.write_all(b"\n").unwrap();
     });
 
-    let response = send_request(&socket, &request(Command::Shutdown)).unwrap();
+    let response = try_send_request(&socket, &request(Command::Shutdown))
+        .unwrap()
+        .unwrap();
     assert_eq!(response.id, "request-id");
     assert!(matches!(response.result, ResultPayload::Shutdown));
     server.join().unwrap();
 
-    assert!(send_request(&root.join("missing.sock"), &request(Command::Status)).is_err());
+    assert!(
+        try_send_request(&root.join("missing.sock"), &request(Command::Status))
+            .unwrap()
+            .is_none()
+    );
 
     let invalid_socket = root.join("invalid.sock");
     let listener = UnixListener::bind(&invalid_socket).unwrap();
@@ -285,7 +292,39 @@ fn socket_client_sends_newline_delimited_request_and_decodes_response() {
         BufReader::new(&mut stream).read_line(&mut line).unwrap();
         stream.write_all(b"invalid\n").unwrap();
     });
-    assert!(send_request(&invalid_socket, &request(Command::Status)).is_err());
+    assert!(try_send_request(&invalid_socket, &request(Command::Status)).is_err());
+    server.join().unwrap();
+
+    let status_socket = root.join("status.sock");
+    let listener = UnixListener::bind(&status_socket).unwrap();
+    let server = thread::spawn(move || {
+        for _ in 0..2 {
+            let (mut stream, _) = listener.accept().unwrap();
+            let incoming = read_request(&mut stream, 4096).unwrap();
+            assert!(matches!(incoming.command, Command::Status));
+            serde_json::to_writer(
+                &mut stream,
+                &Response {
+                    protocol: 1,
+                    id: incoming.id,
+                    result: ResultPayload::Status {
+                        running: true,
+                        pid: 42,
+                        model: "test-model".into(),
+                        sample_rate: 24_000,
+                        backend: json!({"kind": "test"}),
+                    },
+                },
+            )
+            .unwrap();
+            stream.write_all(b"\n").unwrap();
+        }
+    });
+    let mut status_paths = paths(&root);
+    status_paths.runtime_dir = root.clone();
+    fs::rename(&status_socket, status_paths.socket()).unwrap();
+    print_status(Path::new("unused.toml"), &status_paths, false).unwrap();
+    print_status(Path::new("unused.toml"), &status_paths, true).unwrap();
     server.join().unwrap();
 }
 
@@ -407,6 +446,7 @@ fn config_helpers_cover_supported_values_defaults_and_schema() {
         ("backend.fallback", "CPU"),
         ("backend.device_id", "2"),
         ("backend.provider_config", "provider.json"),
+        ("backend.options.ProfilingFilePrefix", "/tmp/ort-profile"),
         ("model.family", "vits"),
         ("model.name", "custom-model"),
         ("model.directory", "/models/custom"),
@@ -423,8 +463,14 @@ fn config_helpers_cover_supported_values_defaults_and_schema() {
         ("model.language", "fr"),
         ("model.steps", "8"),
         ("model.voice", "3"),
+        ("model.noise_scale", "0.4"),
+        ("model.noise_scale_w", "0.6"),
+        ("model.length_scale", "1.2"),
+        ("model.options.custom_key", "custom-value"),
         ("audio.device", "speakers"),
         ("audio.volume", "0.5"),
+        ("daemon.queue_capacity", "12"),
+        ("daemon.max_text_bytes", "4096"),
     ];
     for (key, value) in assignments {
         set_config(&mut config, key, value).unwrap();
@@ -432,11 +478,18 @@ fn config_helpers_cover_supported_values_defaults_and_schema() {
     assert_eq!(config.backend.runtime, Runtime::Openvino);
     assert_eq!(config.backend.fallback, Fallback::Cpu);
     assert_eq!(config.backend.threads, 7);
+    assert_eq!(
+        config.backend.options.get("ProfilingFilePrefix"),
+        Some(&"/tmp/ort-profile".to_string())
+    );
     assert_eq!(config.model.voice, 3);
     assert_eq!(config.model.language, "fr");
     assert_eq!(config.model.steps, 8);
+    assert_eq!(config.model.noise_scale, 0.4);
+    assert_eq!(config.daemon.queue_capacity, 12);
     assert_eq!(config.audio.volume, 0.5);
     assert!(set_config(&mut config, "unknown", "x").is_err());
+    assert!(set_config(&mut config, "backend.options.", "x").is_err());
     assert!(set_config(&mut config, "backend.threads", "many").is_err());
 
     save_config(&paths.config_file, &config).unwrap();
@@ -458,6 +511,7 @@ fn config_helpers_cover_supported_values_defaults_and_schema() {
         unset_config(&mut config, key).unwrap();
     }
     assert!(unset_config(&mut config, "unknown").is_err());
+    assert!(unset_config(&mut config, "model.options.").is_err());
     let defaults = Config::default();
     assert_eq!(config.backend.kind, defaults.backend.kind);
     assert_eq!(config.model.name, defaults.model.name);
@@ -468,6 +522,37 @@ fn config_helpers_cover_supported_values_defaults_and_schema() {
     assert!(parse_runtime("metal").is_err());
     assert_eq!(parse_fallback("error").unwrap(), Fallback::Error);
     assert!(parse_fallback("maybe").is_err());
+}
+
+#[test]
+fn runtime_config_mutations_reconcile_provider_specific_state() {
+    let root = sandbox();
+    let paths = paths(&root);
+    let mut config = Config::default();
+    config.backend.runtime = Runtime::Cuda;
+    config.backend.device = "gpu".into();
+    config.backend.device_id = 1;
+    config.backend.provider_config = "cuda.config".into();
+    config
+        .backend
+        .options
+        .insert("cudnn_conv_algo_search".into(), "HEURISTIC".into());
+    config.save(&paths.config_file).unwrap();
+
+    config_command(
+        ConfigCommand::Unset {
+            key: "backend.runtime".into(),
+        },
+        &paths.config_file,
+        &paths,
+    )
+    .unwrap();
+    let saved = Config::load(&paths.config_file).unwrap();
+    assert_eq!(saved.backend.runtime, Runtime::Default);
+    assert_eq!(saved.backend.device, "auto");
+    assert_eq!(saved.backend.device_id, 0);
+    assert!(saved.backend.provider_config.is_empty());
+    assert!(saved.backend.options.is_empty());
 }
 
 #[test]
@@ -830,19 +915,48 @@ fn daemon_cleanup_runs_after_success_and_failure() {
         let root = sandbox().join(name);
         fs::create_dir_all(&root).unwrap();
         let socket = root.join("control.sock");
-        fs::write(&socket, b"socket placeholder").unwrap();
+        let listener = match UnixListener::bind(&socket) {
+            Ok(listener) => listener,
+            Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => return,
+            Err(error) => panic!("bind test socket: {error}"),
+        };
+        let metadata = fs::symlink_metadata(&socket).unwrap();
+        drop(listener);
 
-        let finished = finish_daemon(&socket, result);
+        let finished = finish_daemon(&socket, &metadata, result);
         assert!(!socket.exists());
         assert_eq!(finished.is_err(), name == "failure");
     }
 
-    finish_daemon(&sandbox().join("already-gone.sock"), Ok(())).unwrap();
+    let absent_root = sandbox();
+    let absent_socket = absent_root.join("already-gone.sock");
+    let temporary = absent_root.join("temporary.sock");
+    let listener = UnixListener::bind(&temporary).unwrap();
+    let metadata = fs::symlink_metadata(&temporary).unwrap();
+    drop(listener);
+    fs::remove_file(&temporary).unwrap();
+    finish_daemon(&absent_socket, &metadata, Ok(())).unwrap();
 
     let directory_instead_of_socket = sandbox().join("socket-directory");
     fs::create_dir_all(&directory_instead_of_socket).unwrap();
-    finish_daemon(&directory_instead_of_socket, Ok(())).unwrap();
+    let metadata = fs::symlink_metadata(&directory_instead_of_socket).unwrap();
+    finish_daemon(&directory_instead_of_socket, &metadata, Ok(())).unwrap();
     assert!(directory_instead_of_socket.is_dir());
+}
+
+#[test]
+fn interrupted_daemon_accept_exits_for_graceful_socket_cleanup() {
+    let root = sandbox();
+    let socket = root.join("control.sock");
+    let listener = match UnixListener::bind(socket) {
+        Ok(listener) => listener,
+        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => return,
+        Err(error) => panic!("bind test socket: {error}"),
+    };
+    listener.set_nonblocking(true).unwrap();
+    let interrupted = AtomicBool::new(true);
+    let error = accept_daemon_connection(&listener, &interrupted).unwrap_err();
+    assert!(error.downcast_ref::<DaemonInterrupted>().is_some());
 }
 
 #[test]
@@ -879,29 +993,113 @@ fn config_override_becomes_the_effective_app_paths_config_file() {
 }
 
 #[test]
-fn socket_presence_routes_commands_through_connection_errors() {
+fn stale_socket_falls_back_locally_and_offline_commands_clean_it_up() {
     let root = sandbox();
     let paths = paths(&root);
     Config::default().save(&paths.config_file).unwrap();
     fs::create_dir_all(&paths.runtime_dir).unwrap();
-    fs::write(paths.socket(), b"not a socket").unwrap();
+    let socket = paths.socket();
 
-    assert!(
-        say(
-            &paths.config_file,
-            &paths,
-            SayArgs {
-                text: Some("hello".into()),
-                voice: None,
-                speed: None,
-                out: None,
-                no_play: true,
-            },
-        )
-        .is_err()
+    let listener = match UnixListener::bind(&socket) {
+        Ok(listener) => listener,
+        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => return,
+        Err(error) => panic!("bind stale test socket: {error}"),
+    };
+    drop(listener);
+    let local_called = Arc::new(AtomicUsize::new(0));
+    let called = local_called.clone();
+    let response = send_or_handle_locally(&socket, request(Command::Status), move |_| {
+        called.fetch_add(1, Ordering::Relaxed);
+        Ok(Response {
+            protocol: 1,
+            id: "local".into(),
+            result: ResultPayload::Shutdown,
+        })
+    })
+    .unwrap();
+    assert!(matches!(response.result, ResultPayload::Shutdown));
+    assert_eq!(local_called.load(Ordering::Relaxed), 1);
+    assert!(!socket.exists());
+
+    let listener = UnixListener::bind(&socket).unwrap();
+    drop(listener);
+    print_status(&paths.config_file, &paths, false).unwrap();
+    assert!(!socket.exists());
+
+    let listener = UnixListener::bind(&socket).unwrap();
+    drop(listener);
+    assert_eq!(
+        stop(&paths).unwrap_err().to_string(),
+        "daemon is not running"
     );
-    assert!(print_status(&paths.config_file, &paths, false).is_err());
-    assert!(stop(&paths).is_err());
+    assert!(!socket.exists());
+}
+
+#[test]
+fn refused_non_socket_path_is_never_removed() {
+    let root = sandbox();
+    let socket = root.join("control.sock");
+    fs::write(&socket, b"not a socket").unwrap();
+    assert!(try_send_request(&socket, &request(Command::Status)).is_err());
+    assert_eq!(fs::read(&socket).unwrap(), b"not a socket");
+}
+
+#[test]
+fn stale_socket_connection_errors_cover_kernel_variants() {
+    for kind in [
+        std::io::ErrorKind::ConnectionRefused,
+        std::io::ErrorKind::ConnectionReset,
+        std::io::ErrorKind::ConnectionAborted,
+        std::io::ErrorKind::NotFound,
+    ] {
+        assert!(indicates_stale_socket(kind));
+    }
+    assert!(!indicates_stale_socket(
+        std::io::ErrorKind::PermissionDenied
+    ));
+}
+
+#[test]
+fn offline_socket_paths_cover_local_dispatch_and_safe_errors() {
+    use std::os::unix::ffi::OsStringExt;
+
+    let root = sandbox();
+    let paths = paths(&root);
+    Config::default().save(&paths.config_file).unwrap();
+    let socket = paths.socket();
+
+    voices(&paths.config_file, false).unwrap();
+    voices(&paths.config_file, true).unwrap();
+
+    let response = send_or_handle_locally(&socket, request(Command::Status), |request| {
+        Ok(Response {
+            protocol: request.protocol,
+            id: request.id,
+            result: ResultPayload::Shutdown,
+        })
+    })
+    .unwrap();
+    assert!(matches!(response.result, ResultPayload::Shutdown));
+    print_status(&paths.config_file, &paths, false).unwrap();
+    assert_eq!(
+        stop(&paths).unwrap_err().to_string(),
+        "daemon is not running"
+    );
+
+    let regular = root.join("not-a-socket");
+    fs::write(&regular, "keep").unwrap();
+    let metadata = fs::symlink_metadata(&regular).unwrap();
+    assert!(remove_stale_socket(&regular, &metadata).is_err());
+    assert_eq!(fs::read_to_string(&regular).unwrap(), "keep");
+
+    let invalid = PathBuf::from(std::ffi::OsString::from_vec(b"bad\0socket".to_vec()));
+    assert!(
+        connect_daemon(&invalid)
+            .unwrap_err()
+            .to_string()
+            .contains("inspect daemon socket")
+    );
+    assert_eq!(DaemonInterrupted.to_string(), "daemon interrupted");
 }
 
 #[test]
@@ -1041,6 +1239,28 @@ fn guided_runtime_preselects_current_values_and_saves_selection() {
         Config::load(&paths.config_file).unwrap().backend.device,
         "cpu"
     );
+}
+
+#[test]
+fn guided_runtime_change_clears_provider_specific_configuration() {
+    let root = sandbox();
+    let paths = paths(&root);
+    let mut config = Config::default();
+    config.backend.runtime = Runtime::Openvino;
+    config.backend.device = "gpu".into();
+    config.backend.provider_config = "openvino.conf".into();
+    config
+        .backend
+        .options
+        .insert("device_type".into(), "GPU".into());
+    config.save(&paths.config_file).unwrap();
+
+    save_runtime(&paths.config_file, Runtime::Default, "cpu").unwrap();
+    let saved = Config::load(&paths.config_file).unwrap();
+    assert_eq!(saved.backend.runtime, Runtime::Default);
+    assert_eq!(saved.backend.device, "cpu");
+    assert!(saved.backend.provider_config.is_empty());
+    assert!(saved.backend.options.is_empty());
 }
 
 #[test]
@@ -1281,7 +1501,7 @@ fn confirmed_full_setup_applies_runtime_model_and_launcher_but_leaves_service_un
 }
 
 #[test]
-fn daemon_socket_preparation_creates_private_dirs_and_removes_stale_files() {
+fn daemon_socket_preparation_creates_private_dirs_and_preserves_non_socket_paths() {
     use std::os::unix::fs::PermissionsExt;
 
     let root = sandbox();
@@ -1299,8 +1519,8 @@ fn daemon_socket_preparation_creates_private_dirs_and_removes_stale_files() {
     );
 
     fs::write(&socket, b"stale").unwrap();
-    assert_eq!(prepare_daemon_socket(&paths).unwrap(), socket);
-    assert!(!socket.exists());
+    assert!(prepare_daemon_socket(&paths).is_err());
+    assert_eq!(fs::read(&socket).unwrap(), b"stale");
 }
 
 #[test]

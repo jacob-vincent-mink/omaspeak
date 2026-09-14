@@ -10,11 +10,13 @@ fn defaults_to_cpu_runtime() {
             .validate_capabilities(compiled_capabilities())
             .is_ok()
     );
-    if cfg!(feature = "openvino") {
-        assert_eq!(compiled_capabilities(), &["cpu", "openvino"]);
-    } else {
-        assert_eq!(compiled_capabilities(), &["cpu"]);
-    }
+    let expected: &[&str] = match (cfg!(feature = "openvino"), cfg!(feature = "cuda")) {
+        (true, true) => &["cpu", "openvino", "cuda"],
+        (true, false) => &["cpu", "openvino"],
+        (false, true) => &["cpu", "cuda"],
+        (false, false) => &["cpu"],
+    };
+    assert_eq!(compiled_capabilities(), expected);
 }
 
 #[test]
@@ -47,6 +49,16 @@ fn validates_runtime_device_matrix() {
     assert!(canonical_device(Runtime::Openvino, "hetero:GPU").is_err());
     assert!(canonical_device(Runtime::Openvino, "multi:").is_err());
     assert!(canonical_device(Runtime::Openvino, "auto:TPU").is_err());
+    assert!(canonical_device(Runtime::Openvino, "unknown:GPU,CPU").is_err());
+
+    let invalid_device_id = BackendConfig {
+        device_id: 1,
+        ..Default::default()
+    };
+    assert_eq!(
+        invalid_device_id.validate_shape(),
+        Err(BackendError::InvalidDeviceId)
+    );
 }
 
 #[test]

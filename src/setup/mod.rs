@@ -239,7 +239,14 @@ pub fn print_runtime(json: bool) -> Result<()> {
                 "unavailable in this build"
             }
         );
-        println!("  cuda       auto, gpu                 unavailable in this build");
+        println!(
+            "  cuda       auto, gpu                 {}",
+            if crate::backend::compiled_capabilities().contains(&"cuda") {
+                "available"
+            } else {
+                "unavailable in this build"
+            }
+        );
         println!("  OpenVINO also accepts AUTO:<devices>, HETERO:<devices>, and MULTI:<devices>.");
         println!("\nCatalog models:");
         for model in catalog::models() {

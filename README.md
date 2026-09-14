@@ -18,6 +18,29 @@ export SHERPA_ONNX_LIB_DIR=/absolute/path/to/openvino-enabled-sherpa-onnx/lib
 cargo build --release --features openvino
 ```
 
+A CUDA build uses the same shared-runtime boundary. Point
+`SHERPA_ONNX_LIB_DIR` at a sherpa-onnx/ONNX Runtime stack built with the CUDA
+Execution Provider and Omaspeak's tracked sherpa patch, then enable `cuda`:
+
+```bash
+export SHERPA_ONNX_LIB_DIR=/absolute/path/to/cuda-enabled-sherpa-onnx/lib
+cargo build --release --features cuda
+```
+
+The distributable Linux build enables every runtime in one application binary:
+
+```bash
+export SHERPA_ONNX_LIB_DIR=/absolute/path/to/openvino-and-cuda-runtime/lib
+cargo build --release --all-features
+```
+
+That shared native stack must contain both
+`libonnxruntime_providers_openvino.so` and
+`libonnxruntime_providers_cuda.so`. Runtime selection remains a config choice;
+the binary does not initialize an accelerator until a command loads a model
+with that runtime selected. The relevant provider library, vendor runtime, and
+device driver must be discoverable when the command runs.
+
 Supertonic currently also requires the ORT 1.29 zero-element tensor patch in
 [`native/openvino/patches`](native/openvino/patches).
 Stock ORT 1.29 OpenVINO EP aborts when Supertonic passes a zero-element tensor
@@ -25,6 +48,13 @@ across a provider partition boundary. The pinned, reproducible native build is
 documented in [`native/openvino`](native/openvino/README.md). It also carries
 the sherpa patch for selecting OpenVINO independently for each Supertonic
 component.
+
+[`native/cuda`](native/cuda/README.md) builds the CUDA-only stack on Linux
+x86_64 or aarch64. [`native/unified`](native/unified/README.md) builds the
+x86_64 stack used by release CI and documents what the all-runtime archive
+bundles versus what the host must provide.
+The [GB10 CUDA validation](benchmarks/cuda-gb10-2026-09-14.md) records Piper
+and Supertonic placement, signal quality, and CPU comparisons.
 
 At runtime, make the matching ONNX Runtime, sherpa-onnx, and OpenVINO shared
 libraries discoverable (for example with their setup script or
@@ -123,8 +153,9 @@ omaspeak config set backend.device npu
 For this catalog entry, the generated NPU provider config submits all four
 Supertonic components to OpenVINO. An explicit
 `backend.options.SherpaOnnx.SupertonicComponents` value still overrides that
-default. The original `supertonic-3-int8` catalog entry and custom Supertonic
-models retain the validated mixed placement.
+default. On OpenVINO NPU, the original `supertonic-3-int8` catalog entry and
+custom Supertonic models retain the validated mixed component placement
+described below.
 
 Supertonic supports `en`, `ko`, `ja`, `ar`, `bg`, `cs`, `da`, `de`, `el`,
 `es`, `et`, `fi`, `fr`, `hi`, `hr`, `hu`, `id`, `it`, `lt`, `lv`, `nl`,
@@ -165,7 +196,29 @@ omaspeak stop
 
 ## Backends
 
-Omaspeak uses the same runtime/device matrix as Omawake: `default` with `auto|cpu`, `cuda` with `auto|gpu`, and OpenVINO with individual `cpu|gpu|npu` or `AUTO`, `HETERO`, and `MULTI` device lists. The CPU release fails closed for unavailable providers unless `fallback = "cpu"`; a fallback is warned and reported. OpenVINO and CUDA require provider-specific builds.
+Omaspeak uses the same runtime/device matrix as Omawake: `default` with `auto|cpu`, `cuda` with `auto|gpu`, and OpenVINO with individual `cpu|gpu|npu` or `AUTO`, `HETERO`, and `MULTI` device lists. Builds fail closed for unavailable providers unless `fallback = "cpu"`; a fallback is warned and reported. Release binaries expose CPU, OpenVINO, and CUDA from one executable and select the configured provider when the model loads.
+
+With `runtime = "cuda"`, Omaspeak writes a private provider configuration below
+`$XDG_STATE_HOME/omaspeak/cache/cuda/device-<id>/`. `backend.device_id` selects
+the NVIDIA device. String-valued `[backend.options]` entries are forwarded to
+ONNX Runtime's CUDA EP V2 option map, which supports settings such as
+`cudnn_conv_algo_search`, `gpu_mem_limit`, `arena_extend_strategy`, and
+`do_copy_in_default_stream`. Omaspeak defaults the cuDNN search to `HEURISTIC`
+to avoid ONNX Runtime's expensive exhaustive search during cold loads.
+`backend.options.device_id` is reserved; use the
+typed `backend.device_id` setting instead. An explicit `backend.provider_config`
+path bypasses generation for advanced cases. Relative paths resolve beside the
+Omaspeak config file. Supertonic submits all four component graphs to CUDA by
+default; `SherpaOnnx.SupertonicComponents` can restrict acceleration to a
+comma-separated component list.
+
+Provider and model option maps can also be managed without editing TOML:
+
+```bash
+omaspeak config set backend.options.gpu_mem_limit 4294967296
+omaspeak config set backend.options.ProfilingFilePrefix /tmp/omaspeak-profile
+omaspeak config unset backend.options.ProfilingFilePrefix
+```
 
 With `runtime = "openvino"`, Omaspeak passes sherpa an absolute
 `openvino:/.../provider.config` provider string. If `provider_config` is set,

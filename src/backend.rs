@@ -141,13 +141,11 @@ fn valid_supertonic_components(value: &str) -> bool {
 }
 
 pub const fn compiled_capabilities() -> &'static [&'static str] {
-    #[cfg(feature = "openvino")]
-    {
-        &["cpu", "openvino"]
-    }
-    #[cfg(not(feature = "openvino"))]
-    {
-        &["cpu"]
+    match (cfg!(feature = "openvino"), cfg!(feature = "cuda")) {
+        (true, true) => &["cpu", "openvino", "cuda"],
+        (true, false) => &["cpu", "openvino"],
+        (false, true) => &["cpu", "cuda"],
+        (false, false) => &["cpu"],
     }
 }
 

@@ -177,7 +177,12 @@ fn sherpa_config_is_built_without_loading_untrusted_native_models() {
     );
 
     let cuda = build_sherpa_config(&config, &paths, Runtime::Cuda).unwrap();
-    assert_eq!(cuda.model.provider.as_deref(), Some("cuda"));
+    let provider = cuda.model.provider.unwrap();
+    assert!(provider.starts_with("cuda:"));
+    assert_eq!(
+        fs::read_to_string(provider.strip_prefix("cuda:").unwrap()).unwrap(),
+        "cudnn_conv_algo_search=HEURISTIC\ndevice_id=0\n"
+    );
 
     config.model.family = "unknown".into();
     assert!(build_sherpa_config(&config, &paths, Runtime::Default).is_err());
@@ -185,6 +190,66 @@ fn sherpa_config_is_built_without_loading_untrusted_native_models() {
     fs::remove_file(directory.join(&config.model.model_file)).unwrap();
     assert!(build_sherpa_config(&config, &paths, Runtime::Default).is_err());
     assert!(build_sherpa_config(&config, &paths, Runtime::Openvino).is_err());
+}
+
+#[test]
+fn cuda_provider_config_selects_device_and_forwards_options() {
+    let root = temp("cuda-generated");
+    let paths = paths(&root);
+    let mut config = Config::default();
+    config.backend.runtime = Runtime::Cuda;
+    config.backend.device = "gpu".into();
+    config.backend.device_id = 2;
+    config
+        .backend
+        .options
+        .insert("cudnn_conv_algo_search".into(), "HEURISTIC".into());
+    config
+        .backend
+        .options
+        .insert("gpu_mem_limit".into(), "4294967296".into());
+    install_model_assets(&config, &paths);
+
+    let native = build_sherpa_config(&config, &paths, Runtime::Cuda).unwrap();
+    let provider = native.model.provider.unwrap();
+    let provider_path = PathBuf::from(provider.strip_prefix("cuda:").unwrap());
+    assert_eq!(
+        provider_path,
+        paths.state_dir.join("cache/cuda/device-2/provider.config")
+    );
+    let contents = fs::read_to_string(&provider_path).unwrap();
+    assert!(contents.contains("device_id=2\n"));
+    assert!(contents.contains("cudnn_conv_algo_search=HEURISTIC\n"));
+    assert!(contents.contains("gpu_mem_limit=4294967296\n"));
+
+    config
+        .backend
+        .options
+        .insert("device_id".into(), "3".into());
+    assert!(build_sherpa_config(&config, &paths, Runtime::Cuda).is_err());
+}
+
+#[test]
+fn cuda_accepts_an_explicit_provider_config_relative_to_app_config() {
+    let root = temp("cuda-explicit");
+    let paths = paths(&root);
+    let mut config = Config::default();
+    config.backend.runtime = Runtime::Cuda;
+    config.backend.device = "gpu".into();
+    install_model_assets(&config, &paths);
+    fs::create_dir_all(paths.config_file.parent().unwrap()).unwrap();
+    let supplied = paths.config_file.parent().unwrap().join("cuda.conf");
+    fs::write(&supplied, "device_id=1\n").unwrap();
+    config.backend.provider_config = "cuda.conf".into();
+
+    let provider = build_sherpa_config(&config, &paths, Runtime::Cuda)
+        .unwrap()
+        .model
+        .provider
+        .unwrap();
+    assert_eq!(provider, format!("cuda:{}", supplied.display()));
+    config.backend.provider_config = "missing.conf".into();
+    assert!(build_sherpa_config(&config, &paths, Runtime::Cuda).is_err());
 }
 
 #[test]
@@ -552,4 +617,143 @@ fn injected_load_constructs_engine_and_exercises_cpu_fallback() {
     })
     .unwrap();
     assert!(fallback.fallback_used);
+
+    let mut attempts = Vec::new();
+    let fallback =
+        Engine::load_with_capabilities(&config, &paths, &["cpu", "cuda"], |_, _, runtime| {
+            attempts.push(runtime);
+            if runtime == Runtime::Cuda {
+                Err(anyhow::anyhow!("CUDA provider unavailable"))
+            } else {
+                Ok(Box::new(FakeBackend {
+                    voices: 1,
+                    samples: Ok(vec![0.0]),
+                }))
+            }
+        })
+        .unwrap();
+    assert_eq!(attempts, [Runtime::Cuda, Runtime::Default]);
+    assert_eq!(fallback.effective_runtime, Runtime::Default);
+    assert!(fallback.fallback_used);
+
+    config.backend.fallback = Fallback::Error;
+    let error = Engine::load_with_capabilities(&config, &paths, &["cpu", "cuda"], |_, _, _| {
+        Err(anyhow::anyhow!("CUDA provider unavailable"))
+    })
+    .err()
+    .unwrap();
+    assert_eq!(error.to_string(), "CUDA provider unavailable");
+
+    config.backend.fallback = Fallback::Cpu;
+    let mut attempts = 0;
+    let error =
+        Engine::load_with_capabilities(&config, &paths, &["cpu", "cuda"], |_, _, runtime| {
+            attempts += 1;
+            Err(anyhow::anyhow!("{runtime:?} initialization failed"))
+        })
+        .err()
+        .unwrap();
+    assert_eq!(attempts, 2);
+    assert!(error.to_string().contains("CPU fallback also failed"));
+}
+
+#[test]
+fn model_and_provider_paths_report_actionable_filesystem_errors() {
+    let root = temp("filesystem-errors");
+    let mut app_paths = paths(&root);
+    let mut config = Config::default();
+
+    config.model.model_file.clear();
+    let error = build_sherpa_config(&config, &app_paths, Runtime::Default).unwrap_err();
+    assert!(error.to_string().contains("path is not configured"));
+    config.model.model_file = "model.onnx".into();
+    config.model.data_directory.clear();
+    install_model_assets(&config, &app_paths);
+    let error = build_sherpa_config(&config, &app_paths, Runtime::Default).unwrap_err();
+    assert!(error.to_string().contains("directory is not configured"));
+
+    let supplied = root.join("absolute-provider.config");
+    fs::write(&supplied, "device_id=0\n").unwrap();
+    config.backend.runtime = Runtime::Cuda;
+    config.backend.device = "gpu".into();
+    config.backend.provider_config = supplied.display().to_string();
+    assert_eq!(
+        cuda_provider(&config, &app_paths).unwrap(),
+        format!("cuda:{}", supplied.canonicalize().unwrap().display())
+    );
+
+    config.backend.provider_config.clear();
+    fs::write(&app_paths.state_dir, "not a directory").unwrap();
+    let error = generate_cuda_provider_config(&config, &app_paths).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("create private runtime directory")
+    );
+
+    app_paths.state_dir = root.join("openvino-state");
+    fs::write(&app_paths.state_dir, "not a directory").unwrap();
+    config.backend.runtime = Runtime::Openvino;
+    config.backend.device = "gpu".into();
+    let error = generate_openvino_provider_config(&config, &app_paths).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("create private runtime directory")
+    );
+
+    app_paths.state_dir = root.join("install-conflict-state");
+    let provider_dir = app_paths.state_dir.join("cache/cuda/device-0");
+    fs::create_dir_all(provider_dir.join("provider.config")).unwrap();
+    config.backend.runtime = Runtime::Cuda;
+    config.backend.device = "gpu".into();
+    let error = generate_cuda_provider_config(&config, &app_paths).unwrap_err();
+    assert!(error.to_string().contains("install provider config"));
+    assert_eq!(
+        fs::read_dir(&provider_dir)
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_name().to_string_lossy().ends_with(".tmp"))
+            .count(),
+        0
+    );
+
+    assert!(write_private_atomic(Path::new("/"), b"x").is_err());
+    assert!(create_private_directory(&root.join("missing/child")).is_ok());
+}
+
+#[test]
+fn engine_native_boundary_and_output_paths_fail_cleanly() {
+    let root = temp("native-and-output-errors");
+    let app_paths = paths(&root);
+    let mut config = Config::default();
+    install_model_assets(&config, &app_paths);
+
+    let error = Engine::load(&config, &app_paths).err().unwrap();
+    assert!(!error.to_string().is_empty());
+
+    let directory = config.model_directory(&app_paths);
+    config.model.data_directory = "data-file".into();
+    fs::write(directory.join("data-file"), b"not a directory").unwrap();
+    let error = build_sherpa_config(&config, &app_paths, Runtime::Default).unwrap_err();
+    assert!(error.to_string().contains("directory is missing"));
+
+    let blocked_parent = root.join("blocked-parent");
+    fs::write(&blocked_parent, b"not a directory").unwrap();
+    let error = engine(Ok(vec![0.0]), 1)
+        .synthesize("hello", 1.0, 0, &blocked_parent.join("out.wav"))
+        .err()
+        .unwrap();
+    assert!(error.to_string().contains("create output directory"));
+
+    configure_supertonic(&mut config, &app_paths);
+    config.backend.runtime = Runtime::Openvino;
+    config.backend.device = "cpu".into();
+    let provider = build_sherpa_config(&config, &app_paths, Runtime::Openvino)
+        .unwrap()
+        .model
+        .provider
+        .unwrap();
+    let contents = fs::read_to_string(provider.strip_prefix("openvino:").unwrap()).unwrap();
+    assert!(contents.contains("disable_dynamic_shapes=True\n"));
 }

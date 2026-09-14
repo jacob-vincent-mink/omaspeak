@@ -1,9 +1,11 @@
 use std::fs;
 use std::io::{BufRead, BufReader, IsTerminal, Read, Write};
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::process::{Command as ProcessCommand, ExitCode};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, anyhow, bail};
@@ -315,12 +317,10 @@ fn say(config_path: &Path, paths: &AppPaths, args: SayArgs) -> Result<()> {
             no_play: args.no_play,
         },
     };
-    let response = if paths.socket().exists() {
-        send_request(&paths.socket(), &request)?
-    } else {
+    let response = send_or_handle_locally(&paths.socket(), request, |request| {
         let engine = Engine::load(&config, paths)?;
-        handle_request(&engine, &config, paths, request)
-    };
+        Ok(handle_request(&engine, &config, paths, request))
+    })?;
     print_response(response)
 }
 
@@ -449,7 +449,7 @@ fn benchmark_report(
             "requested_device": config.backend.canonical_device()?,
             "effective_runtime": engine.effective_runtime(),
             "fallback_used": engine.fallback_used(),
-            "placement_verified": false,
+            "placement_verified": engine.effective_runtime() == Runtime::Default,
         },
         "iterations": iterations,
         "summary": summary,
@@ -499,10 +499,23 @@ fn milliseconds(duration: Duration) -> f64 {
 fn run_daemon(config_path: &Path, paths: &AppPaths) -> Result<()> {
     let config = Config::load(config_path)?;
     let engine = Engine::load(&config, paths)?;
+    let interrupted = Arc::new(AtomicBool::new(false));
+    for signal in [
+        signal_hook::consts::signal::SIGINT,
+        signal_hook::consts::signal::SIGTERM,
+    ] {
+        signal_hook::flag::register(signal, interrupted.clone())
+            .context("install daemon shutdown handler")?;
+    }
     let socket = prepare_daemon_socket(paths)?;
     let listener = UnixListener::bind(&socket)
         .with_context(|| format!("bind daemon socket {}", socket.display()))?;
     fs::set_permissions(&socket, fs::Permissions::from_mode(0o600))?;
+    let socket_metadata = fs::symlink_metadata(&socket)
+        .with_context(|| format!("inspect bound daemon socket {}", socket.display()))?;
+    listener
+        .set_nonblocking(true)
+        .context("make daemon socket interruptible")?;
     eprintln!(
         "omaspeak: ready model={} sample_rate={} load_ms={} socket={}",
         engine.model_name,
@@ -512,19 +525,51 @@ fn run_daemon(config_path: &Path, paths: &AppPaths) -> Result<()> {
     );
 
     let serve_result = serve_requests(&engine, &config, paths, || {
-        listener
-            .accept()
-            .map(|(stream, _)| stream)
-            .context("accept daemon request")
+        accept_daemon_connection(&listener, &interrupted)
     });
+    let serve_result = match serve_result {
+        Err(error) if error.downcast_ref::<DaemonInterrupted>().is_some() => Ok(()),
+        result => result,
+    };
     drop(listener);
-    finish_daemon(&socket, serve_result)
+    finish_daemon(&socket, &socket_metadata, serve_result)
 }
 
-fn finish_daemon(socket: &Path, serve_result: Result<()>) -> Result<()> {
-    if let Err(error) = fs::remove_file(socket)
-        && error.kind() != std::io::ErrorKind::NotFound
-    {
+#[derive(Debug)]
+struct DaemonInterrupted;
+
+impl std::fmt::Display for DaemonInterrupted {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("daemon interrupted")
+    }
+}
+
+impl std::error::Error for DaemonInterrupted {}
+
+fn accept_daemon_connection(
+    listener: &UnixListener,
+    interrupted: &AtomicBool,
+) -> Result<UnixStream> {
+    loop {
+        if interrupted.load(Ordering::Relaxed) {
+            return Err(DaemonInterrupted.into());
+        }
+        match listener.accept() {
+            Ok((stream, _)) => return Ok(stream),
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                std::thread::sleep(Duration::from_millis(25));
+            }
+            Err(error) => return Err(error).context("accept daemon request"),
+        }
+    }
+}
+
+fn finish_daemon(
+    socket: &Path,
+    socket_metadata: &fs::Metadata,
+    serve_result: Result<()>,
+) -> Result<()> {
+    if let Err(error) = remove_stale_socket(socket, socket_metadata) {
         eprintln!(
             "omaspeak: failed to remove daemon socket {}: {error}",
             socket.display()
@@ -538,11 +583,8 @@ fn prepare_daemon_socket(paths: &AppPaths) -> Result<PathBuf> {
     fs::set_permissions(&paths.runtime_dir, fs::Permissions::from_mode(0o700))?;
     fs::create_dir_all(&paths.state_dir)?;
     let socket = paths.socket();
-    if socket.exists() {
-        match UnixStream::connect(&socket) {
-            Ok(_) => bail!("daemon is already running at {}", socket.display()),
-            Err(_) => fs::remove_file(&socket).context("remove stale daemon socket")?,
-        }
+    if connect_daemon(&socket)?.is_some() {
+        bail!("daemon is already running at {}", socket.display());
     }
     Ok(socket)
 }
@@ -716,14 +758,85 @@ fn status_payload(engine: &impl SpeechEngine, config: &Config) -> ResultPayload 
     }
 }
 
-fn send_request(socket: &Path, request: &Request) -> Result<Response> {
-    let mut stream = UnixStream::connect(socket)
-        .with_context(|| format!("connect to daemon {}", socket.display()))?;
+fn send_or_handle_locally(
+    socket: &Path,
+    request: Request,
+    local: impl FnOnce(Request) -> Result<Response>,
+) -> Result<Response> {
+    match try_send_request(socket, &request)? {
+        Some(response) => Ok(response),
+        None => local(request),
+    }
+}
+
+fn try_send_request(socket: &Path, request: &Request) -> Result<Option<Response>> {
+    let Some(mut stream) = connect_daemon(socket)? else {
+        return Ok(None);
+    };
     serde_json::to_writer(&mut stream, request)?;
     stream.write_all(b"\n")?;
     let mut line = String::new();
     BufReader::new(stream).read_line(&mut line)?;
-    serde_json::from_str(&line).context("decode daemon response")
+    serde_json::from_str(&line)
+        .context("decode daemon response")
+        .map(Some)
+}
+
+fn connect_daemon(socket: &Path) -> Result<Option<UnixStream>> {
+    let metadata_before = match fs::symlink_metadata(socket) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("inspect daemon socket {}", socket.display()));
+        }
+    };
+    match UnixStream::connect(socket) {
+        Ok(stream) => Ok(Some(stream)),
+        Err(error) if indicates_stale_socket(error.kind()) => {
+            remove_stale_socket(socket, &metadata_before)?;
+            Ok(None)
+        }
+        Err(error) => Err(error).with_context(|| format!("connect to daemon {}", socket.display())),
+    }
+}
+
+fn indicates_stale_socket(kind: std::io::ErrorKind) -> bool {
+    matches!(
+        kind,
+        std::io::ErrorKind::ConnectionRefused
+            | std::io::ErrorKind::ConnectionReset
+            | std::io::ErrorKind::ConnectionAborted
+            | std::io::ErrorKind::NotFound
+    )
+}
+
+fn remove_stale_socket(socket: &Path, metadata_before: &fs::Metadata) -> Result<()> {
+    if !metadata_before.file_type().is_socket() {
+        bail!(
+            "refusing to remove non-socket daemon path {}",
+            socket.display()
+        );
+    }
+    let metadata_now = match fs::symlink_metadata(socket) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("inspect stale daemon socket {}", socket.display()));
+        }
+    };
+    if !metadata_now.file_type().is_socket()
+        || metadata_now.dev() != metadata_before.dev()
+        || metadata_now.ino() != metadata_before.ino()
+    {
+        bail!(
+            "daemon socket {} changed while checking it; refusing to remove it",
+            socket.display()
+        );
+    }
+    fs::remove_file(socket)
+        .with_context(|| format!("remove stale daemon socket {}", socket.display()))
 }
 
 fn print_response(response: Response) -> Result<()> {
@@ -737,15 +850,15 @@ fn print_response(response: Response) -> Result<()> {
 }
 
 fn print_status(config_path: &Path, paths: &AppPaths, as_json: bool) -> Result<()> {
-    let status = if paths.socket().exists() {
-        let response = send_request(
-            &paths.socket(),
-            &Request {
-                protocol: 1,
-                id: request_id(),
-                command: Command::Status,
-            },
-        )?;
+    let response = try_send_request(
+        &paths.socket(),
+        &Request {
+            protocol: 1,
+            id: request_id(),
+            command: Command::Status,
+        },
+    )?;
+    let status = if let Some(response) = response {
         serde_json::to_value(response.result)?
     } else {
         let config = Config::load(config_path)?;
@@ -763,17 +876,16 @@ fn print_status(config_path: &Path, paths: &AppPaths, as_json: bool) -> Result<(
 }
 
 fn stop(paths: &AppPaths) -> Result<()> {
-    if !paths.socket().exists() {
-        bail!("daemon is not running");
-    }
-    print_response(send_request(
+    let response = try_send_request(
         &paths.socket(),
         &Request {
             protocol: 1,
             id: request_id(),
             command: Command::Shutdown,
         },
-    )?)
+    )?
+    .ok_or_else(|| anyhow!("daemon is not running"))?;
+    print_response(response)
 }
 
 fn voices(config_path: &Path, as_json: bool) -> Result<()> {
@@ -797,7 +909,7 @@ fn config_command(command: ConfigCommand, path: &Path, paths: &AppPaths) -> Resu
                 println!("{}", serde_json::to_string_pretty(&value)?);
             } else {
                 println!(
-                    "backend.runtime\tdefault|openvino|cuda\nbackend.device\truntime-dependent\nmodel.family\tpiper|vits|supertonic"
+                    "backend.runtime\tdefault|openvino|cuda\nbackend.device\truntime-dependent\nbackend.options.<name>\truntime provider option\nmodel.family\tpiper|vits|supertonic\nmodel.options.<name>\tmodel-specific option"
                 );
             }
         }
@@ -815,20 +927,47 @@ fn config_command(command: ConfigCommand, path: &Path, paths: &AppPaths) -> Resu
         }
         ConfigCommand::Set { key, value } => {
             let mut config = Config::load(path)?;
+            let previous_runtime = config.backend.runtime;
             set_config(&mut config, &key, &value)?;
-            config.backend.validate_shape()?;
-            save_config(path, &config)?;
+            save_config_mutation(path, config, &key, previous_runtime)?;
         }
         ConfigCommand::Unset { key } => {
             let mut config = Config::load(path)?;
+            let previous_runtime = config.backend.runtime;
             unset_config(&mut config, &key)?;
-            save_config(path, &config)?;
+            save_config_mutation(path, config, &key, previous_runtime)?;
         }
     }
     Ok(())
 }
 
+fn save_config_mutation(
+    path: &Path,
+    mut config: Config,
+    key: &str,
+    previous_runtime: Runtime,
+) -> Result<()> {
+    if key == "backend.runtime" && config.backend.runtime != previous_runtime {
+        config.backend.device = "auto".into();
+        config.backend.provider_config.clear();
+        config.backend.options.clear();
+        if config.backend.runtime != Runtime::Cuda {
+            config.backend.device_id = 0;
+        }
+    }
+    config.backend.validate_shape()?;
+    save_config(path, &config)
+}
+
 fn set_config(config: &mut Config, key: &str, value: &str) -> Result<()> {
+    if let Some(option) = dynamic_option_name(key, "backend.options.")? {
+        config.backend.options.insert(option.into(), value.into());
+        return Ok(());
+    }
+    if let Some(option) = dynamic_option_name(key, "model.options.")? {
+        config.model.options.insert(option.into(), value.into());
+        return Ok(());
+    }
     match key {
         "backend.kind" => config.backend.kind = value.into(),
         "backend.runtime" => config.backend.runtime = parse_runtime(value)?,
@@ -853,14 +992,27 @@ fn set_config(config: &mut Config, key: &str, value: &str) -> Result<()> {
         "model.language" => config.model.language = value.into(),
         "model.steps" => config.model.steps = value.parse()?,
         "model.voice" => config.model.voice = value.parse()?,
+        "model.noise_scale" => config.model.noise_scale = value.parse()?,
+        "model.noise_scale_w" => config.model.noise_scale_w = value.parse()?,
+        "model.length_scale" => config.model.length_scale = value.parse()?,
         "audio.device" => config.audio.device = value.into(),
         "audio.volume" => config.audio.volume = value.parse()?,
+        "daemon.queue_capacity" => config.daemon.queue_capacity = value.parse()?,
+        "daemon.max_text_bytes" => config.daemon.max_text_bytes = value.parse()?,
         _ => bail!("unknown or unsupported config key {key}"),
     }
     Ok(())
 }
 
 fn unset_config(config: &mut Config, key: &str) -> Result<()> {
+    if let Some(option) = dynamic_option_name(key, "backend.options.")? {
+        config.backend.options.remove(option);
+        return Ok(());
+    }
+    if let Some(option) = dynamic_option_name(key, "model.options.")? {
+        config.model.options.remove(option);
+        return Ok(());
+    }
     let defaults = Config::default();
     match key {
         "backend.kind" => config.backend.kind = defaults.backend.kind,
@@ -890,11 +1042,28 @@ fn unset_config(config: &mut Config, key: &str) -> Result<()> {
         "model.language" => config.model.language = defaults.model.language,
         "model.steps" => config.model.steps = defaults.model.steps,
         "model.voice" => config.model.voice = defaults.model.voice,
+        "model.noise_scale" => config.model.noise_scale = defaults.model.noise_scale,
+        "model.noise_scale_w" => config.model.noise_scale_w = defaults.model.noise_scale_w,
+        "model.length_scale" => config.model.length_scale = defaults.model.length_scale,
         "audio.device" => config.audio.device = defaults.audio.device,
         "audio.volume" => config.audio.volume = defaults.audio.volume,
+        "daemon.queue_capacity" => config.daemon.queue_capacity = defaults.daemon.queue_capacity,
+        "daemon.max_text_bytes" => config.daemon.max_text_bytes = defaults.daemon.max_text_bytes,
         _ => bail!("unknown or unsupported config key {key}"),
     }
     Ok(())
+}
+
+fn dynamic_option_name<'a>(key: &'a str, prefix: &str) -> Result<Option<&'a str>> {
+    let Some(option) = key.strip_prefix(prefix) else {
+        return Ok(None);
+    };
+    if option.is_empty() || option.trim() != option {
+        bail!(
+            "config option name after {prefix} must be non-empty and have no surrounding whitespace"
+        );
+    }
+    Ok(Some(option))
 }
 
 fn save_config(path: &Path, config: &Config) -> Result<()> {
@@ -1234,7 +1403,7 @@ fn choose_runtime(
                 "CUDA",
                 "NVIDIA GPU execution",
                 compiled.contains(&"cuda"),
-                "this Omaspeak build does not contain CUDA support",
+                "rebuild Omaspeak with --features cuda and a CUDA-enabled native runtime",
             ),
         ),
     ];
@@ -1319,8 +1488,13 @@ fn device_items(runtime: Runtime) -> Vec<(&'static str, MenuItem)> {
 
 fn save_runtime(config_path: &Path, runtime: Runtime, device: &str) -> Result<()> {
     let mut config = app_setup::ensure_config(config_path)?;
+    let runtime_changed = config.backend.runtime != runtime;
     config.backend.runtime = runtime;
     config.backend.device = device.into();
+    if runtime_changed {
+        config.backend.provider_config.clear();
+        config.backend.options.clear();
+    }
     if runtime != Runtime::Cuda {
         config.backend.device_id = 0;
     }
