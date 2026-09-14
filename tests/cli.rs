@@ -16,6 +16,107 @@ use std::os::unix::fs::PermissionsExt;
 
 static NEXT: AtomicUsize = AtomicUsize::new(0);
 
+#[test]
+fn runtime_apply_rejects_bad_abi_and_native_process_exit_without_writes() {
+    let root = sandbox();
+    let directory = root.join("native");
+    fs::create_dir_all(&directory).unwrap();
+    let config_path = root.join("config/omaspeak/config.toml");
+    Config::default().save(&config_path).unwrap();
+    let before = fs::read(&config_path).unwrap();
+    for source in [
+        "#include <stdint.h>\ntypedef struct { void *api; const char *(*version)(void); } Base; static const char *version(void) {return \"1.28.0\";} static Base base={0,version}; const Base *OrtGetApiBase(void) {return &base;}",
+        "#include <unistd.h>\n__attribute__((constructor)) static void fail(void) {_exit(37);}",
+    ] {
+        fs::write(directory.join("fixture.c"), source).unwrap();
+        assert!(
+            Command::new("cc")
+                .args(["-shared", "-fPIC"])
+                .arg(directory.join("fixture.c"))
+                .arg("-o")
+                .arg(directory.join("libonnxruntime.so"))
+                .status()
+                .unwrap()
+                .success()
+        );
+        let output = run(
+            &root,
+            &[
+                "setup",
+                "runtime",
+                "--runtime",
+                "default",
+                "--device",
+                "cpu",
+                "--dir",
+                directory.to_str().unwrap(),
+                "--apply",
+            ],
+        );
+        assert!(!output.status.success());
+        assert!(stderr(&output).contains("runtime candidate rejected; config unchanged"));
+        assert_eq!(fs::read(&config_path).unwrap(), before);
+    }
+}
+
+#[test]
+fn real_cpu_preview_then_apply_pins_paths() {
+    let library = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/debug/libonnxruntime.so");
+    if !library.is_file() {
+        return;
+    }
+    let root = sandbox();
+    let config_path = root.join("config/omaspeak/config.toml");
+    let directory = library.parent().unwrap().to_str().unwrap();
+    let preview = run(
+        &root,
+        &[
+            "setup",
+            "runtime",
+            "--runtime",
+            "default",
+            "--device",
+            "cpu",
+            "--dir",
+            directory,
+        ],
+    );
+    assert!(preview.status.success(), "{}", stderr(&preview));
+    assert!(!config_path.exists());
+    let applied = run(
+        &root,
+        &[
+            "setup",
+            "runtime",
+            "--runtime",
+            "default",
+            "--device",
+            "cpu",
+            "--dir",
+            directory,
+            "--apply",
+        ],
+    );
+    assert!(applied.status.success(), "{}", stderr(&applied));
+    let config = Config::load(&config_path).unwrap();
+    assert_eq!(
+        config.backend.onnxruntime_library,
+        Some(library.canonicalize().unwrap())
+    );
+    let inventory = run(&root, &["setup", "runtime", "--json"]);
+    assert!(inventory.status.success(), "{}", stderr(&inventory));
+    let value: serde_json::Value = serde_json::from_slice(&inventory.stdout).unwrap();
+    let cpu = value["inventory"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|state| state["runtime"] == "default" && state["device"] == "cpu")
+        .unwrap();
+    assert_eq!(cpu["ready"], true);
+    assert_eq!(cpu["configured"], true);
+    assert_eq!(cpu["source"], "configured");
+}
+
 fn sandbox() -> PathBuf {
     let path = std::env::temp_dir().join(format!(
         "omaspeak-cli-test-{}-{}",
@@ -78,6 +179,10 @@ fn guided_setup_accepts_arrow_keys_and_enter_in_a_real_pty() {
         .env("XDG_STATE_HOME", root.join("state"))
         .env("XDG_RUNTIME_DIR", root.join("run"))
         .env("TERM", "xterm-256color")
+        .env(
+            "OMASPEAK_ONNXRUNTIME_LIBRARY",
+            root.join("missing-runtime.so"),
+        )
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -86,8 +191,7 @@ fn guided_setup_accepts_arrow_keys_and_enter_in_a_real_pty() {
     let mut input = child.stdin.take().unwrap();
     // Wait until the child enables raw mode, choose Runtime from the setup
     // screen, accept the preselected runtime, choose CPU, then leave the
-    // optional external-stack directory empty when setup asks for one, and
-    // confirm the final Apply screen.
+    // optional external-stack directory empty when setup asks for one.
     thread::sleep(Duration::from_millis(750));
     input.write_all(b"\x1b[B\r").unwrap();
     input.flush().unwrap();
@@ -98,12 +202,9 @@ fn guided_setup_accepts_arrow_keys_and_enter_in_a_real_pty() {
     input.write_all(b"\x1b[B\r").unwrap();
     input.flush().unwrap();
     thread::sleep(Duration::from_millis(150));
-    // A packaged or ambient CPU runtime skips the directory prompt, so either
-    // this Enter or the next one confirms Apply.
+    // The intentionally missing CPU runtime makes this answer the directory
+    // prompt and then exercises the rejected-candidate path.
     let _ = input.write_all(b"\n");
-    let _ = input.flush();
-    thread::sleep(Duration::from_millis(150));
-    let _ = input.write_all(b"\r");
     drop(input);
     let deadline = Instant::now() + Duration::from_secs(5);
     while child.try_wait().unwrap().is_none() {
@@ -114,14 +215,13 @@ fn guided_setup_accepts_arrow_keys_and_enter_in_a_real_pty() {
         thread::sleep(Duration::from_millis(25));
     }
     let output = child.wait_with_output().unwrap();
-    assert!(output.status.success(), "{}", stderr(&output));
+    assert!(!output.status.success());
     let terminal = stdout(&output);
     assert!(terminal.contains("Omaspeak setup"));
     assert!(terminal.contains("Omaspeak runtime"));
     assert!(terminal.contains("Omaspeak device"));
-    assert!(terminal.contains("Runtime configured: default on cpu"));
-    let config = Config::load(&root.join("config/omaspeak/config.toml")).unwrap();
-    assert_eq!(config.backend.device, "cpu");
+    assert!(terminal.contains("runtime candidate rejected; config unchanged"));
+    assert!(!root.join("config/omaspeak/config.toml").exists());
 }
 
 fn serve_once(root: &Path, result: ResultPayload) -> Option<thread::JoinHandle<Request>> {
@@ -256,6 +356,30 @@ fn runtime_discovery_reports_invalid_paths_without_reexecing() {
     );
     assert!(report["libraries"]["runtime_loadable"].is_object());
 
+    let explicit_core = root.join("libonnxruntime.so.1.29.0");
+    fs::write(&explicit_core, b"invalid ORT fixture").unwrap();
+    let explicit = Command::new(env!("CARGO_BIN_EXE_omaspeak"))
+        .args(["setup", "runtime", "--json"])
+        .env("HOME", &root)
+        .env("XDG_CONFIG_HOME", root.join("explicit-config"))
+        .env("XDG_DATA_HOME", root.join("data"))
+        .env("XDG_STATE_HOME", root.join("state"))
+        .env("XDG_RUNTIME_DIR", root.join("run"))
+        .env("OMASPEAK_ONNXRUNTIME_LIBRARY", &explicit_core)
+        .output()
+        .unwrap();
+    assert!(explicit.status.success(), "{}", stderr(&explicit));
+    let report: serde_json::Value = serde_json::from_slice(&explicit.stdout).unwrap();
+    let cpu = report["inventory"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|state| state["runtime"] == "default" && state["device"] == "cpu")
+        .unwrap();
+    assert_eq!(cpu["source"], "environment");
+    assert_eq!(cpu["discovered"], true);
+    assert_eq!(cpu["ready"], false);
+
     let mutation = Command::new(env!("CARGO_BIN_EXE_omaspeak"))
         .args(["config", "set", "audio.volume", "0.7"])
         .env("HOME", &root)
@@ -287,7 +411,7 @@ fn config_commands_round_trip_and_reject_invalid_values() {
         ("backend.fallback", "cpu"),
         ("backend.device_id", "0"),
         ("backend.library_dirs", "/opt/openvino:/opt/cuda"),
-        ("model.family", "vits"),
+        ("model.family", "future-family"),
         ("model.name", "custom"),
         ("model.directory", "/tmp/model"),
         ("model.voice", "0"),

@@ -40,6 +40,10 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum TopCommand {
+    #[command(name = "__inventory-probe", hide = true)]
+    InventoryProbe {
+        candidate: String,
+    },
     Daemon,
     Status {
         #[arg(long)]
@@ -196,6 +200,9 @@ enum SetupCommand {
         /// Configure the current runtime from a directory containing matching native libraries.
         #[arg(long, value_name = "DIRECTORY")]
         dir: Option<PathBuf>,
+        /// Save only after the candidate passes its isolated native probe.
+        #[arg(long, conflicts_with = "json")]
+        apply: bool,
     },
     /// Install, inspect, or remove the systemd user service.
     Systemd {
@@ -216,6 +223,19 @@ enum SetupCommand {
 }
 
 trait SetupSelector {
+    fn probe_runtime(
+        &mut self,
+        config: &Config,
+        path: &Path,
+    ) -> Result<omaspeak::runtime_inventory::Probe> {
+        omaspeak::runtime_inventory::apply_with(
+            config,
+            path,
+            false,
+            omaspeak::runtime_inventory::probe,
+        )
+    }
+
     fn select(
         &mut self,
         title: &str,
@@ -310,6 +330,15 @@ fn run(cli: Cli) -> Result<()> {
     let config_path = select_config_path(cli.config, &mut paths);
     prepare_native_library_path(&cli.command, &config_path)?;
     match cli.command {
+        TopCommand::InventoryProbe { candidate } => {
+            println!(
+                "{}",
+                serde_json::to_string(&omaspeak::runtime_inventory::child(&serde_json::from_str(
+                    &candidate
+                )?))?
+            );
+            Ok(())
+        }
         TopCommand::Daemon => run_daemon(&config_path, &paths),
         TopCommand::Status { json } => print_status(&config_path, &paths, json),
         TopCommand::Say(args) => say(&config_path, &paths, args),
@@ -324,12 +353,7 @@ fn run(cli: Cli) -> Result<()> {
 fn command_loads_engine(command: &TopCommand) -> bool {
     matches!(
         command,
-        TopCommand::Daemon
-            | TopCommand::Say(_)
-            | TopCommand::Benchmark(_)
-            | TopCommand::Setup {
-                command: Some(SetupCommand::Check { .. })
-            }
+        TopCommand::Daemon | TopCommand::Say(_) | TopCommand::Benchmark(_)
     )
 }
 
@@ -339,7 +363,7 @@ fn prepare_native_library_path(command: &TopCommand, config_path: &Path) -> Resu
         return Ok(());
     }
     let config = Config::load(config_path)?;
-    let report = omaspeak::runtime::inspect(&config.backend, config_path);
+    let report = omaspeak::runtime::discover(&config.backend, config_path);
     let Some(loader_path) = omaspeak::runtime::reexec_loader_path(&report)? else {
         return Ok(());
     };
@@ -1295,17 +1319,29 @@ fn setup(command: Option<SetupCommand>, config_path: &Path, paths: &AppPaths) ->
             runtime,
             device,
             dir,
+            apply,
         } => {
             if let (Some(runtime), Some(device)) = (runtime, device) {
                 let runtime = parse_runtime(&runtime)?;
                 canonical_device(runtime, &device)?;
-                save_runtime(config_path, runtime, &device, dir.as_deref())?;
-                println!("Runtime configured: {} on {device}", runtime_name(runtime));
-                Ok(())
+                apply_runtime_selection(
+                    config_path,
+                    runtime,
+                    &device,
+                    dir.as_deref(),
+                    apply,
+                    omaspeak::runtime_inventory::probe,
+                )
             } else if let Some(dir) = dir {
-                configure_runtime_directory(config_path, &dir)?;
-                println!("Runtime libraries configured from {}", dir.display());
-                Ok(())
+                let current = Config::load(config_path)?;
+                apply_runtime_selection(
+                    config_path,
+                    current.backend.runtime,
+                    &current.backend.device,
+                    Some(&dir),
+                    apply,
+                    omaspeak::runtime_inventory::probe,
+                )
             } else if !json && is_interactive_terminal() {
                 guided_runtime(config_path, &mut TerminalSetupSelector).map(|_| ())
             } else {
@@ -1401,6 +1437,25 @@ fn setup(command: Option<SetupCommand>, config_path: &Path, paths: &AppPaths) ->
             app_setup::systemd::reload_if_was_active,
         ),
     }
+}
+
+fn apply_runtime_selection(
+    config_path: &Path,
+    runtime: Runtime,
+    device: &str,
+    directory: Option<&Path>,
+    apply: bool,
+    probe: impl FnOnce(&omaspeak::backend::BackendConfig, &Path) -> omaspeak::runtime_inventory::Probe,
+) -> Result<()> {
+    let candidate = runtime_configuration_candidate(config_path, runtime, device, directory)?;
+    let evidence = omaspeak::runtime_inventory::apply_with(&candidate, config_path, apply, probe)?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(
+            &json!({"candidate": candidate.backend, "probe": evidence, "applied": apply})
+        )?
+    );
+    Ok(())
 }
 
 fn is_interactive_terminal() -> bool {
@@ -1591,16 +1646,26 @@ fn guided_runtime(
     let confirmation = [
         MenuItem::available(
             "Apply runtime",
-            "Validate the selected runtime and device, then save them to the config.",
+            "Save the runtime and device after their isolated probe passes.",
         ),
         MenuItem::available("Cancel", "Leave the current configuration unchanged."),
     ];
-    let summary = format!("Runtime: {} · Device: {device}", runtime_name(runtime));
+    let candidate =
+        runtime_configuration_candidate(config_path, runtime, &device, library_dir.as_deref())?;
+    let evidence = selector.probe_runtime(&candidate, config_path)?;
+    let summary = format!(
+        "Runtime: {} · Device: {device}\r\n{}",
+        runtime_name(runtime),
+        serde_json::to_string_pretty(&json!({
+            "candidate": candidate.backend,
+            "probe": evidence,
+        }))?
+    );
     if selector.select("Apply Omaspeak runtime", &summary, &confirmation, 0)? != Some(0) {
         println!("Runtime setup cancelled; no changes were made.");
         return Ok(None);
     }
-    save_runtime(config_path, runtime, &device, library_dir.as_deref())?;
+    candidate.save(config_path)?;
     println!("Runtime configured: {} on {device}", runtime_name(runtime));
     Ok(Some((runtime, device)))
 }
@@ -1761,21 +1826,7 @@ fn device_items(runtime: Runtime) -> Vec<(&'static str, MenuItem)> {
         .collect()
 }
 
-fn save_runtime(
-    config_path: &Path,
-    runtime: Runtime,
-    device: &str,
-    library_dir: Option<&Path>,
-) -> Result<()> {
-    save_runtime_with(
-        config_path,
-        runtime,
-        device,
-        library_dir,
-        validate_runtime_configuration,
-    )
-}
-
+#[cfg(test)]
 fn save_runtime_with(
     config_path: &Path,
     runtime: Runtime,
@@ -1808,13 +1859,32 @@ fn runtime_configuration_candidate(
         apply_runtime_directory(&mut config, config_path, directory)?;
     }
     config.backend.validate_shape()?;
+    let locations = omaspeak::runtime::discover(&config.backend, config_path);
+    let packaged = locations
+        .onnxruntime_library
+        .as_ref()
+        .is_some_and(|library| {
+            locations
+                .package_library_dirs
+                .iter()
+                .any(|directory| library.starts_with(directory))
+        });
+    if library_dir.is_some()
+        || runtime != Runtime::Default
+        || !config.backend.library_dirs.is_empty()
+        || !packaged
+    {
+        config.backend = omaspeak::runtime_inventory::resolve(&config.backend, config_path);
+    }
     Ok(config)
 }
 
+#[cfg(test)]
 fn configure_runtime_directory(config_path: &Path, directory: &Path) -> Result<()> {
     configure_runtime_directory_with(config_path, directory, validate_runtime_configuration)
 }
 
+#[cfg(test)]
 fn configure_runtime_directory_with(
     config_path: &Path,
     directory: &Path,
@@ -1829,15 +1899,18 @@ fn configure_runtime_directory_with(
 fn validate_runtime_configuration(
     config: &Config,
     config_path: &Path,
-    explicit_directory: bool,
+    _explicit_directory: bool,
 ) -> Result<()> {
-    if config.backend.runtime == Runtime::Default && !explicit_directory {
-        return Ok(());
-    }
-    let report = omaspeak::runtime::inspect(&config.backend, config_path);
-    validate_runtime_report(config.backend.runtime, &report)
+    omaspeak::runtime_inventory::apply_with(
+        config,
+        config_path,
+        false,
+        omaspeak::runtime_inventory::probe,
+    )
+    .map(|_| ())
 }
 
+#[cfg(test)]
 fn validate_runtime_report(
     runtime: Runtime,
     report: &omaspeak::runtime::LibraryPathReport,

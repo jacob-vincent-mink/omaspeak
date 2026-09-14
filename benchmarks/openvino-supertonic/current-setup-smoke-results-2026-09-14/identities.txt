@@ -1,0 +1,4 @@
+0aa0793d30a7f34c838c67b0437ae581dfcdbed7777a800b202505d3b1a2ccb8  target/release/omaspeak
+c6294fe9eeacbd9b25a860b91aac9d4f42ee9dfbeb3f1cab989b60c0366f1dbc  /usr/lib/libopenvino_c.so.2026.3.1
+a43f27cf613e1fdc846b4683c0720b3ea1737eecf40b20f60c974051f01f0efa  /usr/lib/openvino/plugins.xml
+8a2f94de60b77d9bf8d347b786f03e438b07365a802ba5eddf78ee04ad846f80  /tmp/omaspeak-current-hardware-20260914/dell/config.toml

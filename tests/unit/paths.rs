@@ -54,7 +54,7 @@ fn discovery_honors_xdg_and_has_stable_fallbacks() {
     );
     assert_eq!(
         home_defaults.runtime_dir,
-        PathBuf::from("/tmp/omavoice-unknown/omaspeak")
+        PathBuf::from("/tmp/omaspeak-unknown/omaspeak")
     );
 
     let no_home = AppPaths::discover_with(|_| None, Path::new("/tmp"));

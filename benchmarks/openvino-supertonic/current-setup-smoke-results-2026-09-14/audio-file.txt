@@ -1,0 +1,2 @@
+/tmp/omaspeak-current-hardware-20260914/dell/openvino-npu-audio/iteration-0001.wav: RIFF (little-endian) data, WAVE audio, Microsoft PCM, 16 bit, mono 44100 Hz
+/tmp/omaspeak-current-hardware-20260914/dell/openvino-npu-audio/warmup-0001.wav:    RIFF (little-endian) data, WAVE audio, Microsoft PCM, 16 bit, mono 44100 Hz

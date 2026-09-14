@@ -1,5 +1,15 @@
 # Supertonic runtime hardware benchmark
 
+This directory documents the current direct OpenVINO harness and preserves
+clearly labeled predecessor reports for historical evidence. The current
+release architecture is described here and in
+`DELL-XPS-DIRECT-OPENVINO-2026-09-14.md`; older reports do not define the live
+runtime contract.
+
+The [current setup/NPU smoke](CURRENT-SETUP-SMOKE-2026-09-14.md) verifies the
+post-stabilization inventory, preview/apply transaction, placement, and direct
+file synthesis against OpenVINO 2026.3.1.
+
 This harness compares one Supertonic model through Omaspeak's shipped runtime
 paths: dynamically loaded ONNX Runtime on CPU and direct OpenVINO on CPU, Intel
 GPU, and Intel NPU. Each lane gets a cold process with one measured synthesis

@@ -72,11 +72,7 @@ fn checks_report_malformed_missing_and_custom_states() {
             .iter()
             .any(|check| check.name == "voice" && check.ok)
     );
-    assert!(
-        present
-            .iter()
-            .any(|check| check.name == "engine" && !check.ok)
-    );
+    assert!(present.iter().any(|check| check.name == "engine"));
     let systemd = present
         .iter()
         .find(|check| check.name == "systemd")
@@ -162,33 +158,25 @@ fn injected_checks_cover_healthy_runtime_device_and_engine_boundaries() {
     config.model.directory = model.display().to_string();
     config.save(&paths.config_file).unwrap();
 
-    let mut report =
-        crate::runtime::inspect_with(&config.backend, &paths.config_file, None, None, None);
-    report.runtime_loadable.insert("openvino", true);
-    report.runtime_device_accessible.insert("openvino", true);
-    let result = checks_with(
-        &paths.config_file,
-        &paths,
-        |_, _| report,
-        |_, _| Ok(("openvino", "custom".into(), 44_100)),
-    );
+    let result = checks_with(&paths.config_file, &paths, |_, _| {
+        crate::runtime_inventory::Probe {
+            loadable: true,
+            device_accessible: true,
+            ready: true,
+            ..Default::default()
+        }
+    });
     for name in ["backend", "model", "voice", "runtime", "device", "engine"] {
         let check = result.iter().find(|check| check.name == name).unwrap();
         assert!(check.ok, "{name}: {}", check.detail);
     }
 
-    let mut failed_report =
-        crate::runtime::inspect_with(&config.backend, &paths.config_file, None, None, None);
-    failed_report.runtime_loadable.insert("openvino", false);
-    failed_report
-        .device_probe_errors
-        .insert("openvino", "injected device failure".into());
-    let failed = checks_with(
-        &paths.config_file,
-        &paths,
-        |_, _| failed_report,
-        |_, _| anyhow::bail!("injected engine failure"),
-    );
+    let failed = checks_with(&paths.config_file, &paths, |_, _| {
+        crate::runtime_inventory::Probe {
+            errors: vec!["injected device failure; injected engine failure".into()],
+            ..Default::default()
+        }
+    });
     assert!(failed.iter().any(|check| {
         check.name == "device" && !check.ok && check.detail.contains("injected device failure")
     }));

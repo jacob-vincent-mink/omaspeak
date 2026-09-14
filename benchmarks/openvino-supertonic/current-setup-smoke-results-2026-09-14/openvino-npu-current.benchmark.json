@@ -1,0 +1,41 @@
+{
+  "backend": {
+    "effective_runtime": "openvino",
+    "fallback_used": false,
+    "kind": "openvino",
+    "model": "supertonic-3-npu",
+    "placement_evidence": "OpenVINO EXECUTION_DEVICES matched the requested device for every compiled graph",
+    "placement_verified": true,
+    "requested_device": "npu",
+    "requested_runtime": "openvino"
+  },
+  "benchmark": "omaspeak-file-synthesis",
+  "iterations": [
+    {
+      "audio_duration_milliseconds": 3260.498866,
+      "elapsed_milliseconds": 72.89744400000001,
+      "iteration": 1,
+      "output": "/tmp/omaspeak-current-hardware-20260914/dell/openvino-npu-audio/iteration-0001.wav",
+      "real_time_factor": 0.022241760534321867,
+      "sample_rate": 44100,
+      "samples": 143788,
+      "synthesis_milliseconds": 72.519235
+    }
+  ],
+  "measured_iterations": 1,
+  "model_load_milliseconds": 58,
+  "out_dir": "/tmp/omaspeak-current-hardware-20260914/dell/openvino-npu-audio",
+  "schema_version": 1,
+  "summary": {
+    "p50_elapsed_milliseconds": 72.89744400000001,
+    "p50_real_time_factor": 0.022241760534321867,
+    "p50_synthesis_milliseconds": 72.519235,
+    "p95_elapsed_milliseconds": 72.89744400000001,
+    "p95_real_time_factor": 0.022241760534321867,
+    "p95_synthesis_milliseconds": 72.519235,
+    "samples": 1
+  },
+  "text": "The quick brown fox jumps over the lazy dog.",
+  "voice": 0,
+  "warmup_iterations": 1
+}

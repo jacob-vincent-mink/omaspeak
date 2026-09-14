@@ -158,6 +158,9 @@ trait OrtRuntimeApi: Send + 'static {
     type Value;
 
     fn initialize(path: &Path) -> Result<()>;
+    fn register_cuda(_path: &Path) -> Result<()> {
+        Ok(())
+    }
     fn cuda_available(path: &Path) -> Result<bool>;
     fn cuda_provider(options: &BTreeMap<String, String>) -> Result<Self::ExecutionProvider>;
     fn build_session(
@@ -192,8 +195,15 @@ fn probe_onnx_runtime_with_api<A: OrtRuntimeApi>(
 ) -> Result<()> {
     validate_onnx_runtime_paths(paths, runtime)?;
     A::initialize(&paths.onnxruntime)?;
-    if runtime == Runtime::Cuda && !A::cuda_available(&paths.onnxruntime)? {
-        bail!("selected ONNX Runtime does not expose the CUDA execution provider");
+    if runtime == Runtime::Cuda {
+        let provider = paths
+            .provider
+            .as_deref()
+            .context("CUDA provider is not configured")?;
+        A::register_cuda(provider)?;
+        if !A::cuda_available(&paths.onnxruntime)? {
+            bail!("selected ONNX Runtime does not expose the CUDA execution provider");
+        }
     }
     Ok(())
 }
@@ -297,6 +307,12 @@ impl<A: OrtRuntimeApi> OrtRuntimeAdapter for OrtRuntimeAdapterImpl<A> {
         self.execution_provider = match runtime {
             Runtime::Default => None,
             Runtime::Cuda => {
+                A::register_cuda(
+                    paths
+                        .provider
+                        .as_deref()
+                        .context("CUDA provider is not configured")?,
+                )?;
                 let configured = cuda_provider_options(device_id, options)?;
                 Some(A::cuda_provider(&configured)?)
             }
@@ -326,10 +342,29 @@ impl OrtRuntimeApi for NativeOrtApi {
     type Value = DynValue;
 
     fn initialize(path: &Path) -> Result<()> {
-        ort::init_from(path)
-            .with_context(|| format!("load ONNX Runtime {}", path.display()))?
-            .with_name("omaspeak")
-            .commit();
+        crate::runtime_inventory::initialize_ort(path)
+    }
+
+    fn register_cuda(path: &Path) -> Result<()> {
+        static PROVIDER: Mutex<Option<PathBuf>> = Mutex::new(None);
+        let exact = path.canonicalize().context("resolve CUDA provider")?;
+        let mut registered = PROVIDER
+            .lock()
+            .map_err(|_| anyhow!("CUDA provider registration lock poisoned"))?;
+        if let Some(previous) = registered.as_ref() {
+            if previous != &exact {
+                bail!(
+                    "CUDA provider changed from {} to {}; restart the process before changing native runtimes",
+                    previous.display(),
+                    exact.display()
+                );
+            }
+            return Ok(());
+        }
+        ort::environment::Environment::current()?
+            .register_ep_library("omaspeak-cuda", &exact)
+            .context("register selected CUDA provider library")?;
+        *registered = Some(exact);
         Ok(())
     }
 

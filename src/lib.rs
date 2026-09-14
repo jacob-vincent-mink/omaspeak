@@ -5,6 +5,7 @@ pub mod engine;
 pub mod paths;
 pub mod protocol;
 pub mod runtime;
+pub mod runtime_inventory;
 pub mod setup;
 pub mod supertonic;
 pub mod voices;

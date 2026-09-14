@@ -82,14 +82,7 @@ jobs:
           cp THIRD_PARTY_NOTICES.md "dist/${package}/licenses/OMASPEAK-THIRD-PARTY-NOTICES"
           cp licenses/OMARCHY-LICENSE "dist/${package}/licenses/OMARCHY-LICENSE"
           cp licenses/SUPERTONIC-CODE-LICENSE "dist/${package}/licenses/SUPERTONIC-CODE-LICENSE"
-          cat > "dist/${package}/RUNTIME.md" <<'EOF'
-          Omaspeak ships a working CPU default: ONNX Runtime 1.29.0 is under
-          lib/. The one
-          executable also supports a user-supplied direct OpenVINO runtime or a
-          user-supplied matching CUDA ONNX Runtime, provider, and vendor stack.
-          Run `omaspeak setup runtime` to select and configure either backend.
-          Acceleration libraries are not bundled.
-          EOF
+          cp RUNTIME.md "dist/${package}/RUNTIME.md"
           tar -C dist -cJf "dist/${package}.tar.xz" "${package}"
           (cd dist && sha256sum "${package}.tar.xz" > SHA256SUMS.txt)
           echo "name=${package}" >> "${GITHUB_OUTPUT}"
@@ -111,9 +104,12 @@ jobs:
               raise SystemExit(f"capabilities {sorted(actual)} != {sorted(expected)}")
           if not report["libraries"]["runtime_loadable"]["default"]:
               raise SystemExit("packaged CPU default is not reported loadable")
+          cpu = next(item for item in report["inventory"] if item["runtime"] == "default" and item["device"] == "cpu")
+          assert cpu["ready"] and cpu["loadable"] and cpu["device_accessible"]
+          assert cpu["source"] == "package" and not cpu["configured"]
           PY
-          if readelf -d "${binary}" | grep -E 'libonnxruntime'; then
-            echo "release executable must load ONNX Runtime dynamically" >&2
+          if readelf -d "${binary}" | grep -E 'NEEDED.*(onnxruntime|sherpa|openvino|cuda|cudnn|cublas|nvinfer)'; then
+            echo "release executable must not link an inference runtime" >&2
             exit 1
           fi
           lib="dist/${package}/lib"
@@ -125,6 +121,13 @@ jobs:
           done
           [[ $(find "${lib}" -maxdepth 1 \( -type f -o -type l \) | wc -l) == 3 ]]
           ! compgen -G "${lib}/libonnxruntime_providers_*.so*" >/dev/null
+          ! compgen -G "${lib}/libsherpa-onnx*.so*" >/dev/null
+          while IFS= read -r -d '' dso; do
+            case "${dso#dist/${package}/}" in
+              lib/libonnxruntime.so|lib/libonnxruntime.so.1|lib/libonnxruntime.so.${ORT_VERSION}) ;;
+              *) echo "Forbidden bundled DSO: ${dso}" >&2; exit 1 ;;
+            esac
+          done < <(find "dist/${package}" -name '*.so*' -print0)
           licenses="dist/${package}/licenses"
           [[ $(find "${licenses}" -maxdepth 1 -type f | wc -l) == 7 ]]
           cmp "${OMA_ORT_ROOT}/LICENSE" "${licenses}/ONNX-RUNTIME-LICENSE"

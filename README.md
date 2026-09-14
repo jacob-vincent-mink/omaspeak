@@ -61,14 +61,15 @@ and model flows can also be opened directly:
 
 ```bash
 omaspeak setup runtime   # choose a runtime/device and optionally point at its native bundle
-omaspeak setup runtime --dir /opt/omaspeak-runtime  # scan a flat bundle or SDK root
+omaspeak setup runtime --dir /opt/omaspeak-runtime  # preview and probe a flat bundle or SDK root
+omaspeak setup runtime --dir /opt/omaspeak-runtime --apply  # save only after the probe passes
 omaspeak setup model     # browse catalog metadata and install/activate a model
 ```
 
 The model picker marks the active model, models already installed, models that
 need license acceptance, and models that must be supplied by the user. It includes
-download sizes, model families, backend names, license status, language
-information, and Intel NPU validation. OpenVINO and CUDA remain
+download sizes, the Supertonic model family, backend names, license status,
+language information, and Intel NPU validation. OpenVINO and CUDA remain
 selectable even before their external native stack is configured, with setup
 guidance for supplying it. An exact OpenVINO NPU setup only offers catalog
 models validated for that device.
@@ -93,10 +94,11 @@ omaspeak setup model --list                 # catalog models, license status, an
 omaspeak setup model --download supertonic-3-int8 --accept-license OpenRAIL-M
 omaspeak setup model --download supertonic-3-npu --accept-license OpenRAIL-M
 omaspeak setup model --verify supertonic-3-int8       # re-verify an installed model
-omaspeak setup check                        # verify config, backend, model, engine, audio, launcher; report optional service
+omaspeak setup check                        # verify config, model metadata, runtime/device, audio, launcher; report optional service
 omaspeak setup systemd                      # explicitly install, enable, and start the systemd user service
-omaspeak setup runtime --json               # runtime paths/loadability, devices, capabilities, and models
-omaspeak setup runtime --dir /path/to/sdk   # configure exact libraries from a flat directory or SDK root
+omaspeak setup runtime --json               # read-only runtime/device inventory with paths, evidence, and remediation
+omaspeak setup runtime --dir /path/to/sdk   # preview and probe exact libraries without changing config
+omaspeak setup runtime --dir /path/to/sdk --apply  # save a successfully probed candidate
 omaspeak setup systemd --status             # show systemd user service status
 omaspeak setup systemd --uninstall          # remove the systemd user service
 omaspeak setup menu --status                # show desktop launcher status
@@ -138,14 +140,18 @@ dependencies and re-executes once with effective directories prepended to
 
 `setup runtime --dir` recognizes libraries directly in the chosen directory
 and common SDK layouts under `lib`, `lib64`, `runtime/lib/intel64`, and
-`runtime/lib/intel64/Release`. It records each directory that contains a
-selected library or sibling shared-library dependencies.
+`runtime/lib/intel64/Release`. It previews and probes the resolved candidate in
+an isolated process. Add `--apply` to save it. Failed probes and previews leave
+the config byte-for-byte unchanged.
 
-`omaspeak setup runtime --json` reports configured, environment, package, and
-effective paths separately, as well as missing paths and loadability for each
-runtime. An explicit `omaspeak setup systemd` writes only that
+`omaspeak setup runtime --json` reports every supported runtime/device and
+distinguishes discovery, configuration, loadability, device access, and
+readiness. It includes exact paths, provenance, probe evidence, errors, and
+remediation without changing the config. An explicit `omaspeak setup systemd` writes only that
 app-owned effective path into the unit; it never copies the caller's ambient
 `LD_LIBRARY_PATH`.
+
+The packaged runtime contract is summarized in [RUNTIME.md](RUNTIME.md).
 
 Supertonic 3 int8 is the default model. The catalog pins its official archive
 and verifies each of its four ONNX graphs, TTS
@@ -182,9 +188,10 @@ estimator avoids the accuracy failure seen with the fully INT8 model.
 Supertonic supports `en`, `ko`, `ja`, `ar`, `bg`, `cs`, `da`, `de`, `el`,
 `es`, `et`, `fi`, `fr`, `hi`, `hr`, `hu`, `id`, `it`, `lt`, `lv`, `nl`,
 `pl`, `pt`, `ro`, `ru`, `sk`, `sl`, `sv`, `tr`, `uk`, and `vi`. The configured
-voice is the speaker index from `voice.bin`; `model.steps` controls its denoising
-iterations. The bundled style file exposes `M1` through `M5` as IDs `0` through
-`4`, followed by `F1` through `F5` as IDs `5` through `9`.
+voice is a Supertonic speaker-style index from `voice.bin`; `model.steps`
+controls its denoising iterations. The bundled style file exposes `M1` through
+`M5` as IDs `0` through `4`, followed by `F1` through `F5` as IDs `5` through
+`9`.
 
 List every voice exposed by the active model and mark the configured default:
 
@@ -238,15 +245,17 @@ omaspeak stop
 
 ## Backends
 
-Omaspeak uses the same runtime/device matrix as Omawake: `default` with
-`auto|cpu`, `cuda` with `auto|gpu`, and OpenVINO with `auto|cpu|gpu|npu`.
+Omaspeak supports `default` with `auto|cpu`, `cuda` with `auto|gpu`, and
+OpenVINO with `auto|cpu|gpu|npu`.
 Runtime validation fails closed for missing or incompatible external libraries
 unless `fallback = "cpu"`; a fallback is warned and reported. Every release
 binary exposes CPU, OpenVINO, and CUDA from the same link-free executable.
 
-With `runtime = "cuda"`, `backend.device_id` selects the NVIDIA device.
-String-valued `[backend.options]` entries are forwarded to ONNX Runtime's CUDA
-execution-provider option map, which supports settings such as
+With `runtime = "cuda"`, Omaspeak verifies the exact external ONNX Runtime
+1.29 core, registers the selected CUDA provider DSO, and checks that the
+requested NVIDIA device is accessible. `backend.device_id` selects that
+device. String-valued `[backend.options]` entries are forwarded to ONNX
+Runtime's CUDA execution-provider option map, which supports settings such as
 `cudnn_conv_algo_search`, `gpu_mem_limit`, `arena_extend_strategy`, and
 `do_copy_in_default_stream`. Omaspeak defaults the cuDNN search to `HEURISTIC`
 to avoid ONNX Runtime's expensive exhaustive search during cold loads.
@@ -296,7 +305,12 @@ validation checks both output accuracy and physical device use: CPU and NPU
 each achieved 0% WER over the same 25-word suite, while OpenVINO placement and
 the NPU busy counter independently confirmed NPU execution.
 
-See [DEMO.md](DEMO.md) for cold, hot, concurrent, and fallback results.
+See [DEMO.md](DEMO.md) for a current usage walkthrough. Current performance,
+placement, and accuracy evidence is in the
+[GB10 CUDA report](benchmarks/cuda-gb10-2026-09-14.md) and
+[Dell XPS direct OpenVINO report](benchmarks/openvino-supertonic/DELL-XPS-DIRECT-OPENVINO-2026-09-14.md).
+The [2026-09-13 predecessor demo](benchmarks/historical/2026-09-13-piper.md)
+is retained only as historical evidence.
 
 ## License
 

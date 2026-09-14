@@ -31,20 +31,13 @@ pub fn ensure_config(path: &Path) -> Result<Config> {
 }
 
 pub fn checks(path: &Path, paths: &AppPaths) -> Vec<Check> {
-    checks_with(path, paths, crate::runtime::inspect, |config, paths| {
-        crate::engine::Engine::load(config, paths)
-            .map(|engine| (engine.backend_kind, engine.model_name, engine.sample_rate))
-    })
+    checks_with(path, paths, crate::runtime_inventory::probe)
 }
 
 fn checks_with(
     path: &Path,
     paths: &AppPaths,
-    inspect_runtime: impl FnOnce(
-        &crate::backend::BackendConfig,
-        &Path,
-    ) -> crate::runtime::LibraryPathReport,
-    load_engine: impl FnOnce(&Config, &AppPaths) -> Result<(&'static str, String, i32)>,
+    probe_runtime: impl FnOnce(&crate::backend::BackendConfig, &Path) -> crate::runtime_inventory::Probe,
 ) -> Vec<Check> {
     let mut result = Vec::new();
     let config = match Config::load(path) {
@@ -124,13 +117,13 @@ fn checks_with(
             "run `omaspeak setup model` to choose an available voice",
         )),
     }
-    let runtime_report = inspect_runtime(&config.backend, path);
+    let runtime_probe = probe_runtime(&config.backend, path);
     let runtime_name = match config.backend.runtime {
         crate::backend::Runtime::Default => "default",
         crate::backend::Runtime::Openvino => "openvino",
         crate::backend::Runtime::Cuda => "cuda",
     };
-    if runtime_report.runtime_loadable.get(runtime_name) == Some(&true) {
+    if runtime_probe.loadable {
         result.push(ok(
             "runtime",
             format!("{runtime_name} runtime is installed and its libraries resolve"),
@@ -139,18 +132,11 @@ fn checks_with(
         result.push(fail(
             "runtime",
             format!("{runtime_name} runtime is not installed or its libraries do not resolve"),
-            runtime_report
-                .remediation(config.backend.runtime)
-                .unwrap_or_else(|| "configure the selected runtime".to_owned()),
+            runtime_probe.errors.join("; "),
         ));
     }
     if config.backend.runtime == crate::backend::Runtime::Openvino {
-        if runtime_report
-            .runtime_device_accessible
-            .get("openvino")
-            .copied()
-            .unwrap_or(false)
-        {
+        if runtime_probe.device_accessible {
             result.push(ok(
                 "device",
                 format!(
@@ -164,25 +150,21 @@ fn checks_with(
         } else {
             result.push(fail(
                 "device",
-                runtime_report
-                    .device_probe_errors
-                    .get("openvino")
-                    .cloned()
-                    .unwrap_or_else(|| "OpenVINO device was not probed".to_owned()),
+                runtime_probe.errors.join("; "),
                 "install the device plugin and driver, or select an accessible OpenVINO device",
             ));
         }
     }
-    match load_engine(&config, paths) {
-        Ok((backend_kind, model_name, sample_rate)) => {
+    match runtime_probe.ready {
+        true => {
             result.push(ok(
                 "engine",
-                format!("{backend_kind} initialized {model_name} at {sample_rate} Hz"),
+                "runtime/device probe passed; model inference is not verified by this check",
             ));
         }
-        Err(error) => result.push(fail(
+        false => result.push(fail(
             "engine",
-            format!("{error:#}"),
+            runtime_probe.errors.join("; "),
             "fix the backend/runtime/model settings shown above",
         )),
     }
@@ -311,7 +293,8 @@ fn print_check_results_event(checks: Vec<Check>) -> Result<()> {
 
 pub fn print_runtime(config_path: &Path, json: bool) -> Result<()> {
     let config = Config::load(config_path)?;
-    let locations = crate::runtime::inspect(&config.backend, config_path);
+    let locations = crate::runtime::discover(&config.backend, config_path);
+    let inventory = crate::runtime_inventory::inventory(&config.backend, config_path);
     let value = serde_json::json!({
         "backends": catalog::backends(),
         "supported_capabilities": crate::backend::supported_capabilities(),
@@ -321,12 +304,37 @@ pub fn print_runtime(config_path: &Path, json: bool) -> Result<()> {
             "cuda": ["auto", "gpu"],
             "openvino": ["auto", "cpu", "gpu", "npu"]
         },
+        "inventory": inventory,
+        "loader_environment": std::env::var_os("LD_LIBRARY_PATH")
+            .map(|value| value.to_string_lossy().into_owned()),
         "models": catalog::models(),
     });
     if json {
         println!("{}", serde_json::to_string_pretty(&value)?);
     } else {
         println!("Omaspeak runtime catalog\n");
+        for state in &inventory {
+            println!(
+                "{} / {}: supported={} discovered={} configured={} loadable={} device_accessible={} ready={} source={}",
+                state.runtime,
+                state.device,
+                state.supported,
+                state.discovered,
+                state.configured,
+                state.probe.loadable,
+                state.probe.device_accessible,
+                state.probe.ready,
+                state.source
+            );
+            for error in &state.probe.errors {
+                println!("  error: {error}");
+            }
+            if !state.probe.ready {
+                for action in &state.remediation {
+                    println!("  fix: {action}");
+                }
+            }
+        }
         println!("Backends:");
         for backend in catalog::backends() {
             println!("  {}\t{}", backend.kind, backend.description);

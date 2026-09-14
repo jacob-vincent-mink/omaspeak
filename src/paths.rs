@@ -31,7 +31,7 @@ impl AppPaths {
             .map(PathBuf::from)
             .unwrap_or_else(|| {
                 let user = variable("USER").unwrap_or_else(|| "unknown".into());
-                temp.join(format!("omavoice-{}", user.to_string_lossy()))
+                temp.join(format!("omaspeak-{}", user.to_string_lossy()))
             });
 
         Self {

@@ -1,4 +1,36 @@
 use super::*;
+
+#[test]
+fn rows_wrap_unicode_at_narrow_and_normal_widths() {
+    use unicode_width::UnicodeWidthStr;
+    for width in [24, 80] {
+        for indent in [0, 4, 6] {
+            let text = wrap(
+                "OpenVINO / GPU — /opt/运行时/lib/intel64/Release\nprovider registration failed; configure external libraries",
+                width,
+                indent,
+            );
+            for (index, line) in text.split("\r\n").enumerate() {
+                assert!(line.width() + if index == 0 { indent } else { 0 } < width);
+            }
+        }
+        let mut output = Vec::new();
+        render_at_width(
+            &mut output,
+            "Runtime",
+            "Choose an external installation",
+            &[MenuItem::available(
+                "OpenVINO",
+                "/opt/runtime/lib/intel64/Release",
+            )],
+            0,
+            width,
+        )
+        .unwrap();
+        assert!(!output.is_empty());
+    }
+    assert!(wrap("\x1bhello\tworld", 80, 0).contains("helloworld"));
+}
 use std::collections::VecDeque;
 
 fn key(code: KeyCode) -> Event {

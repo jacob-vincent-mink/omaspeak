@@ -89,6 +89,19 @@ impl ScriptedSelector {
 }
 
 impl SetupSelector for ScriptedSelector {
+    fn probe_runtime(
+        &mut self,
+        _: &Config,
+        _: &Path,
+    ) -> Result<omaspeak::runtime_inventory::Probe> {
+        Ok(omaspeak::runtime_inventory::Probe {
+            ready: true,
+            loadable: true,
+            device_accessible: true,
+            ..Default::default()
+        })
+    }
+
     fn select(
         &mut self,
         title: &str,
@@ -99,6 +112,10 @@ impl SetupSelector for ScriptedSelector {
         self.calls.push((title.into(), items.to_vec(), preferred));
         Ok(self.selections.pop_front().flatten())
     }
+}
+
+fn accept_runtime(_: &Config, _: &Path, _: bool) -> Result<()> {
+    Ok(())
 }
 
 impl SetupSelector for ErrorSelector {
@@ -580,6 +597,13 @@ fn config_helpers_cover_supported_values_defaults_and_schema() {
         .unwrap();
     assert_eq!(voice["value"], 3);
     assert!(voice["choices"].is_array());
+    let family = description["keys"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["key"] == "model.family")
+        .unwrap();
+    assert_eq!(family["choices"], json!(["supertonic"]));
     assert!(
         description["keys"]
             .as_array()
@@ -1499,7 +1523,14 @@ fn guided_runtime_change_clears_provider_specific_configuration() {
         .insert("device_type".into(), "GPU".into());
     config.save(&paths.config_file).unwrap();
 
-    save_runtime(&paths.config_file, Runtime::Default, "cpu", None).unwrap();
+    save_runtime_with(
+        &paths.config_file,
+        Runtime::Default,
+        "cpu",
+        None,
+        accept_runtime,
+    )
+    .unwrap();
     let saved = Config::load(&paths.config_file).unwrap();
     assert_eq!(saved.backend.runtime, Runtime::Default);
     assert_eq!(saved.backend.device, "cpu");
@@ -1832,11 +1863,17 @@ fn full_setup_confirmation_cancel_leaves_configuration_untouched() {
     let paths = paths(&root);
     let mut selector =
         ScriptedSelector::new([Some(0), Some(0), Some(0), Some(0), Some(0), Some(1)]);
-    guided_full_setup(
+    guided_full_setup_with_validator(
         &paths.config_file,
         &paths,
         &FakeModelOperations { installed: false },
         &mut selector,
+        accept_runtime,
+        |_| unreachable!(),
+        || unreachable!(),
+        |_| unreachable!(),
+        |_, _| unreachable!(),
+        |_, _| unreachable!(),
     )
     .unwrap();
 
@@ -1964,7 +2001,7 @@ fn only_engine_loading_commands_require_runtime_path_preparation() {
         out: None,
         no_play: true,
     })));
-    assert!(command_loads_engine(&TopCommand::Setup {
+    assert!(!command_loads_engine(&TopCommand::Setup {
         command: Some(SetupCommand::Check { json: true }),
     }));
     assert!(!command_loads_engine(&TopCommand::Setup {
@@ -1973,6 +2010,7 @@ fn only_engine_loading_commands_require_runtime_path_preparation() {
             runtime: None,
             device: None,
             dir: None,
+            apply: false,
         }),
     }));
     assert!(!command_loads_engine(&TopCommand::Config {
@@ -2009,11 +2047,12 @@ fn confirmed_full_setup_applies_runtime_model_and_launcher_but_leaves_service_un
     let reload_called = Cell::new(false);
     let mut selector =
         ScriptedSelector::new([Some(0), Some(1), Some(0), Some(1), Some(0), Some(0)]);
-    let result = guided_full_setup_with(
+    let result = guided_full_setup_with_validator(
         &paths.config_file,
         &paths,
         &FakeModelOperations { installed: false },
         &mut selector,
+        accept_runtime,
         |paths| {
             let path = paths.data_dir.join("applications/omaspeak.desktop");
             fs::create_dir_all(path.parent().unwrap())?;
@@ -2026,6 +2065,8 @@ fn confirmed_full_setup_applies_runtime_model_and_launcher_but_leaves_service_un
             reload_called.set(true);
             Ok(true)
         },
+        |config, paths| app_setup::print_checks(config, paths, false),
+        app_setup::print_checks_event,
     );
     // Fake model operations do not install bytes, so the pre-restart health
     // check fails and the transaction restores the absent config.
@@ -2343,7 +2384,19 @@ fn guided_setup_cancellation_paths_preserve_configuration() {
         let root = sandbox();
         let paths = paths(&root);
         let mut selector = ScriptedSelector::new(selections);
-        guided_full_setup(&paths.config_file, &paths, &operations, &mut selector).unwrap();
+        guided_full_setup_with_validator(
+            &paths.config_file,
+            &paths,
+            &operations,
+            &mut selector,
+            accept_runtime,
+            |_| unreachable!(),
+            || unreachable!(),
+            |_| unreachable!(),
+            |_, _| unreachable!(),
+            |_, _| unreachable!(),
+        )
+        .unwrap();
         assert!(!paths.config_file.exists());
     }
 
@@ -2397,7 +2450,8 @@ fn installed_guided_model_and_voice_validation_cover_local_only_paths() {
     let mut selector = ScriptedSelector::new([]);
     assert!(choose_voice(&paths.config_file, &paths, empty, false, &mut selector).is_err());
 
-    let error = setup_all(
+    let error = setup_all_with_config(
+        Config::load(&paths.config_file).unwrap(),
         &paths.config_file,
         &paths,
         &operations,
@@ -2409,9 +2463,39 @@ fn installed_guided_model_and_voice_validation_cover_local_only_paths() {
         |_| unreachable!(),
         || false,
         |_| unreachable!(),
+        |_, _| unreachable!(),
+        |_, _| unreachable!(),
     )
     .unwrap_err();
     assert!(error.to_string().contains("voice 99"));
+}
+
+#[test]
+fn unattended_setup_rejects_a_missing_runtime_before_mutating_config() {
+    let root = sandbox();
+    let paths = paths(&root);
+    let mut config = Config::default();
+    config.backend.onnxruntime_library = Some(root.join("missing-libonnxruntime.so"));
+    config.save(&paths.config_file).unwrap();
+    let original = fs::read(&paths.config_file).unwrap();
+
+    let error = setup_all(
+        &paths.config_file,
+        &paths,
+        &FakeModelOperations { installed: false },
+        "supertonic-3-int8",
+        None,
+        None,
+        Some("OpenRAIL-M"),
+        ProgressFormat::Human,
+        |_| unreachable!(),
+        || unreachable!(),
+        |_| unreachable!(),
+    )
+    .unwrap_err();
+
+    assert!(error.to_string().contains("runtime candidate rejected"));
+    assert_eq!(fs::read(&paths.config_file).unwrap(), original);
 }
 
 #[test]
@@ -2622,15 +2706,24 @@ fn filesystem_daemon_and_report_branches_need_no_native_runtime() {
 fn noninteractive_runtime_setup_persists_selection_and_rejects_an_invalid_library() {
     let root = sandbox();
     let paths = paths(&root);
-    setup(
-        Some(SetupCommand::Runtime {
-            json: false,
-            runtime: Some("default".into()),
-            device: Some("cpu".into()),
-            dir: None,
-        }),
+    apply_runtime_selection(
         &paths.config_file,
-        &paths,
+        Runtime::Default,
+        "cpu",
+        None,
+        true,
+        |_, _| omaspeak::runtime_inventory::Probe {
+            loadable: true,
+            device_accessible: true,
+            ready: true,
+            evidence: omaspeak::runtime_inventory::Evidence {
+                versions: vec!["injected test runtime".into()],
+                available_devices: vec!["cpu".into()],
+                selected_device: Some("cpu".into()),
+                ..Default::default()
+            },
+            errors: Vec::new(),
+        },
     )
     .unwrap();
 
@@ -2648,12 +2741,17 @@ fn noninteractive_runtime_setup_persists_selection_and_rejects_an_invalid_librar
             runtime: None,
             device: None,
             dir: Some(root.join("runtime-sdk")),
+            apply: true,
         }),
         &paths.config_file,
         &paths,
     )
     .unwrap_err();
-    assert!(error.to_string().contains("runtime validation failed"));
+    assert!(
+        error
+            .to_string()
+            .contains("runtime candidate rejected; config unchanged")
+    );
     assert_eq!(fs::read_to_string(&paths.config_file).unwrap(), original);
     setup(
         Some(SetupCommand::Runtime {
@@ -2661,6 +2759,7 @@ fn noninteractive_runtime_setup_persists_selection_and_rejects_an_invalid_librar
             runtime: None,
             device: None,
             dir: None,
+            apply: false,
         }),
         &paths.config_file,
         &paths,
