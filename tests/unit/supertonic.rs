@@ -524,6 +524,40 @@ fn direct_openvino_entry_points_fail_cleanly_before_native_execution() {
 }
 
 #[test]
+fn pinned_cpu_runtime_exercises_native_ort_adapter_in_process() {
+    let Some(library) = std::env::var_os("OMASPEAK_TEST_ONNXRUNTIME_LIBRARY").map(PathBuf::from)
+    else {
+        return;
+    };
+    if !library.is_file() {
+        return;
+    }
+
+    <NativeOrtApi as OrtRuntimeApi>::initialize(&library).unwrap();
+    assert!(!<NativeOrtApi as OrtRuntimeApi>::cuda_available(&library).unwrap());
+    let provider = <NativeOrtApi as OrtRuntimeApi>::cuda_provider(&BTreeMap::from([
+        ("device_id".into(), "0".into()),
+        ("cudnn_conv_algo_search".into(), "HEURISTIC".into()),
+    ]))
+    .unwrap();
+
+    let root = temp("native-ort-adapter");
+    let invalid_provider = root.join("libonnxruntime_providers_cuda.so");
+    fs::write(&invalid_provider, b"invalid provider").unwrap();
+    assert!(<NativeOrtApi as OrtRuntimeApi>::register_cuda(&invalid_provider).is_err());
+
+    <NativeOrtApi as OrtRuntimeApi>::f32_value(vec![1, 2], vec![0.25, -0.25]).unwrap();
+    <NativeOrtApi as OrtRuntimeApi>::i64_value(vec![2], vec![1, 2]).unwrap();
+
+    let invalid_graph = root.join("invalid.onnx");
+    fs::write(&invalid_graph, b"not an ONNX graph").unwrap();
+    assert!(<NativeOrtApi as OrtRuntimeApi>::build_session(&invalid_graph, 1, None).is_err());
+    assert!(
+        <NativeOrtApi as OrtRuntimeApi>::build_session(&invalid_graph, 1, Some(&provider)).is_err()
+    );
+}
+
+#[test]
 fn native_runtime_plans_validate_files_devices_and_provider_options_without_loading_libraries() {
     let root = temp("native-runtime-plans");
     let ort = root.join("libonnxruntime.so");

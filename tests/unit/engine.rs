@@ -123,6 +123,9 @@ fn engine_load_reports_shape_backend_and_runtime_errors() {
 
     config.backend.kind = "supertonic".into();
     config.model.family = "unknown".into();
+    if let Some(library) = std::env::var_os("OMASPEAK_TEST_ONNXRUNTIME_LIBRARY") {
+        config.backend.onnxruntime_library = Some(library.into());
+    }
     assert!(Engine::load(&config, &paths).is_err());
 
     config.model.family = "supertonic".into();
