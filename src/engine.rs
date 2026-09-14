@@ -2,10 +2,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
-use sherpa_onnx::{
-    GenerationConfig, OfflineTts, OfflineTtsConfig, OfflineTtsModelConfig,
-    OfflineTtsVitsModelConfig,
-};
+use sherpa_onnx::{OfflineTtsConfig, OfflineTtsModelConfig, OfflineTtsVitsModelConfig};
 
 use crate::backend::{Fallback, Runtime, compiled_capabilities};
 use crate::config::Config;
@@ -16,11 +13,6 @@ pub trait TtsBackend {
     fn sample_rate(&self) -> i32;
     fn num_voices(&self) -> i32;
     fn generate(&self, text: &str, speed: f32, voice: i32) -> Result<Vec<f32>>;
-}
-
-struct SherpaOnnxBackend {
-    tts: OfflineTts,
-    sample_rate: i32,
 }
 
 pub struct Engine {
@@ -42,6 +34,30 @@ pub struct Synthesis {
 
 impl Engine {
     pub fn load(config: &Config, paths: &AppPaths) -> Result<Self> {
+        Self::load_with(config, paths, |config, paths, runtime| {
+            let backend: Box<dyn TtsBackend> = match config.backend.kind.as_str() {
+                "sherpa-onnx" => {
+                    let native_config = build_sherpa_config(config, paths, runtime)?;
+                    Box::new(crate::native::sherpa::SherpaOnnxBackend::create(
+                        &native_config,
+                    )?)
+                }
+                kind => bail!(
+                    "TTS backend {kind} is not available in this build; run `omaspeak setup runtime`"
+                ),
+            };
+            Ok(backend)
+        })
+    }
+
+    /// Construct an engine with a caller-provided backend factory.
+    ///
+    /// This is also the extension point for backends that live outside this crate.
+    pub fn load_with(
+        config: &Config,
+        paths: &AppPaths,
+        create_backend: impl FnOnce(&Config, &AppPaths, Runtime) -> Result<Box<dyn TtsBackend>>,
+    ) -> Result<Self> {
         config.backend.validate_shape()?;
         let (effective_runtime, fallback_used) = match config
             .backend
@@ -56,12 +72,7 @@ impl Engine {
         };
 
         let started = Instant::now();
-        let backend: Box<dyn TtsBackend> = match config.backend.kind.as_str() {
-            "sherpa-onnx" => Box::new(SherpaOnnxBackend::load(config, paths, effective_runtime)?),
-            kind => bail!(
-                "TTS backend {kind} is not available in this build; run `omaspeak setup runtime`"
-            ),
-        };
+        let backend = create_backend(config, paths, effective_runtime)?;
         let load_time = started.elapsed();
         let sample_rate = backend.sample_rate();
         let backend_kind = backend.kind();
@@ -115,84 +126,49 @@ impl Engine {
     }
 }
 
-impl SherpaOnnxBackend {
-    fn load(config: &Config, paths: &AppPaths, runtime: Runtime) -> Result<Self> {
-        if config.model.family != "piper" && config.model.family != "vits" {
-            bail!(
-                "sherpa-onnx TTS model family {} is not implemented",
-                config.model.family
-            );
+fn build_sherpa_config(
+    config: &Config,
+    paths: &AppPaths,
+    runtime: Runtime,
+) -> Result<OfflineTtsConfig> {
+    if config.model.family != "piper" && config.model.family != "vits" {
+        bail!(
+            "sherpa-onnx TTS model family {} is not implemented",
+            config.model.family
+        );
+    }
+    let directory = config.model_directory(paths);
+    let required = |name: &str| -> Result<String> {
+        let path = directory.join(name);
+        if !path.exists() {
+            bail!("required model asset is missing: {}", path.display());
         }
-        let directory = config.model_directory(paths);
-        let required = |name: &str| -> Result<String> {
-            let path = directory.join(name);
-            if !path.exists() {
-                bail!("required model asset is missing: {}", path.display());
-            }
-            Ok(path.to_string_lossy().into_owned())
-        };
-        let provider = match runtime {
-            Runtime::Default => "cpu".to_owned(),
-            Runtime::Cuda => "cuda".to_owned(),
-            Runtime::Openvino => {
-                bail!("OpenVINO provider file generation is unavailable in this build")
-            }
-        };
-        let sherpa_config = OfflineTtsConfig {
-            model: OfflineTtsModelConfig {
-                vits: OfflineTtsVitsModelConfig {
-                    model: Some(required(&config.model.model_file)?),
-                    tokens: Some(required(&config.model.tokens_file)?),
-                    data_dir: Some(required(&config.model.data_directory)?),
-                    noise_scale: config.model.noise_scale,
-                    noise_scale_w: config.model.noise_scale_w,
-                    length_scale: config.model.length_scale,
-                    ..Default::default()
-                },
-                num_threads: config.backend.threads.into(),
-                provider: Some(provider),
+        Ok(path.to_string_lossy().into_owned())
+    };
+    let provider = match runtime {
+        Runtime::Default => "cpu".to_owned(),
+        Runtime::Cuda => "cuda".to_owned(),
+        Runtime::Openvino => {
+            bail!("OpenVINO provider file generation is unavailable in this build")
+        }
+    };
+    Ok(OfflineTtsConfig {
+        model: OfflineTtsModelConfig {
+            vits: OfflineTtsVitsModelConfig {
+                model: Some(required(&config.model.model_file)?),
+                tokens: Some(required(&config.model.tokens_file)?),
+                data_dir: Some(required(&config.model.data_directory)?),
+                noise_scale: config.model.noise_scale,
+                noise_scale_w: config.model.noise_scale_w,
+                length_scale: config.model.length_scale,
                 ..Default::default()
             },
+            num_threads: config.backend.threads.into(),
+            provider: Some(provider),
             ..Default::default()
-        };
-        let tts = OfflineTts::create(&sherpa_config)
-            .context("sherpa-onnx could not create the TTS engine")?;
-        let sample_rate = tts.sample_rate();
-        if sample_rate <= 0 {
-            bail!("model reported invalid sample rate {sample_rate}");
-        }
-        Ok(Self { tts, sample_rate })
-    }
-}
-
-impl TtsBackend for SherpaOnnxBackend {
-    fn kind(&self) -> &'static str {
-        "sherpa-onnx"
-    }
-
-    fn sample_rate(&self) -> i32 {
-        self.sample_rate
-    }
-
-    fn num_voices(&self) -> i32 {
-        self.tts.num_speakers()
-    }
-
-    fn generate(&self, text: &str, speed: f32, voice: i32) -> Result<Vec<f32>> {
-        let audio = self
-            .tts
-            .generate_with_config(
-                text,
-                &GenerationConfig {
-                    speed,
-                    sid: voice,
-                    ..Default::default()
-                },
-                None::<fn(&[f32], f32) -> bool>,
-            )
-            .context("sherpa-onnx synthesis failed")?;
-        Ok(audio.samples().to_vec())
-    }
+        },
+        ..Default::default()
+    })
 }
 
 fn save_wav(path: &Path, sample_rate: i32, samples: &[f32]) -> Result<()> {
@@ -212,3 +188,7 @@ fn save_wav(path: &Path, sample_rate: i32, samples: &[f32]) -> Result<()> {
     writer.finalize()?;
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "../tests/unit/engine.rs"]
+mod tests;

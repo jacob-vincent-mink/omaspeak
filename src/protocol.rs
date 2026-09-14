@@ -67,3 +67,7 @@ impl Response {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "../tests/unit/protocol.rs"]
+mod tests;

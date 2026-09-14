@@ -116,22 +116,5 @@ impl Default for DaemonConfig {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn partial_config_uses_defaults() {
-        let cfg: Config = toml::from_str(
-            r#"
-                [model]
-                voice = 2
-                [backend]
-                runtime = "default"
-            "#,
-        )
-        .unwrap();
-        assert_eq!(cfg.model.voice, 2);
-        assert_eq!(cfg.model.family, "piper");
-        assert_eq!(cfg.backend.threads, 2);
-    }
-}
+#[path = "../tests/unit/config.rs"]
+mod tests;

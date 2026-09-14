@@ -1,0 +1,61 @@
+use super::*;
+
+fn temp(name: &str) -> PathBuf {
+    std::env::temp_dir().join(format!("omaspeak-config-{}-{name}", std::process::id()))
+}
+
+#[test]
+fn partial_config_uses_defaults() {
+    let cfg: Config = toml::from_str(
+        r#"
+                [model]
+                voice = 2
+                [backend]
+                runtime = "default"
+            "#,
+    )
+    .unwrap();
+    assert_eq!(cfg.model.voice, 2);
+    assert_eq!(cfg.model.family, "piper");
+    assert_eq!(cfg.backend.threads, 2);
+}
+
+#[test]
+fn missing_save_load_and_model_paths_round_trip() {
+    let root = temp("round-trip");
+    let path = root.join("nested/config.toml");
+    let _ = fs::remove_dir_all(&root);
+    let defaults = Config::load(&path).unwrap();
+    assert_eq!(defaults.audio.device, "default");
+    assert_eq!(defaults.audio.volume, 1.0);
+    assert_eq!(defaults.daemon.queue_capacity, 8);
+    assert_eq!(defaults.daemon.max_text_bytes, 65_536);
+    defaults.save(&path).unwrap();
+    assert_eq!(Config::load(&path).unwrap().model.name, defaults.model.name);
+
+    let paths = AppPaths {
+        config_file: path.clone(),
+        data_dir: root.join("data"),
+        state_dir: root.join("state"),
+        runtime_dir: root.join("run"),
+    };
+    assert_eq!(
+        defaults.model_directory(&paths),
+        root.join("data/models/en_US-lessac-medium")
+    );
+    let mut custom = defaults;
+    custom.model.directory = root.join("custom").display().to_string();
+    assert_eq!(custom.model_directory(&paths), root.join("custom"));
+}
+
+#[test]
+fn malformed_and_unknown_config_is_rejected() {
+    let root = temp("invalid");
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).unwrap();
+    let path = root.join("config.toml");
+    fs::write(&path, "not = [valid").unwrap();
+    assert!(Config::load(&path).is_err());
+    fs::write(&path, "unknown = true").unwrap();
+    assert!(Config::load(&path).is_err());
+}

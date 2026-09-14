@@ -140,6 +140,45 @@ enum SetupCommand {
     },
 }
 
+trait ModelSetupOperations {
+    fn models(&self) -> &'static [omaspeak::catalog::ModelSpec];
+    fn resolve(&self, id: &str) -> Result<&'static omaspeak::catalog::ModelSpec>;
+    fn verify(&self, paths: &AppPaths, spec: &omaspeak::catalog::ModelSpec) -> Result<()>;
+    fn install(
+        &self,
+        paths: &AppPaths,
+        spec: &omaspeak::catalog::ModelSpec,
+        archive: Option<&Path>,
+        progress: ProgressFormat,
+    ) -> Result<PathBuf>;
+}
+
+struct BuiltinModels;
+
+impl ModelSetupOperations for BuiltinModels {
+    fn models(&self) -> &'static [omaspeak::catalog::ModelSpec] {
+        omaspeak::catalog::models()
+    }
+
+    fn resolve(&self, id: &str) -> Result<&'static omaspeak::catalog::ModelSpec> {
+        model_spec(id)
+    }
+
+    fn verify(&self, paths: &AppPaths, spec: &omaspeak::catalog::ModelSpec) -> Result<()> {
+        app_setup::model::verify(paths, spec)
+    }
+
+    fn install(
+        &self,
+        paths: &AppPaths,
+        spec: &omaspeak::catalog::ModelSpec,
+        archive: Option<&Path>,
+        progress: ProgressFormat,
+    ) -> Result<PathBuf> {
+        app_setup::model::install(paths, spec, archive, progress)
+    }
+}
+
 fn main() -> ExitCode {
     match run(Cli::parse()) {
         Ok(()) => ExitCode::SUCCESS,
@@ -206,16 +245,7 @@ fn say(config_path: &Path, paths: &AppPaths, args: SayArgs) -> Result<()> {
 fn run_daemon(config_path: &Path, paths: &AppPaths) -> Result<()> {
     let config = Config::load(config_path)?;
     let engine = Engine::load(&config, paths)?;
-    fs::create_dir_all(&paths.runtime_dir)?;
-    fs::set_permissions(&paths.runtime_dir, fs::Permissions::from_mode(0o700))?;
-    fs::create_dir_all(&paths.state_dir)?;
-    let socket = paths.socket();
-    if socket.exists() {
-        match UnixStream::connect(&socket) {
-            Ok(_) => bail!("daemon is already running at {}", socket.display()),
-            Err(_) => fs::remove_file(&socket).context("remove stale daemon socket")?,
-        }
-    }
+    let socket = prepare_daemon_socket(paths)?;
     let listener = UnixListener::bind(&socket)
         .with_context(|| format!("bind daemon socket {}", socket.display()))?;
     fs::set_permissions(&socket, fs::Permissions::from_mode(0o600))?;
@@ -227,32 +257,79 @@ fn run_daemon(config_path: &Path, paths: &AppPaths) -> Result<()> {
         socket.display()
     );
 
-    let mut should_stop = false;
-    while !should_stop {
-        let (mut stream, _) = listener.accept().context("accept daemon request")?;
+    let serve_result = serve_requests(&engine, &config, paths, || {
+        listener
+            .accept()
+            .map(|(stream, _)| stream)
+            .context("accept daemon request")
+    });
+    drop(listener);
+    finish_daemon(&socket, serve_result)
+}
+
+fn finish_daemon(socket: &Path, serve_result: Result<()>) -> Result<()> {
+    if let Err(error) = fs::remove_file(socket)
+        && error.kind() != std::io::ErrorKind::NotFound
+    {
+        eprintln!(
+            "omaspeak: failed to remove daemon socket {}: {error}",
+            socket.display()
+        );
+    }
+    serve_result
+}
+
+fn prepare_daemon_socket(paths: &AppPaths) -> Result<PathBuf> {
+    fs::create_dir_all(&paths.runtime_dir)?;
+    fs::set_permissions(&paths.runtime_dir, fs::Permissions::from_mode(0o700))?;
+    fs::create_dir_all(&paths.state_dir)?;
+    let socket = paths.socket();
+    if socket.exists() {
+        match UnixStream::connect(&socket) {
+            Ok(_) => bail!("daemon is already running at {}", socket.display()),
+            Err(_) => fs::remove_file(&socket).context("remove stale daemon socket")?,
+        }
+    }
+    Ok(socket)
+}
+
+fn serve_requests<S: Read + Write>(
+    engine: &impl SpeechEngine,
+    config: &Config,
+    paths: &AppPaths,
+    mut accept: impl FnMut() -> Result<S>,
+) -> Result<()> {
+    loop {
+        let mut stream = accept()?;
         let response = match read_request(&mut stream, config.daemon.max_text_bytes + 16_384) {
             Ok(request) => {
-                should_stop = matches!(request.command, Command::Shutdown);
-                handle_request(&engine, &config, paths, request)
+                let should_stop = matches!(request.command, Command::Shutdown);
+                let response = handle_request(engine, config, paths, request);
+                write_response_best_effort(&mut stream, &response);
+                if should_stop {
+                    return Ok(());
+                }
+                continue;
             }
             Err(error) => Response::error("unknown", "invalid_request", error),
         };
-        match serde_json::to_vec(&response) {
-            Ok(mut bytes) => {
-                bytes.push(b'\n');
-                if let Err(error) = stream.write_all(&bytes) {
-                    eprintln!("omaspeak: client disconnected before response: {error}");
-                }
-            }
-            Err(error) => eprintln!("omaspeak: failed to encode response: {error}"),
-        }
+        write_response_best_effort(&mut stream, &response);
     }
-    drop(listener);
-    let _ = fs::remove_file(&socket);
-    Ok(())
 }
 
-fn read_request(stream: &mut UnixStream, limit: usize) -> Result<Request> {
+fn write_response_best_effort(stream: &mut impl Write, response: &Response) {
+    if let Err(error) = write_response(stream, response) {
+        eprintln!("omaspeak: client disconnected before response: {error}");
+    }
+}
+
+fn write_response(stream: &mut impl Write, response: &Response) -> Result<()> {
+    let mut bytes = serde_json::to_vec(response).context("encode daemon response")?;
+    bytes.push(b'\n');
+    stream.write_all(&bytes).context("write daemon response")
+}
+
+fn read_request(stream: &mut impl Read, limit: usize) -> Result<Request> {
     let mut bytes = Vec::new();
     BufReader::new(stream)
         .take(limit as u64 + 1)
@@ -267,8 +344,48 @@ fn read_request(stream: &mut UnixStream, limit: usize) -> Result<Request> {
     Ok(request)
 }
 
+trait SpeechEngine {
+    fn synthesize(&self, text: &str, speed: f32, voice: i32, output: &Path) -> Result<Synthesis>;
+    fn backend_kind(&self) -> &'static str;
+    fn model_name(&self) -> &str;
+    fn sample_rate(&self) -> i32;
+    fn load_milliseconds(&self) -> u64;
+    fn effective_runtime(&self) -> Runtime;
+    fn fallback_used(&self) -> bool;
+}
+
+impl SpeechEngine for Engine {
+    fn synthesize(&self, text: &str, speed: f32, voice: i32, output: &Path) -> Result<Synthesis> {
+        Engine::synthesize(self, text, speed, voice, output)
+    }
+
+    fn backend_kind(&self) -> &'static str {
+        self.backend_kind
+    }
+
+    fn model_name(&self) -> &str {
+        &self.model_name
+    }
+
+    fn sample_rate(&self) -> i32 {
+        self.sample_rate
+    }
+
+    fn load_milliseconds(&self) -> u64 {
+        self.load_time.as_millis() as u64
+    }
+
+    fn effective_runtime(&self) -> Runtime {
+        self.effective_runtime
+    }
+
+    fn fallback_used(&self) -> bool {
+        self.fallback_used
+    }
+}
+
 fn handle_request(
-    engine: &Engine,
+    engine: &impl SpeechEngine,
     config: &Config,
     paths: &AppPaths,
     request: Request,
@@ -314,32 +431,33 @@ fn handle_request(
     }
 }
 
-fn synthesis_payload(engine: &Engine, synthesis: Synthesis) -> ResultPayload {
+fn synthesis_payload(engine: &impl SpeechEngine, synthesis: Synthesis) -> ResultPayload {
     ResultPayload::Synthesis {
         output: synthesis.output.to_string_lossy().into_owned(),
         sample_rate: synthesis.sample_rate,
         samples: synthesis.samples,
         audio_seconds: synthesis.samples as f64 / synthesis.sample_rate as f64,
-        load_milliseconds: engine.load_time.as_millis() as u64,
+        load_milliseconds: engine.load_milliseconds(),
         synthesis_milliseconds: synthesis.synthesis_time.as_millis() as u64,
     }
 }
 
-fn status_payload(engine: &Engine, config: &Config) -> ResultPayload {
+fn status_payload(engine: &impl SpeechEngine, config: &Config) -> ResultPayload {
+    let effective_runtime = engine.effective_runtime();
     ResultPayload::Status {
         running: true,
         pid: std::process::id(),
-        model: engine.model_name.clone(),
-        sample_rate: engine.sample_rate,
+        model: engine.model_name().into(),
+        sample_rate: engine.sample_rate(),
         backend: json!({
-            "kind": engine.backend_kind,
+            "kind": engine.backend_kind(),
             "requested": {"runtime": config.backend.runtime, "device": config.backend.canonical_device().unwrap_or_else(|_| config.backend.device.clone())},
-            "effective": {"runtime": engine.effective_runtime, "device": if engine.effective_runtime == Runtime::Default { "cpu" } else { config.backend.device.as_str() }, "provider": if engine.effective_runtime == Runtime::Default { "CPUExecutionProvider" } else { "unverified" }},
+            "effective": {"runtime": effective_runtime, "device": if effective_runtime == Runtime::Default { "cpu" } else { config.backend.device.as_str() }, "provider": if effective_runtime == Runtime::Default { "CPUExecutionProvider" } else { "unverified" }},
             "compiled_capabilities": compiled_capabilities(),
             "fallback_policy": config.backend.fallback,
-            "fallback_used": engine.fallback_used,
-            "placement_verified": engine.effective_runtime == Runtime::Default,
-            "evidence": if engine.effective_runtime == Runtime::Default { vec!["static CPU build"] } else { Vec::<&str>::new() }
+            "fallback_used": engine.fallback_used(),
+            "placement_verified": effective_runtime == Runtime::Default,
+            "evidence": if effective_runtime == Runtime::Default { vec!["static CPU build"] } else { Vec::<&str>::new() }
         }),
     }
 }
@@ -559,84 +677,19 @@ fn setup(command: Option<SetupCommand>, config_path: &Path, paths: &AppPaths) ->
             archive,
             no_activate,
             progress_format,
-        } => {
-            if list || json {
-                if json {
-                    println!(
-                        "{}",
-                        serde_json::to_string_pretty(omaspeak::catalog::models())?
-                    );
-                } else {
-                    print_models(paths);
-                }
-                if download.is_none() && set.is_none() && verify.is_none() {
-                    return Ok(());
-                }
-            }
-            if let Some(id) = verify {
-                let spec = model_spec(&id)?;
-                app_setup::model::verify(paths, spec)?;
-                println!(
-                    "verified: {}",
-                    app_setup::model::model_directory(paths, spec).display()
-                );
-                return Ok(());
-            }
-            if let Some(id) = set {
-                let spec = model_spec(&id)?;
-                app_setup::model::verify(paths, spec)?;
-                let mut config = app_setup::ensure_config(config_path)?;
-                spec.activate(&mut config);
-                config.save(config_path)?;
-                println!("active model: {}", spec.id);
-                return Ok(());
-            }
-            let selected = match download {
-                Some(id) => Some(id),
-                None if !list && !json && std::io::stdin().is_terminal() => {
-                    print_models(paths);
-                    eprint!("Install en_US-lessac-medium? [Y/n] ");
-                    std::io::stderr().flush()?;
-                    let mut answer = String::new();
-                    std::io::stdin().read_line(&mut answer)?;
-                    if answer.trim().is_empty() || answer.trim().eq_ignore_ascii_case("y") {
-                        Some("en_US-lessac-medium".into())
-                    } else {
-                        None
-                    }
-                }
-                None => {
-                    print_models(paths);
-                    println!(
-                        "Run `omaspeak setup model --download en_US-lessac-medium` to install the default model."
-                    );
-                    None
-                }
-            };
-            if let Some(id) = selected {
-                let spec = model_spec(&id)?;
-                let directory =
-                    app_setup::model::install(paths, spec, archive.as_deref(), progress_format)?;
-                if !no_activate {
-                    let mut config = app_setup::ensure_config(config_path)?;
-                    spec.activate(&mut config);
-                    config.save(config_path)?;
-                }
-                match progress_format {
-                    ProgressFormat::Human => println!("model ready: {}", directory.display()),
-                    ProgressFormat::Json => println!(
-                        "{}",
-                        serde_json::to_string(&json!({
-                            "event": "model-ready",
-                            "model": spec.id,
-                            "path": directory,
-                            "active": !no_activate,
-                        }))?
-                    ),
-                }
-            }
-            Ok(())
-        }
+        } => setup_model(
+            config_path,
+            paths,
+            &BuiltinModels,
+            list,
+            json,
+            download,
+            set,
+            verify,
+            archive,
+            no_activate,
+            progress_format,
+        ),
         SetupCommand::Systemd {
             uninstall,
             status,
@@ -669,52 +722,157 @@ fn setup(command: Option<SetupCommand>, config_path: &Path, paths: &AppPaths) ->
             archive,
             no_start,
             progress_format,
-        } => {
-            let spec = model_spec(&model)?;
-            let mut config = app_setup::ensure_config(config_path)?;
-            let directory =
-                app_setup::model::install(paths, spec, archive.as_deref(), progress_format)?;
-            spec.activate(&mut config);
-            config.save(config_path)?;
-            let launcher = app_setup::menu::install(paths)?;
-            let service = app_setup::systemd::install(paths, config_path, !no_start)?;
-            match progress_format {
-                ProgressFormat::Human => {
-                    println!(
-                        "model: {}\nconfig: {}\nlauncher: {}\nservice: {}",
-                        directory.display(),
-                        config_path.display(),
-                        launcher.display(),
-                        service.display()
-                    );
-                    app_setup::print_checks(config_path, paths, false)
-                }
-                ProgressFormat::Json => {
-                    println!(
-                        "{}",
-                        serde_json::to_string(&json!({
-                            "event": "setup-complete",
-                            "model": directory,
-                            "config": config_path,
-                            "launcher": launcher,
-                            "service": service,
-                        }))?
-                    );
-                    app_setup::print_checks_event(config_path, paths)
-                }
-            }
+        } => setup_all(
+            config_path,
+            paths,
+            &BuiltinModels,
+            &model,
+            archive.as_deref(),
+            no_start,
+            progress_format,
+            app_setup::menu::install,
+            app_setup::systemd::install,
+        ),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn setup_all(
+    config_path: &Path,
+    paths: &AppPaths,
+    operations: &impl ModelSetupOperations,
+    model: &str,
+    archive: Option<&Path>,
+    no_start: bool,
+    progress_format: ProgressFormat,
+    install_launcher: impl FnOnce(&AppPaths) -> Result<PathBuf>,
+    install_service: impl FnOnce(&AppPaths, &Path, bool) -> Result<PathBuf>,
+) -> Result<()> {
+    let spec = operations.resolve(model)?;
+    let mut config = app_setup::ensure_config(config_path)?;
+    let directory = operations.install(paths, spec, archive, progress_format)?;
+    spec.activate(&mut config);
+    config.save(config_path)?;
+    let launcher = install_launcher(paths)?;
+    let service = install_service(paths, config_path, !no_start)?;
+    match progress_format {
+        ProgressFormat::Human => {
+            println!(
+                "model: {}\nconfig: {}\nlauncher: {}\nservice: {}",
+                directory.display(),
+                config_path.display(),
+                launcher.display(),
+                service.display()
+            );
+            app_setup::print_checks(config_path, paths, false)
+        }
+        ProgressFormat::Json => {
+            println!(
+                "{}",
+                serde_json::to_string(&json!({
+                    "event": "setup-complete",
+                    "model": directory,
+                    "config": config_path,
+                    "launcher": launcher,
+                    "service": service,
+                }))?
+            );
+            app_setup::print_checks_event(config_path, paths)
         }
     }
 }
 
-fn model_spec(id: &str) -> Result<&'static omaspeak::catalog::ModelSpec> {
-    omaspeak::catalog::model(id)
-        .ok_or_else(|| anyhow!("unknown model {id}; run `omaspeak setup model --list`"))
+#[allow(clippy::too_many_arguments)]
+fn setup_model(
+    config_path: &Path,
+    paths: &AppPaths,
+    operations: &impl ModelSetupOperations,
+    list: bool,
+    json: bool,
+    download: Option<String>,
+    set: Option<String>,
+    verify: Option<String>,
+    archive: Option<PathBuf>,
+    no_activate: bool,
+    progress_format: ProgressFormat,
+) -> Result<()> {
+    if list || json {
+        if json {
+            println!("{}", serde_json::to_string_pretty(operations.models())?);
+        } else {
+            print_models_with(paths, operations);
+        }
+        if download.is_none() && set.is_none() && verify.is_none() {
+            return Ok(());
+        }
+    }
+    if let Some(id) = verify {
+        let spec = operations.resolve(&id)?;
+        operations.verify(paths, spec)?;
+        println!(
+            "verified: {}",
+            app_setup::model::model_directory(paths, spec).display()
+        );
+        return Ok(());
+    }
+    if let Some(id) = set {
+        let spec = operations.resolve(&id)?;
+        operations.verify(paths, spec)?;
+        let mut config = app_setup::ensure_config(config_path)?;
+        spec.activate(&mut config);
+        config.save(config_path)?;
+        println!("active model: {}", spec.id);
+        return Ok(());
+    }
+    let selected = match download {
+        Some(id) => Some(id),
+        None if !list && !json && std::io::stdin().is_terminal() => {
+            print_models_with(paths, operations);
+            eprint!("Install en_US-lessac-medium? [Y/n] ");
+            std::io::stderr().flush()?;
+            let mut answer = String::new();
+            std::io::stdin().read_line(&mut answer)?;
+            if answer.trim().is_empty() || answer.trim().eq_ignore_ascii_case("y") {
+                Some("en_US-lessac-medium".into())
+            } else {
+                None
+            }
+        }
+        None => {
+            print_models_with(paths, operations);
+            println!(
+                "Run `omaspeak setup model --download en_US-lessac-medium` to install the default model."
+            );
+            None
+        }
+    };
+    if let Some(id) = selected {
+        let spec = operations.resolve(&id)?;
+        let directory = operations.install(paths, spec, archive.as_deref(), progress_format)?;
+        if !no_activate {
+            let mut config = app_setup::ensure_config(config_path)?;
+            spec.activate(&mut config);
+            config.save(config_path)?;
+        }
+        match progress_format {
+            ProgressFormat::Human => println!("model ready: {}", directory.display()),
+            ProgressFormat::Json => println!(
+                "{}",
+                serde_json::to_string(&json!({
+                    "event": "model-ready",
+                    "model": spec.id,
+                    "path": directory,
+                    "active": !no_activate,
+                }))?
+            ),
+        }
+    }
+    Ok(())
 }
 
-fn print_models(paths: &AppPaths) {
-    for model in omaspeak::catalog::models() {
-        let status = if app_setup::model::verify(paths, model).is_ok() {
+fn print_models_with(paths: &AppPaths, operations: &impl ModelSetupOperations) {
+    for model in operations.models() {
+        let status = if operations.verify(paths, model).is_ok() {
             "installed"
         } else {
             "available"
@@ -726,13 +884,23 @@ fn print_models(paths: &AppPaths) {
     }
 }
 
+fn model_spec(id: &str) -> Result<&'static omaspeak::catalog::ModelSpec> {
+    omaspeak::catalog::model(id)
+        .ok_or_else(|| anyhow!("unknown model {id}; run `omaspeak setup model --list`"))
+}
+
 fn play(path: &Path) -> Result<()> {
+    play_with(path, |program, path| {
+        ProcessCommand::new(program).arg(path).status()
+    })
+}
+
+fn play_with(
+    path: &Path,
+    mut run: impl FnMut(&str, &Path) -> std::io::Result<std::process::ExitStatus>,
+) -> Result<()> {
     for program in ["pw-play", "aplay"] {
-        if ProcessCommand::new(program)
-            .arg(path)
-            .status()
-            .is_ok_and(|status| status.success())
-        {
+        if run(program, path).is_ok_and(|status| status.success()) {
             return Ok(());
         }
     }
@@ -746,3 +914,7 @@ fn request_id() -> String {
         .as_nanos();
     format!("{}-{nanos}", std::process::id())
 }
+
+#[cfg(test)]
+#[path = "../tests/unit/app_main.rs"]
+mod tests;
