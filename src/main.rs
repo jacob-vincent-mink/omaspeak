@@ -2012,7 +2012,9 @@ fn apply_runtime_directory(
             .into_iter()
             .filter(|directory| directory_contains_shared_libraries(directory)),
     );
-    let mut library_dirs = Vec::new();
+    // Keep user-supplied vendor overlays (for example CUDA and cuDNN) when an
+    // explicit directory pins the runtime core and provider libraries.
+    let mut library_dirs = config.backend.library_dirs.clone();
     for directory in selected_parents {
         if !library_dirs.contains(&directory) {
             library_dirs.push(directory);

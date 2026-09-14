@@ -21,4 +21,6 @@ jobs:
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo deny check licenses
       - run: cargo about generate about.hbs > /dev/null
-      - run: cargo llvm-cov --all-targets --locked --fail-under-lines 90.01
+      # Runtime inventory tests launch the instrumented CLI as child processes;
+      # serialize tests so their LLVM profiles cannot clobber each other.
+      - run: cargo llvm-cov --all-targets --locked --fail-under-lines 90.01 -- --test-threads=1

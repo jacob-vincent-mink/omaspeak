@@ -1546,9 +1546,12 @@ fn runtime_directory_setup_discovers_flat_and_sdk_library_layouts() {
     let lib64 = bundle.join("lib64");
     let vendor = bundle.join("runtime/lib/intel64");
     let release = vendor.join("Release");
+    let overlay = root.join("vendor-overlay");
     for directory in [&lib, &lib64, &vendor, &release] {
         fs::create_dir_all(directory).unwrap();
     }
+    fs::create_dir_all(&overlay).unwrap();
+    fs::write(overlay.join("libvendor.so"), b"vendor").unwrap();
     fs::write(lib.join("libonnxruntime.so.1.29.0"), b"ort").unwrap();
     fs::write(release.join("libopenvino_c.so.2600"), b"openvino").unwrap();
     fs::create_dir_all(vendor.join("openvino")).unwrap();
@@ -1557,6 +1560,7 @@ fn runtime_directory_setup_discovers_flat_and_sdk_library_layouts() {
 
     let mut config = Config::default();
     config.backend.runtime = Runtime::Openvino;
+    config.backend.library_dirs.push(overlay.clone());
     config.save(&paths.config_file).unwrap();
     configure_runtime_directory_with(&paths.config_file, &bundle, |_, _, _| Ok(())).unwrap();
 
@@ -1586,6 +1590,7 @@ fn runtime_directory_setup_discovers_flat_and_sdk_library_layouts() {
                 .contains(&directory.canonicalize().unwrap())
         );
     }
+    assert!(configured.library_dirs.contains(&overlay));
 
     fs::remove_file(bundle.join("runtime/lib/intel64/Release/libopenvino_c.so.2600")).unwrap();
     assert!(configure_runtime_directory(&paths.config_file, &bundle).is_err());
