@@ -398,11 +398,17 @@ pub fn child(config: &BackendConfig) -> Probe {
                 let devices = environment
                     .devices()
                     .filter(|device| device.ep().ok() == Some("CUDAExecutionProvider"))
-                    .map(|device| {
+                    .enumerate()
+                    .map(|(ordinal, device)| {
                         let hardware = device.hardware_device();
                         (
+                            ordinal as u32,
                             hardware.id(),
-                            format!("CUDA hardware {} ({:?})", hardware.id(), hardware.ty()),
+                            format!(
+                                "CUDA ordinal {ordinal}, hardware {} ({:?})",
+                                hardware.id(),
+                                hardware.ty()
+                            ),
                         )
                     })
                     .collect::<Vec<_>>();
@@ -426,18 +432,18 @@ pub fn child(config: &BackendConfig) -> Probe {
 }
 
 fn cuda_device_evidence(
-    devices: Vec<(u32, String)>,
-    selected_id: u32,
+    devices: Vec<(u32, u32, String)>,
+    selected_ordinal: u32,
 ) -> Result<(Vec<String>, String)> {
     let selected = devices
         .iter()
-        .find(|(id, _)| *id == selected_id)
-        .map(|(_, description)| description.clone())
+        .find(|(ordinal, _, _)| *ordinal == selected_ordinal)
+        .map(|(_, _, description)| description.clone())
         .context("requested CUDA device is unavailable")?;
     Ok((
         devices
             .into_iter()
-            .map(|(_, description)| description)
+            .map(|(_, _, description)| description)
             .collect(),
         selected,
     ))

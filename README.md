@@ -253,8 +253,10 @@ binary exposes CPU, OpenVINO, and CUDA from the same link-free executable.
 
 With `runtime = "cuda"`, Omaspeak verifies the exact external ONNX Runtime
 1.29 core, registers the selected CUDA provider DSO, and checks that the
-requested NVIDIA device is accessible. `backend.device_id` selects that
-device. String-valued `[backend.options]` entries are forwarded to ONNX
+requested NVIDIA device is accessible. `backend.device_id` selects its logical
+CUDA ordinal (for example, `0` for the first visible GPU). Inventory evidence
+also reports the runtime's hardware ID for each enumerated device.
+String-valued `[backend.options]` entries are forwarded to ONNX
 Runtime's CUDA execution-provider option map, which supports settings such as
 `cudnn_conv_algo_search`, `gpu_mem_limit`, `arena_extend_strategy`, and
 `do_copy_in_default_stream`. Omaspeak defaults the cuDNN search to `HEURISTIC`

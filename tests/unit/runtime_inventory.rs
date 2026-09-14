@@ -135,13 +135,13 @@ fn resolved_candidates_keep_runtime_overlay_dirs_without_ambient_loader_paths() 
 }
 
 #[test]
-fn cuda_selection_matches_hardware_id_instead_of_inventory_position() {
+fn cuda_selection_uses_logical_ordinal_and_retains_hardware_identity() {
     let devices = vec![
-        (7, "CUDA hardware 7 (GPU)".to_owned()),
-        (2, "CUDA hardware 2 (GPU)".to_owned()),
+        (0, 11794, "CUDA ordinal 0, hardware 11794 (GPU)".to_owned()),
+        (1, 42, "CUDA ordinal 1, hardware 42 (GPU)".to_owned()),
     ];
-    let (available, selected) = cuda_device_evidence(devices, 2).unwrap();
+    let (available, selected) = cuda_device_evidence(devices, 0).unwrap();
     assert_eq!(available.len(), 2);
-    assert_eq!(selected, "CUDA hardware 2 (GPU)");
-    assert!(cuda_device_evidence(vec![(7, "GPU 7".into())], 0).is_err());
+    assert_eq!(selected, "CUDA ordinal 0, hardware 11794 (GPU)");
+    assert!(cuda_device_evidence(vec![(0, 11794, "GPU 0".into())], 1).is_err());
 }
