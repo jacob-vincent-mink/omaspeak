@@ -15,6 +15,7 @@ use omaspeak::paths::AppPaths;
 use omaspeak::protocol::{Command, Request, Response, ResultPayload};
 use omaspeak::setup as app_setup;
 use omaspeak::setup::model::ProgressFormat;
+use omaspeak::setup::wizard::MenuItem;
 use serde::Serialize;
 use serde_json::{Value, json};
 
@@ -50,6 +51,7 @@ enum TopCommand {
         #[command(subcommand)]
         command: ConfigCommand,
     },
+    /// Configure runtimes and models through a guided terminal or scriptable commands.
     Setup {
         #[command(subcommand)]
         command: Option<SetupCommand>,
@@ -103,10 +105,13 @@ enum ConfigCommand {
 
 #[derive(Subcommand)]
 enum SetupCommand {
+    /// Check the active model, runtime, audio, launcher, and service.
     Check {
+        /// Print machine-readable check results.
         #[arg(long)]
         json: bool,
     },
+    /// Install the model, launcher, and service in one scriptable command.
     All {
         #[arg(long, default_value = "en_US-lessac-medium")]
         model: String,
@@ -117,28 +122,57 @@ enum SetupCommand {
         #[arg(long, value_enum, default_value_t)]
         progress_format: ProgressFormat,
     },
+    /// Select a model interactively or manage catalog models with flags.
     Model {
-        #[arg(long)]
+        /// List catalog models and their local installation status.
+        #[arg(
+            long,
+            conflicts_with_all = ["json", "download", "set", "verify", "archive", "no_activate"]
+        )]
         list: bool,
-        #[arg(long)]
+        /// Print the complete catalog as JSON.
+        #[arg(
+            long,
+            conflicts_with_all = ["list", "download", "set", "verify", "archive", "no_activate"]
+        )]
         json: bool,
-        #[arg(long, value_name = "MODEL", conflicts_with_all = ["set", "verify"])]
+        /// Download, verify, install, and activate a catalog model.
+        #[arg(
+            long,
+            value_name = "MODEL",
+            conflicts_with_all = ["list", "json", "set", "verify"]
+        )]
         download: Option<String>,
-        #[arg(long, value_name = "MODEL", conflicts_with_all = ["download", "verify"])]
+        /// Activate a catalog model that is already installed and verified.
+        #[arg(
+            long,
+            value_name = "MODEL",
+            conflicts_with_all = ["list", "json", "download", "verify"]
+        )]
         set: Option<String>,
-        #[arg(long, value_name = "MODEL", conflicts_with_all = ["download", "set"])]
+        /// Verify every pinned asset of an installed catalog model.
+        #[arg(
+            long,
+            value_name = "MODEL",
+            conflicts_with_all = ["list", "json", "download", "set"]
+        )]
         verify: Option<String>,
+        /// Install from a local pinned archive instead of downloading it.
         #[arg(long, requires = "download")]
         archive: Option<PathBuf>,
+        /// Install the downloaded model without making it active.
         #[arg(long, requires = "download")]
         no_activate: bool,
         #[arg(long, value_enum, default_value_t)]
         progress_format: ProgressFormat,
     },
+    /// Select a runtime and device, or print discovery data outside a terminal.
     Runtime {
+        /// Print runtimes, devices, capabilities, and models as JSON.
         #[arg(long)]
         json: bool,
     },
+    /// Install, inspect, or remove the systemd user service.
     Systemd {
         #[arg(long, conflicts_with = "status")]
         uninstall: bool,
@@ -147,12 +181,37 @@ enum SetupCommand {
         #[arg(long, conflicts_with_all = ["uninstall", "status"])]
         no_start: bool,
     },
+    /// Install, inspect, or remove the desktop setup launcher.
     Menu {
         #[arg(long, conflicts_with = "status")]
         uninstall: bool,
         #[arg(long)]
         status: bool,
     },
+}
+
+trait SetupSelector {
+    fn select(
+        &mut self,
+        title: &str,
+        help: &str,
+        items: &[MenuItem],
+        preferred: usize,
+    ) -> Result<Option<usize>>;
+}
+
+struct TerminalSetupSelector;
+
+impl SetupSelector for TerminalSetupSelector {
+    fn select(
+        &mut self,
+        title: &str,
+        help: &str,
+        items: &[MenuItem],
+        preferred: usize,
+    ) -> Result<Option<usize>> {
+        app_setup::wizard::select(title, help, items, preferred)
+    }
 }
 
 trait ModelSetupOperations {
@@ -894,9 +953,29 @@ fn schema(path: &Path, paths: &AppPaths) -> Result<Value> {
 }
 
 fn setup(command: Option<SetupCommand>, config_path: &Path, paths: &AppPaths) -> Result<()> {
-    match command.unwrap_or(SetupCommand::Check { json: false }) {
+    let Some(command) = command else {
+        if is_interactive_terminal() {
+            return guided_setup(
+                config_path,
+                paths,
+                &BuiltinModels,
+                &mut TerminalSetupSelector,
+            );
+        }
+        eprintln!(
+            "Run `omaspeak setup` in a terminal for guided setup, or use `omaspeak setup all` for an unattended install."
+        );
+        return app_setup::print_checks(config_path, paths, false);
+    };
+    match command {
         SetupCommand::Check { json } => app_setup::print_checks(config_path, paths, json),
-        SetupCommand::Runtime { json } => app_setup::print_runtime(json),
+        SetupCommand::Runtime { json } => {
+            if !json && is_interactive_terminal() {
+                guided_runtime(config_path, &mut TerminalSetupSelector).map(|_| ())
+            } else {
+                app_setup::print_runtime(json)
+            }
+        }
         SetupCommand::Model {
             list,
             json,
@@ -906,19 +985,38 @@ fn setup(command: Option<SetupCommand>, config_path: &Path, paths: &AppPaths) ->
             archive,
             no_activate,
             progress_format,
-        } => setup_model(
-            config_path,
-            paths,
-            &BuiltinModels,
-            list,
-            json,
-            download,
-            set,
-            verify,
-            archive,
-            no_activate,
-            progress_format,
-        ),
+        } => {
+            if !list
+                && !json
+                && download.is_none()
+                && set.is_none()
+                && verify.is_none()
+                && archive.is_none()
+                && is_interactive_terminal()
+            {
+                guided_model(
+                    config_path,
+                    paths,
+                    &BuiltinModels,
+                    &mut TerminalSetupSelector,
+                )
+                .map(|_| ())
+            } else {
+                setup_model(
+                    config_path,
+                    paths,
+                    &BuiltinModels,
+                    list,
+                    json,
+                    download,
+                    set,
+                    verify,
+                    archive,
+                    no_activate,
+                    progress_format,
+                )
+            }
+        }
         SetupCommand::Systemd {
             uninstall,
             status,
@@ -963,6 +1061,391 @@ fn setup(command: Option<SetupCommand>, config_path: &Path, paths: &AppPaths) ->
             app_setup::systemd::install,
         ),
     }
+}
+
+fn is_interactive_terminal() -> bool {
+    std::io::stdin().is_terminal() && std::io::stdout().is_terminal()
+}
+
+fn guided_setup(
+    config_path: &Path,
+    paths: &AppPaths,
+    operations: &impl ModelSetupOperations,
+    selector: &mut impl SetupSelector,
+) -> Result<()> {
+    let actions = [
+        MenuItem::available(
+            "Full setup",
+            "Choose a runtime, device, and model; then install the launcher and enable and start the service.",
+        ),
+        MenuItem::available(
+            "Runtime",
+            "Choose and save an inference runtime and device.",
+        ),
+        MenuItem::available(
+            "Model",
+            "Browse, download, verify, and activate a catalog model.",
+        ),
+        MenuItem::available(
+            "Check",
+            "Check the current model, runtime, audio, and service setup.",
+        ),
+    ];
+    let Some(selected) = selector.select(
+        "Omaspeak setup",
+        "Choose the part of Omaspeak you want to configure.",
+        &actions,
+        0,
+    )?
+    else {
+        println!("Setup cancelled.");
+        return Ok(());
+    };
+    match selected {
+        0 => guided_full_setup(config_path, paths, operations, selector),
+        1 => guided_runtime(config_path, selector).map(|_| ()),
+        2 => guided_model(config_path, paths, operations, selector).map(|_| ()),
+        3 => app_setup::print_checks(config_path, paths, false),
+        _ => bail!("interactive setup returned an invalid choice"),
+    }
+}
+
+fn guided_full_setup(
+    config_path: &Path,
+    paths: &AppPaths,
+    operations: &impl ModelSetupOperations,
+    selector: &mut impl SetupSelector,
+) -> Result<()> {
+    guided_full_setup_with(
+        config_path,
+        paths,
+        operations,
+        selector,
+        app_setup::menu::install,
+        app_setup::systemd::install,
+    )
+}
+
+fn guided_full_setup_with(
+    config_path: &Path,
+    paths: &AppPaths,
+    operations: &impl ModelSetupOperations,
+    selector: &mut impl SetupSelector,
+    install_launcher: impl FnOnce(&AppPaths) -> Result<PathBuf>,
+    install_service: impl FnOnce(&AppPaths, &Path, bool) -> Result<PathBuf>,
+) -> Result<()> {
+    let Some((runtime, device)) = choose_runtime(config_path, selector)? else {
+        println!("Setup cancelled.");
+        return Ok(());
+    };
+    let Some(model) = choose_model(
+        config_path,
+        paths,
+        operations,
+        Some((runtime, &device)),
+        selector,
+    )?
+    else {
+        println!("Setup cancelled.");
+        return Ok(());
+    };
+    let confirmation = [
+        MenuItem::available(
+            "Apply setup",
+            "Download and activate the model, install the launcher, then enable and start the service.",
+        ),
+        MenuItem::available("Cancel", "Leave the current configuration unchanged."),
+    ];
+    let summary = format!(
+        "Runtime: {} · Device: {} · Model: {}",
+        runtime_name(runtime),
+        device,
+        model
+    );
+    if selector.select("Apply Omaspeak setup", &summary, &confirmation, 0)? != Some(0) {
+        println!("Setup cancelled; no changes were made.");
+        return Ok(());
+    }
+    save_runtime(config_path, runtime, &device)?;
+    setup_all(
+        config_path,
+        paths,
+        operations,
+        &model,
+        None,
+        false,
+        ProgressFormat::Human,
+        install_launcher,
+        install_service,
+    )
+}
+
+fn guided_runtime(
+    config_path: &Path,
+    selector: &mut impl SetupSelector,
+) -> Result<Option<(Runtime, String)>> {
+    let Some((runtime, device)) = choose_runtime(config_path, selector)? else {
+        println!("Runtime setup cancelled.");
+        return Ok(None);
+    };
+    if runtime == Runtime::Openvino && device.eq_ignore_ascii_case("npu") {
+        let config = Config::load(config_path)?;
+        if omaspeak::catalog::model(&config.model.name).is_some_and(|model| !model.npu_capable) {
+            bail!(
+                "model {} is not validated for Intel NPU; run `omaspeak setup` and choose Full setup to select a compatible model",
+                config.model.name
+            );
+        }
+    }
+    save_runtime(config_path, runtime, &device)?;
+    println!("Runtime configured: {} on {device}", runtime_name(runtime));
+    Ok(Some((runtime, device)))
+}
+
+fn choose_runtime(
+    config_path: &Path,
+    selector: &mut impl SetupSelector,
+) -> Result<Option<(Runtime, String)>> {
+    let config = Config::load(config_path)?;
+    let compiled = compiled_capabilities();
+    let runtimes = [
+        (
+            Runtime::Default,
+            MenuItem::available(
+                "Default CPU",
+                "Built in · portable ONNX Runtime CPU execution",
+            ),
+        ),
+        (
+            Runtime::Openvino,
+            runtime_item(
+                "OpenVINO",
+                "Intel CPU, GPU, and NPU execution",
+                compiled.contains(&"openvino"),
+                "rebuild Omaspeak with --features openvino and the native OpenVINO stack",
+            ),
+        ),
+        (
+            Runtime::Cuda,
+            runtime_item(
+                "CUDA",
+                "NVIDIA GPU execution",
+                compiled.contains(&"cuda"),
+                "this Omaspeak build does not contain CUDA support",
+            ),
+        ),
+    ];
+    let items: Vec<_> = runtimes.iter().map(|(_, item)| item.clone()).collect();
+    let preferred = runtimes
+        .iter()
+        .position(|(runtime, _)| *runtime == config.backend.runtime)
+        .unwrap_or_default();
+    let Some(selected) = selector.select(
+        "Omaspeak runtime",
+        "Choose an inference runtime. Unavailable runtimes show how to enable them.",
+        &items,
+        preferred,
+    )?
+    else {
+        return Ok(None);
+    };
+    let runtime = runtimes[selected].0;
+    let devices = device_items(runtime);
+    let preferred = devices
+        .iter()
+        .position(|(device, _)| device.eq_ignore_ascii_case(&config.backend.device))
+        .unwrap_or_default();
+    let items: Vec<_> = devices.iter().map(|(_, item)| item.clone()).collect();
+    let Some(selected) = selector.select(
+        "Omaspeak device",
+        &format!(
+            "Choose the device for {}. Composite OpenVINO device strings remain available through `omaspeak config set backend.device ...`.",
+            runtime_name(runtime)
+        ),
+        &items,
+        preferred,
+    )?
+    else {
+        return Ok(None);
+    };
+    Ok(Some((runtime, devices[selected].0.into())))
+}
+
+fn runtime_item(label: &str, detail: &str, available: bool, remediation: &str) -> MenuItem {
+    if available {
+        MenuItem::available(label, format!("Available · {detail}"))
+    } else {
+        MenuItem::unavailable(label, format!("Unavailable · {detail}; {remediation}"))
+    }
+}
+
+fn device_items(runtime: Runtime) -> Vec<(&'static str, MenuItem)> {
+    let specs: &[(&str, &str)] = match runtime {
+        Runtime::Default => &[
+            ("auto", "Recommended · let the CPU runtime choose"),
+            ("cpu", "Use CPU execution explicitly"),
+        ],
+        Runtime::Cuda => &[
+            (
+                "auto",
+                "Recommended · select the first available NVIDIA GPU",
+            ),
+            ("gpu", "Use NVIDIA GPU execution explicitly"),
+        ],
+        Runtime::Openvino => &[
+            (
+                "auto",
+                "Recommended · let OpenVINO select an available device",
+            ),
+            ("cpu", "Use Intel CPU through OpenVINO"),
+            (
+                "gpu",
+                "Use Intel integrated or discrete GPU through OpenVINO",
+            ),
+            (
+                "npu",
+                "Use Intel NPU; requires a compatible model and driver",
+            ),
+        ],
+    };
+    specs
+        .iter()
+        .map(|(device, detail)| (*device, MenuItem::available(device.to_uppercase(), *detail)))
+        .collect()
+}
+
+fn save_runtime(config_path: &Path, runtime: Runtime, device: &str) -> Result<()> {
+    let mut config = app_setup::ensure_config(config_path)?;
+    config.backend.runtime = runtime;
+    config.backend.device = device.into();
+    if runtime != Runtime::Cuda {
+        config.backend.device_id = 0;
+    }
+    config
+        .backend
+        .validate_capabilities(compiled_capabilities())?;
+    config.save(config_path)
+}
+
+fn runtime_name(runtime: Runtime) -> &'static str {
+    match runtime {
+        Runtime::Default => "default",
+        Runtime::Openvino => "openvino",
+        Runtime::Cuda => "cuda",
+    }
+}
+
+fn guided_model(
+    config_path: &Path,
+    paths: &AppPaths,
+    operations: &impl ModelSetupOperations,
+    selector: &mut impl SetupSelector,
+) -> Result<Option<String>> {
+    let current = Config::load(config_path)?;
+    let Some(id) = choose_model(
+        config_path,
+        paths,
+        operations,
+        Some((current.backend.runtime, current.backend.device.as_str())),
+        selector,
+    )?
+    else {
+        println!("Model setup cancelled.");
+        return Ok(None);
+    };
+    let spec = operations.resolve(&id)?;
+    let installed = operations.verify(paths, spec).is_ok();
+    let directory = if installed {
+        app_setup::model::model_directory(paths, spec)
+    } else {
+        operations.install(paths, spec, None, ProgressFormat::Human)?
+    };
+    let mut config = app_setup::ensure_config(config_path)?;
+    spec.activate(&mut config);
+    config.save(config_path)?;
+    println!(
+        "Active model: {} ({})",
+        spec.id,
+        if installed {
+            "already installed"
+        } else {
+            "downloaded and verified"
+        }
+    );
+    println!("Model directory: {}", directory.display());
+    Ok(Some(id))
+}
+
+fn choose_model(
+    config_path: &Path,
+    paths: &AppPaths,
+    operations: &impl ModelSetupOperations,
+    runtime: Option<(Runtime, &str)>,
+    selector: &mut impl SetupSelector,
+) -> Result<Option<String>> {
+    let config = Config::load(config_path)?;
+    let models = operations.models();
+    let items: Vec<_> = models
+        .iter()
+        .map(|model| {
+            let installed = operations.verify(paths, model).is_ok();
+            let exact_npu = runtime.is_some_and(|(runtime, device)| {
+                runtime == Runtime::Openvino && device.eq_ignore_ascii_case("npu")
+            });
+            let compatible = !exact_npu || model.npu_capable;
+            let active = model.id == config.model.name;
+            let status = if active && installed {
+                "● active"
+            } else if active {
+                "● active · download required"
+            } else if installed {
+                "○ installed"
+            } else {
+                "· download"
+            };
+            let bytes = model.archive_size
+                + model
+                    .supplemental_files
+                    .iter()
+                    .map(|file| file.size)
+                    .sum::<u64>();
+            let npu = if model.npu_capable {
+                " · Intel NPU validated"
+            } else {
+                ""
+            };
+            let detail = format!(
+                "{} · {} / {} · ~{} MiB download{}",
+                model.description,
+                model.backend,
+                model.family,
+                bytes.div_ceil(1024 * 1024),
+                npu
+            );
+            if compatible {
+                MenuItem::available(format!("{}  {status}", model.id), detail)
+            } else {
+                MenuItem::unavailable(
+                    format!("{}  {status}", model.id),
+                    format!("Incompatible with selected NPU · {detail}"),
+                )
+            }
+        })
+        .collect();
+    let preferred = models
+        .iter()
+        .position(|model| model.id == config.model.name)
+        .unwrap_or_default();
+    let Some(selected) = selector.select(
+        "Omaspeak model",
+        "Choose a catalog model. Missing assets will download after you select it.",
+        &items,
+        preferred,
+    )?
+    else {
+        return Ok(None);
+    };
+    Ok(Some(models[selected].id.into()))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1055,18 +1538,6 @@ fn setup_model(
     }
     let selected = match download {
         Some(id) => Some(id),
-        None if !list && !json && std::io::stdin().is_terminal() => {
-            print_models_with(paths, operations);
-            eprint!("Install en_US-lessac-medium? [Y/n] ");
-            std::io::stderr().flush()?;
-            let mut answer = String::new();
-            std::io::stdin().read_line(&mut answer)?;
-            if answer.trim().is_empty() || answer.trim().eq_ignore_ascii_case("y") {
-                Some("en_US-lessac-medium".into())
-            } else {
-                None
-            }
-        }
         None => {
             print_models_with(paths, operations);
             println!(

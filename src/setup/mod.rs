@@ -1,6 +1,7 @@
 pub mod menu;
 pub mod model;
 pub mod systemd;
+pub mod wizard;
 
 use std::path::Path;
 
@@ -194,6 +195,7 @@ pub fn print_runtime(json: bool) -> Result<()> {
     if json {
         println!("{}", serde_json::to_string_pretty(&value)?);
     } else {
+        println!("Omaspeak runtime catalog\n");
         println!("Backends:");
         for backend in catalog::backends() {
             println!(
@@ -207,9 +209,40 @@ pub fn print_runtime(json: bool) -> Result<()> {
             "Compiled runtime capabilities: {}",
             crate::backend::compiled_capabilities().join(", ")
         );
+        println!("\nRuntime and device choices:");
+        println!("  default    auto, cpu                 built in");
         println!(
-            "Configure backend.runtime and backend.device independently; unsupported combinations fail unless fallback = \"cpu\"."
+            "  openvino   auto, cpu, gpu, npu       {}",
+            if crate::backend::compiled_capabilities().contains(&"openvino") {
+                "available"
+            } else {
+                "unavailable in this build"
+            }
         );
+        println!("  cuda       auto, gpu                 unavailable in this build");
+        println!("  OpenVINO also accepts AUTO:<devices>, HETERO:<devices>, and MULTI:<devices>.");
+        println!("\nCatalog models:");
+        for model in catalog::models() {
+            let download = model.archive_size
+                + model
+                    .supplemental_files
+                    .iter()
+                    .map(|file| file.size)
+                    .sum::<u64>();
+            println!(
+                "  {:<24} {:>4} MiB  {}{}",
+                model.id,
+                download.div_ceil(1024 * 1024),
+                model.description,
+                if model.npu_capable {
+                    " [Intel NPU validated]"
+                } else {
+                    ""
+                }
+            );
+        }
+        println!("\nRun `omaspeak setup` for guided setup with arrow-key selection.");
+        println!("Run `omaspeak setup model --list` to see local installation status.");
     }
     Ok(())
 }

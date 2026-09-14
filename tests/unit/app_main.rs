@@ -1,4 +1,5 @@
 use super::*;
+use std::collections::VecDeque;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -42,6 +43,34 @@ struct LibraryBackend;
 
 struct FakeModelOperations {
     installed: bool,
+}
+
+#[derive(Default)]
+struct ScriptedSelector {
+    selections: VecDeque<Option<usize>>,
+    calls: Vec<(String, Vec<MenuItem>, usize)>,
+}
+
+impl ScriptedSelector {
+    fn new(selections: impl IntoIterator<Item = Option<usize>>) -> Self {
+        Self {
+            selections: selections.into_iter().collect(),
+            calls: Vec::new(),
+        }
+    }
+}
+
+impl SetupSelector for ScriptedSelector {
+    fn select(
+        &mut self,
+        title: &str,
+        _: &str,
+        items: &[MenuItem],
+        preferred: usize,
+    ) -> Result<Option<usize>> {
+        self.calls.push((title.into(), items.to_vec(), preferred));
+        Ok(self.selections.pop_front().flatten())
+    }
 }
 
 impl ModelSetupOperations for FakeModelOperations {
@@ -505,6 +534,24 @@ fn cli_parser_and_catalog_helpers_cover_command_surface() {
         assert!(Cli::try_parse_from(args).is_ok());
     }
     assert!(Cli::try_parse_from(["omaspeak", "unknown"]).is_err());
+    for args in [
+        ["omaspeak", "setup", "model", "--list", "--json"],
+        ["omaspeak", "setup", "model", "--json", "--set"],
+        ["omaspeak", "setup", "model", "--list", "--verify"],
+    ] {
+        assert!(Cli::try_parse_from(args).is_err());
+    }
+    assert!(
+        Cli::try_parse_from([
+            "omaspeak",
+            "setup",
+            "model",
+            "--json",
+            "--download",
+            "en_US-lessac-medium",
+        ])
+        .is_err()
+    );
     assert!(Cli::try_parse_from(["omaspeak", "benchmark", "--text", "hello"]).is_err());
     assert!(
         Cli::try_parse_from([
@@ -961,6 +1008,264 @@ fn model_setup_dispatches_list_verify_set_and_install_actions() {
         )
         .is_err()
     );
+}
+
+#[test]
+fn guided_runtime_preselects_current_values_and_saves_selection() {
+    let root = sandbox();
+    let paths = paths(&root);
+    let mut config = Config::default();
+    config.backend.device = "cpu".into();
+    config.save(&paths.config_file).unwrap();
+    let mut selector = ScriptedSelector::new([Some(0), Some(1)]);
+
+    let selected = guided_runtime(&paths.config_file, &mut selector)
+        .unwrap()
+        .unwrap();
+    assert_eq!(selected, (Runtime::Default, "cpu".into()));
+    assert_eq!(selector.calls[0].0, "Omaspeak runtime");
+    assert_eq!(selector.calls[0].2, 0);
+    assert!(selector.calls[0].1[0].enabled);
+    assert!(selector.calls[0].1.iter().any(|item| {
+        item.label == "CUDA" && !item.enabled && item.detail.contains("Unavailable")
+    }));
+    assert_eq!(selector.calls[1].0, "Omaspeak device");
+    assert_eq!(selector.calls[1].2, 1);
+    assert_eq!(
+        Config::load(&paths.config_file).unwrap().backend.device,
+        "cpu"
+    );
+}
+
+#[test]
+fn guided_runtime_rejects_npu_when_active_catalog_model_is_incompatible() {
+    let root = sandbox();
+    let paths = paths(&root);
+    let config = Config::default();
+    config.save(&paths.config_file).unwrap();
+    let original = fs::read_to_string(&paths.config_file).unwrap();
+    let mut selector = ScriptedSelector::new([Some(1), Some(3)]);
+
+    let error = guided_runtime(&paths.config_file, &mut selector).unwrap_err();
+
+    assert!(error.to_string().contains("not validated for Intel NPU"));
+    assert!(error.to_string().contains("choose Full setup"));
+    assert_eq!(fs::read_to_string(&paths.config_file).unwrap(), original);
+}
+
+#[test]
+fn guided_model_marks_active_installed_and_downloadable_models() {
+    let root = sandbox();
+    let paths = paths(&root);
+    Config::default().save(&paths.config_file).unwrap();
+    let installed = FakeModelOperations { installed: true };
+    let mut selector = ScriptedSelector::new([Some(0)]);
+    let selected =
+        choose_model(&paths.config_file, &paths, &installed, None, &mut selector).unwrap();
+    assert_eq!(selected.as_deref(), Some("en_US-lessac-medium"));
+    assert!(selector.calls[0].1[0].label.contains("● active"));
+    assert!(selector.calls[0].1[1].label.contains("○ installed"));
+    assert!(
+        selector.calls[0].1[2]
+            .detail
+            .contains("Intel NPU validated")
+    );
+
+    let available = FakeModelOperations { installed: false };
+    let mut selector = ScriptedSelector::new([Some(1)]);
+    guided_model(&paths.config_file, &paths, &available, &mut selector).unwrap();
+    assert!(selector.calls[0].1[1].label.contains("· download"));
+    assert_eq!(
+        Config::load(&paths.config_file).unwrap().model.name,
+        "supertonic-3-int8"
+    );
+}
+
+#[test]
+fn model_only_flow_constrains_catalog_for_active_npu_runtime() {
+    let root = sandbox();
+    let paths = paths(&root);
+    let mut config = Config::default();
+    config.backend.runtime = Runtime::Openvino;
+    config.backend.device = "NPU".into();
+    config.model.name = "supertonic-3-npu".into();
+    config.save(&paths.config_file).unwrap();
+    let mut selector = ScriptedSelector::new([Some(2)]);
+    let selected = choose_model(
+        &paths.config_file,
+        &paths,
+        &FakeModelOperations { installed: true },
+        Some((config.backend.runtime, &config.backend.device)),
+        &mut selector,
+    )
+    .unwrap();
+
+    assert_eq!(selected.as_deref(), Some("supertonic-3-npu"));
+    assert!(!selector.calls[0].1[0].enabled);
+    assert!(!selector.calls[0].1[1].enabled);
+    assert!(selector.calls[0].1[2].enabled);
+    assert_eq!(selector.calls[0].2, 2);
+    assert!(selector.calls[0].1[0].detail.contains("Incompatible"));
+}
+
+#[test]
+fn full_setup_confirmation_cancel_leaves_configuration_untouched() {
+    let root = sandbox();
+    let paths = paths(&root);
+    let mut selector = ScriptedSelector::new([Some(0), Some(0), Some(0), Some(1)]);
+    guided_full_setup(
+        &paths.config_file,
+        &paths,
+        &FakeModelOperations { installed: false },
+        &mut selector,
+    )
+    .unwrap();
+
+    assert_eq!(selector.calls[3].0, "Apply Omaspeak setup");
+    assert_eq!(selector.calls[3].1[0].label, "Apply setup");
+    assert!(!paths.config_file.exists());
+}
+
+#[test]
+fn guided_flows_handle_back_without_mutating_configuration() {
+    let root = sandbox();
+    let paths = paths(&root);
+    let mut selector = ScriptedSelector::new([None]);
+    assert!(
+        guided_runtime(&paths.config_file, &mut selector)
+            .unwrap()
+            .is_none()
+    );
+    assert!(!paths.config_file.exists());
+
+    let mut selector = ScriptedSelector::new([None]);
+    assert!(
+        guided_model(
+            &paths.config_file,
+            &paths,
+            &FakeModelOperations { installed: false },
+            &mut selector,
+        )
+        .unwrap()
+        .is_none()
+    );
+    assert!(!paths.config_file.exists());
+}
+
+#[test]
+fn top_level_guide_routes_every_choice_and_rejects_invalid_selection() {
+    let root = sandbox();
+    let paths = paths(&root);
+    let operations = FakeModelOperations { installed: false };
+
+    let mut selector = ScriptedSelector::new([None]);
+    guided_setup(&paths.config_file, &paths, &operations, &mut selector).unwrap();
+    assert_eq!(
+        selector.calls[0]
+            .1
+            .iter()
+            .map(|item| item.label.as_str())
+            .collect::<Vec<_>>(),
+        ["Full setup", "Runtime", "Model", "Check"]
+    );
+
+    for selections in [
+        vec![Some(0), None],
+        vec![Some(1), None],
+        vec![Some(2), None],
+    ] {
+        let mut selector = ScriptedSelector::new(selections);
+        guided_setup(&paths.config_file, &paths, &operations, &mut selector).unwrap();
+    }
+
+    let mut selector = ScriptedSelector::new([Some(3)]);
+    assert!(guided_setup(&paths.config_file, &paths, &operations, &mut selector).is_err());
+    let mut selector = ScriptedSelector::new([Some(99)]);
+    assert!(
+        guided_setup(&paths.config_file, &paths, &operations, &mut selector)
+            .unwrap_err()
+            .to_string()
+            .contains("invalid choice")
+    );
+}
+
+#[test]
+fn runtime_catalog_covers_each_device_matrix_and_back_at_device_picker() {
+    assert_eq!(runtime_name(Runtime::Default), "default");
+    assert_eq!(runtime_name(Runtime::Openvino), "openvino");
+    assert_eq!(runtime_name(Runtime::Cuda), "cuda");
+    assert_eq!(
+        device_items(Runtime::Default)
+            .iter()
+            .map(|(name, _)| *name)
+            .collect::<Vec<_>>(),
+        ["auto", "cpu"]
+    );
+    assert_eq!(
+        device_items(Runtime::Cuda)
+            .iter()
+            .map(|(name, _)| *name)
+            .collect::<Vec<_>>(),
+        ["auto", "gpu"]
+    );
+    assert_eq!(
+        device_items(Runtime::Openvino)
+            .iter()
+            .map(|(name, _)| *name)
+            .collect::<Vec<_>>(),
+        ["auto", "cpu", "gpu", "npu"]
+    );
+    assert!(runtime_item("x", "y", true, "z").enabled);
+    assert!(!runtime_item("x", "y", false, "z").enabled);
+
+    let root = sandbox();
+    let paths = paths(&root);
+    let mut selector = ScriptedSelector::new([Some(0), None]);
+    assert!(
+        choose_runtime(&paths.config_file, &mut selector)
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[test]
+fn confirmed_full_setup_applies_runtime_model_and_install_steps() {
+    let root = sandbox();
+    let paths = paths(&root);
+    let mut selector = ScriptedSelector::new([Some(0), Some(1), Some(1), Some(0)]);
+    let result = guided_full_setup_with(
+        &paths.config_file,
+        &paths,
+        &FakeModelOperations { installed: true },
+        &mut selector,
+        |paths| {
+            let path = paths.data_dir.join("applications/omaspeak.desktop");
+            fs::create_dir_all(path.parent().unwrap())?;
+            fs::write(&path, "launcher")?;
+            Ok(path)
+        },
+        |paths, _, start| {
+            assert!(start);
+            let path = paths.data_dir.join("systemd/omaspeak.service");
+            fs::create_dir_all(path.parent().unwrap())?;
+            fs::write(&path, "service")?;
+            Ok(path)
+        },
+    );
+    // Fake model operations do not install bytes, so the final health check
+    // fails after all intended mutations have been exercised.
+    assert!(result.is_err());
+    let config = Config::load(&paths.config_file).unwrap();
+    assert_eq!(config.backend.runtime, Runtime::Default);
+    assert_eq!(config.backend.device, "cpu");
+    assert_eq!(config.model.name, "supertonic-3-int8");
+    assert!(
+        paths
+            .data_dir
+            .join("applications/omaspeak.desktop")
+            .is_file()
+    );
+    assert!(paths.data_dir.join("systemd/omaspeak.service").is_file());
 }
 
 #[test]

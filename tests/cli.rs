@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread;
+use std::time::{Duration, Instant};
 
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixListener;
@@ -59,6 +60,58 @@ fn run_with_input(root: &Path, args: &[&str], input: &str) -> Output {
         .write_all(input.as_bytes())
         .unwrap();
     child.wait_with_output().unwrap()
+}
+
+#[cfg(unix)]
+#[test]
+fn guided_setup_accepts_arrow_keys_and_enter_in_a_real_pty() {
+    if Command::new("script").arg("--version").output().is_err() {
+        return;
+    }
+    let root = sandbox();
+    let binary = env!("CARGO_BIN_EXE_omaspeak");
+    assert!(!binary.contains(['\'', '"', ' ']));
+    let mut child = Command::new("script")
+        .args(["-qec", &format!("{binary} setup"), "/dev/null"])
+        .env("XDG_CONFIG_HOME", root.join("config"))
+        .env("XDG_DATA_HOME", root.join("data"))
+        .env("XDG_STATE_HOME", root.join("state"))
+        .env("XDG_RUNTIME_DIR", root.join("run"))
+        .env("TERM", "xterm-256color")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut input = child.stdin.take().unwrap();
+    // Wait until the child enables raw mode, choose Runtime from the setup
+    // screen, accept the preselected runtime, then choose CPU.
+    thread::sleep(Duration::from_millis(750));
+    input.write_all(b"\x1b[B\r").unwrap();
+    input.flush().unwrap();
+    thread::sleep(Duration::from_millis(150));
+    input.write_all(b"\r").unwrap();
+    input.flush().unwrap();
+    thread::sleep(Duration::from_millis(150));
+    input.write_all(b"\x1b[B\r").unwrap();
+    drop(input);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while child.try_wait().unwrap().is_none() {
+        if Instant::now() >= deadline {
+            child.kill().unwrap();
+            panic!("guided setup did not finish after PTY input");
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
+    let output = child.wait_with_output().unwrap();
+    assert!(output.status.success(), "{}", stderr(&output));
+    let terminal = stdout(&output);
+    assert!(terminal.contains("Omaspeak setup"));
+    assert!(terminal.contains("Omaspeak runtime"));
+    assert!(terminal.contains("Omaspeak device"));
+    assert!(terminal.contains("Runtime configured: default on cpu"));
+    let config = Config::load(&root.join("config/omaspeak/config.toml")).unwrap();
+    assert_eq!(config.backend.device, "cpu");
 }
 
 fn serve_once(root: &Path, result: ResultPayload) -> Option<thread::JoinHandle<Request>> {

@@ -35,7 +35,33 @@ cannot establish OpenVINO placement.
 
 ## Setup
 
-One-command network install (downloads and activates the default `en_US-lessac-medium` model, writes the config, installs the desktop launcher and the systemd user service, then runs the checks):
+Run setup in a terminal for the guided interface:
+
+```bash
+omaspeak setup
+```
+
+Use the arrow keys and Enter to choose `Full setup`, `Runtime`, `Model`, or
+`Check`. Full setup walks through the runtime, compatible device, and model,
+then shows a summary before it changes the config, downloads model assets, or
+installs the desktop launcher and enables and starts the systemd user service. The runtime and model
+flows can also be opened directly:
+
+```bash
+omaspeak setup runtime   # choose a compiled runtime, then a compatible device
+omaspeak setup model     # browse catalog metadata and install/activate a model
+```
+
+The model picker marks the active model, models already installed, and models
+available to download. It includes download sizes, model families, backend
+names, language information, and Intel NPU validation. Unavailable runtimes
+remain visible with their build requirement, and an exact OpenVINO NPU setup
+only offers catalog models validated for that device.
+
+For scripts or redirected input/output, setup remains noninteractive. This
+one-command network install downloads and activates the default
+`en_US-lessac-medium` model, writes the config, installs the desktop launcher
+and systemd user service, then runs the checks:
 
 ```bash
 omaspeak setup all
@@ -51,7 +77,7 @@ omaspeak setup model --download supertonic-3-npu      # validated Intel NPU mode
 omaspeak setup model --verify en_US-lessac-medium     # re-verify an installed model
 omaspeak setup model --download en_US-lessac-medium --archive /path/to/vits-piper-en_US-lessac-medium.tar.bz2
 omaspeak setup check                        # verify config, backend, model, engine, audio, launcher, service
-omaspeak setup runtime                      # show registered backends, compiled runtime capabilities, and models
+omaspeak setup runtime --json               # machine-readable runtimes, devices, capabilities, and models
 omaspeak setup systemd --status             # show systemd user service status
 omaspeak setup systemd --uninstall          # remove the systemd user service
 omaspeak setup menu --status                # show desktop launcher status
