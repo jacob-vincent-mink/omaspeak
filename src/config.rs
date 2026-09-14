@@ -34,6 +34,19 @@ impl Config {
             PathBuf::from(&self.model.directory)
         }
     }
+
+    pub fn save(&self, path: &Path) -> Result<()> {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)
+                .with_context(|| format!("create config directory {}", parent.display()))?;
+        }
+        let temporary = path.with_extension("toml.tmp");
+        fs::write(&temporary, toml::to_string_pretty(self)?)
+            .with_context(|| format!("write temporary config {}", temporary.display()))?;
+        fs::rename(&temporary, path)
+            .with_context(|| format!("install config {}", path.display()))?;
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

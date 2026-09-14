@@ -2,6 +2,16 @@
 
 Validated on 2026-09-13 with `sherpa-onnx` 1.13.8 and Piper `en_US-lessac-medium`.
 
+## Setup (2026-09-13)
+
+In an isolated environment (clean `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_STATE_HOME`, and `XDG_RUNTIME_DIR`):
+
+```bash
+omaspeak setup all --archive /tmp/omavoice-reports/piper.tar.bz2 --no-start
+```
+
+The first run verified the pinned local archive and every required model asset, then completed the install. Re-running the same command immediately reported the model as already-installed. The same setup path was also tested without `--archive`, downloading the pinned archive from GitHub and verifying it before installation. A follow-up synthesis produced 64,256 samples at 22,050 Hz (2.914 s) with a 406 ms model load and 114 ms synthesis.
+
 ## Standalone
 
 ```bash

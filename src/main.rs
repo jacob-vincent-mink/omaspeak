@@ -1,5 +1,5 @@
 use std::fs;
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{BufRead, BufReader, IsTerminal, Read, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
@@ -13,6 +13,8 @@ use omaspeak::config::Config;
 use omaspeak::engine::{Engine, Synthesis};
 use omaspeak::paths::AppPaths;
 use omaspeak::protocol::{Command, Request, Response, ResultPayload};
+use omaspeak::setup as app_setup;
+use omaspeak::setup::model::ProgressFormat;
 use serde_json::{Value, json};
 
 #[derive(Parser)]
@@ -47,7 +49,7 @@ enum TopCommand {
     },
     Setup {
         #[command(subcommand)]
-        command: SetupCommand,
+        command: Option<SetupCommand>,
     },
 }
 
@@ -86,11 +88,56 @@ enum ConfigCommand {
 
 #[derive(Subcommand)]
 enum SetupCommand {
-    All,
-    Model,
-    Runtime,
-    Systemd,
-    Menu,
+    Check {
+        #[arg(long)]
+        json: bool,
+    },
+    All {
+        #[arg(long, default_value = "en_US-lessac-medium")]
+        model: String,
+        #[arg(long)]
+        archive: Option<PathBuf>,
+        #[arg(long)]
+        no_start: bool,
+        #[arg(long, value_enum, default_value_t)]
+        progress_format: ProgressFormat,
+    },
+    Model {
+        #[arg(long)]
+        list: bool,
+        #[arg(long)]
+        json: bool,
+        #[arg(long, value_name = "MODEL", conflicts_with_all = ["set", "verify"])]
+        download: Option<String>,
+        #[arg(long, value_name = "MODEL", conflicts_with_all = ["download", "verify"])]
+        set: Option<String>,
+        #[arg(long, value_name = "MODEL", conflicts_with_all = ["download", "set"])]
+        verify: Option<String>,
+        #[arg(long, requires = "download")]
+        archive: Option<PathBuf>,
+        #[arg(long, requires = "download")]
+        no_activate: bool,
+        #[arg(long, value_enum, default_value_t)]
+        progress_format: ProgressFormat,
+    },
+    Runtime {
+        #[arg(long)]
+        json: bool,
+    },
+    Systemd {
+        #[arg(long, conflicts_with = "status")]
+        uninstall: bool,
+        #[arg(long)]
+        status: bool,
+        #[arg(long, conflicts_with_all = ["uninstall", "status"])]
+        no_start: bool,
+    },
+    Menu {
+        #[arg(long, conflicts_with = "status")]
+        uninstall: bool,
+        #[arg(long)]
+        status: bool,
+    },
 }
 
 fn main() -> ExitCode {
@@ -113,7 +160,7 @@ fn run(cli: Cli) -> Result<()> {
         TopCommand::Stop => stop(&paths),
         TopCommand::Voices { json } => voices(&config_path, json),
         TopCommand::Config { command } => config_command(command, &config_path, &paths),
-        TopCommand::Setup { command } => setup(command, &paths),
+        TopCommand::Setup { command } => setup(command, &config_path, &paths),
     }
 }
 
@@ -285,7 +332,7 @@ fn status_payload(engine: &Engine, config: &Config) -> ResultPayload {
         model: engine.model_name.clone(),
         sample_rate: engine.sample_rate,
         backend: json!({
-            "kind": config.backend.kind,
+            "kind": engine.backend_kind,
             "requested": {"runtime": config.backend.runtime, "device": config.backend.canonical_device().unwrap_or_else(|_| config.backend.device.clone())},
             "effective": {"runtime": engine.effective_runtime, "device": if engine.effective_runtime == Runtime::Default { "cpu" } else { config.backend.device.as_str() }, "provider": if engine.effective_runtime == Runtime::Default { "CPUExecutionProvider" } else { "unverified" }},
             "compiled_capabilities": compiled_capabilities(),
@@ -499,18 +546,184 @@ fn schema(path: &Path, paths: &AppPaths) -> Result<Value> {
     )
 }
 
-fn setup(command: SetupCommand, paths: &AppPaths) -> Result<()> {
-    match command {
-        SetupCommand::Runtime => println!("sherpa-onnx runtime is embedded in this CPU build"),
-        SetupCommand::Model => println!(
-            "model setup target: {}",
-            paths.data_dir.join("models").display()
-        ),
-        SetupCommand::Systemd => println!("systemd setup is not installed by this prototype"),
-        SetupCommand::Menu => println!("menu setup is not installed by this prototype"),
-        SetupCommand::All => println!("run setup model, systemd, and menu separately"),
+fn setup(command: Option<SetupCommand>, config_path: &Path, paths: &AppPaths) -> Result<()> {
+    match command.unwrap_or(SetupCommand::Check { json: false }) {
+        SetupCommand::Check { json } => app_setup::print_checks(config_path, paths, json),
+        SetupCommand::Runtime { json } => app_setup::print_runtime(json),
+        SetupCommand::Model {
+            list,
+            json,
+            download,
+            set,
+            verify,
+            archive,
+            no_activate,
+            progress_format,
+        } => {
+            if list || json {
+                if json {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(omaspeak::catalog::models())?
+                    );
+                } else {
+                    print_models(paths);
+                }
+                if download.is_none() && set.is_none() && verify.is_none() {
+                    return Ok(());
+                }
+            }
+            if let Some(id) = verify {
+                let spec = model_spec(&id)?;
+                app_setup::model::verify(paths, spec)?;
+                println!(
+                    "verified: {}",
+                    app_setup::model::model_directory(paths, spec).display()
+                );
+                return Ok(());
+            }
+            if let Some(id) = set {
+                let spec = model_spec(&id)?;
+                app_setup::model::verify(paths, spec)?;
+                let mut config = app_setup::ensure_config(config_path)?;
+                spec.activate(&mut config);
+                config.save(config_path)?;
+                println!("active model: {}", spec.id);
+                return Ok(());
+            }
+            let selected = match download {
+                Some(id) => Some(id),
+                None if !list && !json && std::io::stdin().is_terminal() => {
+                    print_models(paths);
+                    eprint!("Install en_US-lessac-medium? [Y/n] ");
+                    std::io::stderr().flush()?;
+                    let mut answer = String::new();
+                    std::io::stdin().read_line(&mut answer)?;
+                    if answer.trim().is_empty() || answer.trim().eq_ignore_ascii_case("y") {
+                        Some("en_US-lessac-medium".into())
+                    } else {
+                        None
+                    }
+                }
+                None => {
+                    print_models(paths);
+                    println!(
+                        "Run `omaspeak setup model --download en_US-lessac-medium` to install the default model."
+                    );
+                    None
+                }
+            };
+            if let Some(id) = selected {
+                let spec = model_spec(&id)?;
+                let directory =
+                    app_setup::model::install(paths, spec, archive.as_deref(), progress_format)?;
+                if !no_activate {
+                    let mut config = app_setup::ensure_config(config_path)?;
+                    spec.activate(&mut config);
+                    config.save(config_path)?;
+                }
+                match progress_format {
+                    ProgressFormat::Human => println!("model ready: {}", directory.display()),
+                    ProgressFormat::Json => println!(
+                        "{}",
+                        serde_json::to_string(&json!({
+                            "event": "model-ready",
+                            "model": spec.id,
+                            "path": directory,
+                            "active": !no_activate,
+                        }))?
+                    ),
+                }
+            }
+            Ok(())
+        }
+        SetupCommand::Systemd {
+            uninstall,
+            status,
+            no_start,
+        } => {
+            if status {
+                app_setup::systemd::status(paths)
+            } else if uninstall {
+                app_setup::systemd::uninstall(paths)
+            } else {
+                app_setup::ensure_config(config_path)?;
+                let path = app_setup::systemd::install(paths, config_path, !no_start)?;
+                println!("installed: {}", path.display());
+                Ok(())
+            }
+        }
+        SetupCommand::Menu { uninstall, status } => {
+            if status {
+                app_setup::menu::status(paths)
+            } else if uninstall {
+                app_setup::menu::uninstall(paths)
+            } else {
+                let path = app_setup::menu::install(paths)?;
+                println!("installed: {}", path.display());
+                Ok(())
+            }
+        }
+        SetupCommand::All {
+            model,
+            archive,
+            no_start,
+            progress_format,
+        } => {
+            let spec = model_spec(&model)?;
+            let mut config = app_setup::ensure_config(config_path)?;
+            let directory =
+                app_setup::model::install(paths, spec, archive.as_deref(), progress_format)?;
+            spec.activate(&mut config);
+            config.save(config_path)?;
+            let launcher = app_setup::menu::install(paths)?;
+            let service = app_setup::systemd::install(paths, config_path, !no_start)?;
+            match progress_format {
+                ProgressFormat::Human => {
+                    println!(
+                        "model: {}\nconfig: {}\nlauncher: {}\nservice: {}",
+                        directory.display(),
+                        config_path.display(),
+                        launcher.display(),
+                        service.display()
+                    );
+                    app_setup::print_checks(config_path, paths, false)
+                }
+                ProgressFormat::Json => {
+                    println!(
+                        "{}",
+                        serde_json::to_string(&json!({
+                            "event": "setup-complete",
+                            "model": directory,
+                            "config": config_path,
+                            "launcher": launcher,
+                            "service": service,
+                        }))?
+                    );
+                    app_setup::print_checks_event(config_path, paths)
+                }
+            }
+        }
     }
-    Ok(())
+}
+
+fn model_spec(id: &str) -> Result<&'static omaspeak::catalog::ModelSpec> {
+    omaspeak::catalog::model(id)
+        .ok_or_else(|| anyhow!("unknown model {id}; run `omaspeak setup model --list`"))
+}
+
+fn print_models(paths: &AppPaths) {
+    for model in omaspeak::catalog::models() {
+        let status = if app_setup::model::verify(paths, model).is_ok() {
+            "installed"
+        } else {
+            "available"
+        };
+        println!(
+            "{}\t{}\t{}\t{}",
+            model.id, model.backend, status, model.description
+        );
+    }
 }
 
 fn play(path: &Path) -> Result<()> {
