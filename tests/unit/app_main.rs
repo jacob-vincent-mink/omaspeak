@@ -1258,6 +1258,25 @@ fn config_override_becomes_the_effective_app_paths_config_file() {
 }
 
 #[test]
+fn config_snapshot_restore_handles_missing_existing_and_unreadable_paths() {
+    let root = sandbox();
+    let path = root.join("nested/config.toml");
+
+    assert!(config_snapshot(&path).unwrap().is_none());
+    restore_config_snapshot(&path, Some(b"original")).unwrap();
+    assert_eq!(config_snapshot(&path).unwrap().unwrap(), b"original");
+
+    fs::write(path.with_extension("toml.tmp"), b"partial").unwrap();
+    restore_config_snapshot(&path, None).unwrap();
+    assert!(!path.exists());
+    assert!(!path.with_extension("toml.tmp").exists());
+
+    let directory = root.join("directory");
+    fs::create_dir(&directory).unwrap();
+    assert!(config_snapshot(&directory).is_err());
+}
+
+#[test]
 fn stale_socket_falls_back_locally_and_offline_commands_clean_it_up() {
     let root = sandbox();
     let paths = paths(&root);

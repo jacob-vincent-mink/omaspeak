@@ -61,7 +61,11 @@ fn runtime_apply_rejects_bad_abi_and_native_process_exit_without_writes() {
 
 #[test]
 fn real_cpu_preview_then_apply_pins_paths() {
-    let library = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/debug/libonnxruntime.so");
+    let library = std::env::var_os("OMASPEAK_TEST_ONNXRUNTIME_LIBRARY")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/debug/libonnxruntime.so")
+        });
     if !library.is_file() {
         return;
     }

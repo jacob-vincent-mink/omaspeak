@@ -3,7 +3,7 @@ use std::fs;
 
 #[test]
 fn initialized_ort_core_cannot_silently_change_during_reload() {
-    let core = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/debug/libonnxruntime.so");
+    let core = test_ort_library();
     if !core.is_file() {
         return;
     }
@@ -93,6 +93,15 @@ fn inventory_names_and_absent_optional_adapters_are_stable() {
 }
 
 #[test]
+fn candidate_sources_follow_the_documented_precedence() {
+    assert_eq!(candidate_source(true, true, true, true), "configured");
+    assert_eq!(candidate_source(false, true, true, true), "environment");
+    assert_eq!(candidate_source(false, false, true, true), "package");
+    assert_eq!(candidate_source(false, false, false, true), "system");
+    assert_eq!(candidate_source(false, false, false, false), "candidate");
+}
+
+#[test]
 fn resolved_candidates_keep_runtime_overlay_dirs_without_ambient_loader_paths() {
     let root = env::temp_dir().join(format!("omaspeak-runtime-overlay-{}", std::process::id()));
     let configured = root.join("configured");
@@ -148,7 +157,7 @@ fn cuda_selection_uses_logical_ordinal_and_retains_hardware_identity() {
 
 #[test]
 fn invalid_external_cuda_provider_fails_at_the_registration_boundary() {
-    let core = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/debug/libonnxruntime.so");
+    let core = test_ort_library();
     if !core.is_file() {
         return;
     }
@@ -179,6 +188,14 @@ fn invalid_external_cuda_provider_fails_at_the_registration_boundary() {
         "{:?}",
         result.errors
     );
+}
+
+fn test_ort_library() -> PathBuf {
+    env::var_os("OMASPEAK_TEST_ONNXRUNTIME_LIBRARY")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/debug/libonnxruntime.so")
+        })
 }
 
 #[test]

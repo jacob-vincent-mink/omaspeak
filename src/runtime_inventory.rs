@@ -114,20 +114,14 @@ pub fn inventory(config: &BackendConfig, path: &Path) -> Vec<State> {
         });
         let loader_environment = env::var_os("LD_LIBRARY_PATH")
             .is_some_and(|value| under(&env::split_paths(&value).collect::<Vec<_>>()));
-        let source = if under(&locations.configured_library_dirs) || explicitly_configured {
-            "configured"
-        } else if under(&locations.environment_library_dirs)
-            || loader_environment
-            || explicit_environment
-        {
-            "environment"
-        } else if under(&locations.package_library_dirs) {
-            "package"
-        } else if anchor.is_some() {
-            "system"
-        } else {
-            "candidate"
-        };
+        let source = candidate_source(
+            under(&locations.configured_library_dirs) || explicitly_configured,
+            under(&locations.environment_library_dirs)
+                || loader_environment
+                || explicit_environment,
+            under(&locations.package_library_dirs),
+            anchor.is_some(),
+        );
         let required = match runtime {
             Runtime::Default => "ONNX Runtime 1.29.0 libonnxruntime.so",
             Runtime::Openvino => {
@@ -155,6 +149,25 @@ pub fn inventory(config: &BackendConfig, path: &Path) -> Vec<State> {
         }
     })
     .collect()
+}
+
+fn candidate_source(
+    configured: bool,
+    environment: bool,
+    package: bool,
+    discovered: bool,
+) -> &'static str {
+    if configured {
+        "configured"
+    } else if environment {
+        "environment"
+    } else if package {
+        "package"
+    } else if discovered {
+        "system"
+    } else {
+        "candidate"
+    }
 }
 
 pub fn resolve(config: &BackendConfig, path: &Path) -> BackendConfig {

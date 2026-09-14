@@ -1630,7 +1630,11 @@ fn installed_runtime_adapters_initialize_and_reject_invalid_graphs() {
         assert!(DirectOpenvinoBackend::create(&config, &app_paths, runtime).is_err());
     }
 
-    let ort = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/debug/libonnxruntime.so");
+    let ort = std::env::var_os("OMASPEAK_TEST_ONNXRUNTIME_LIBRARY")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/debug/libonnxruntime.so")
+        });
     if ort.is_file() {
         let runtime = OnnxRuntimePaths {
             onnxruntime: ort,
