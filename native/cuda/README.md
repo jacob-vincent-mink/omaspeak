@@ -11,9 +11,9 @@ The builder applies Omaspeak's checksum-pinned sherpa patch. The patch sends
 offline CUDA provider-file settings to ONNX Runtime's CUDA EP V2 interface and
 allows Supertonic's four sessions to select the requested provider.
 
-The builder supports Linux x86_64 and aarch64. Install a CUDA toolkit and its
-matching cuDNN development package first. `CUDA_HOME` defaults to
-`/usr/local/cuda`; `CUDNN_HOME` defaults to `/usr`.
+The builder supports Linux x86_64 and aarch64. Install CMake 3.28 or newer, a
+CUDA toolkit, and its matching cuDNN development package first. `CUDA_HOME`
+defaults to `/usr/local/cuda`; `CUDNN_HOME` defaults to `/usr`.
 
 ```bash
 OMA_BUILD_JOBS=10 native/cuda/build.sh
