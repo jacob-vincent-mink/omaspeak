@@ -85,7 +85,9 @@ fn guided_setup_accepts_arrow_keys_and_enter_in_a_real_pty() {
         .unwrap();
     let mut input = child.stdin.take().unwrap();
     // Wait until the child enables raw mode, choose Runtime from the setup
-    // screen, accept the preselected runtime, then choose CPU.
+    // screen, accept the preselected runtime, choose CPU, then leave the
+    // optional external-stack directory empty when setup asks for one, and
+    // confirm the final Apply screen.
     thread::sleep(Duration::from_millis(750));
     input.write_all(b"\x1b[B\r").unwrap();
     input.flush().unwrap();
@@ -94,6 +96,14 @@ fn guided_setup_accepts_arrow_keys_and_enter_in_a_real_pty() {
     input.flush().unwrap();
     thread::sleep(Duration::from_millis(150));
     input.write_all(b"\x1b[B\r").unwrap();
+    input.flush().unwrap();
+    thread::sleep(Duration::from_millis(150));
+    // A packaged or ambient CPU runtime skips the directory prompt, so either
+    // this Enter or the next one confirms Apply.
+    let _ = input.write_all(b"\n");
+    let _ = input.flush();
+    thread::sleep(Duration::from_millis(150));
+    let _ = input.write_all(b"\r");
     drop(input);
     let deadline = Instant::now() + Duration::from_secs(5);
     while child.try_wait().unwrap().is_none() {
@@ -221,11 +231,50 @@ fn setup_discovery_and_remediation_commands() {
 }
 
 #[test]
+fn runtime_discovery_reports_invalid_paths_without_reexecing() {
+    let root = sandbox();
+    let missing = root.join("missing-vendor-runtime");
+    let output = Command::new(env!("CARGO_BIN_EXE_omaspeak"))
+        .args(["setup", "runtime", "--json"])
+        .env("HOME", &root)
+        .env("XDG_CONFIG_HOME", root.join("config"))
+        .env("XDG_DATA_HOME", root.join("data"))
+        .env("XDG_STATE_HOME", root.join("state"))
+        .env("XDG_RUNTIME_DIR", root.join("run"))
+        .env("OMASPEAK_LIBRARY_PATH", &missing)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", stderr(&output));
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        report["libraries"]["environment_library_dirs"],
+        serde_json::json!([missing])
+    );
+    assert_eq!(
+        report["libraries"]["missing_library_dirs"],
+        report["libraries"]["environment_library_dirs"]
+    );
+    assert!(report["libraries"]["runtime_loadable"].is_object());
+
+    let mutation = Command::new(env!("CARGO_BIN_EXE_omaspeak"))
+        .args(["config", "set", "audio.volume", "0.7"])
+        .env("HOME", &root)
+        .env("XDG_CONFIG_HOME", root.join("config"))
+        .env("XDG_DATA_HOME", root.join("data"))
+        .env("XDG_STATE_HOME", root.join("state"))
+        .env("XDG_RUNTIME_DIR", root.join("run"))
+        .env("OMASPEAK_LIBRARY_PATH", root.join("still-missing"))
+        .output()
+        .unwrap();
+    assert!(mutation.status.success(), "{}", stderr(&mutation));
+}
+
+#[test]
 fn config_commands_round_trip_and_reject_invalid_values() {
     let root = sandbox();
     let get = run(&root, &["config", "get", "backend.kind"]);
     assert!(get.status.success());
-    assert_eq!(stdout(&get).trim(), "sherpa-onnx");
+    assert_eq!(stdout(&get).trim(), "supertonic");
     assert!(run(&root, &["config", "get", "--json"]).status.success());
     assert!(run(&root, &["config", "schema"]).status.success());
     assert!(run(&root, &["config", "schema", "--json"]).status.success());
@@ -237,7 +286,7 @@ fn config_commands_round_trip_and_reject_invalid_values() {
         ("backend.threads", "3"),
         ("backend.fallback", "cpu"),
         ("backend.device_id", "0"),
-        ("backend.provider_config", "provider.json"),
+        ("backend.library_dirs", "/opt/openvino:/opt/cuda"),
         ("model.family", "vits"),
         ("model.name", "custom"),
         ("model.directory", "/tmp/model"),
@@ -268,8 +317,22 @@ fn config_commands_round_trip_and_reject_invalid_values() {
 #[test]
 fn runtime_commands_report_expected_failures_without_a_model_or_daemon() {
     let root = sandbox();
-    assert!(run(&root, &["voices"]).status.success());
-    assert!(run(&root, &["voices", "--json"]).status.success());
+    let voices = run(&root, &["voices"]);
+    assert!(voices.status.success());
+    assert!(stdout(&voices).contains("*\t0\tM1"));
+    assert!(stdout(&voices).contains(" \t9\tF5"));
+    let voices = run(&root, &["voices", "--json"]);
+    assert!(voices.status.success());
+    let voices: serde_json::Value = serde_json::from_slice(&voices.stdout).unwrap();
+    assert_eq!(voices.as_array().unwrap().len(), 10);
+    assert_eq!(
+        voices[0],
+        serde_json::json!({"id":0,"name":"M1","active":true})
+    );
+    assert_eq!(
+        voices[9],
+        serde_json::json!({"id":9,"name":"F5","active":false})
+    );
     assert!(!run(&root, &["say", ""]).status.success());
     assert!(!run(&root, &["say", "hello", "--no-play"]).status.success());
     assert!(
@@ -286,6 +349,7 @@ fn runtime_commands_report_expected_failures_without_a_model_or_daemon() {
     assert!(!run(&root, &["daemon"]).status.success());
 
     let mut config = Config::default();
+    config.model.family = "unknown".into();
     config.daemon.max_text_bytes = 4;
     let config_path = root.join("small.toml");
     config.save(&config_path).unwrap();
@@ -305,13 +369,13 @@ fn runtime_commands_report_expected_failures_without_a_model_or_daemon() {
     );
 
     for args in [
-        &["setup", "model", "--verify", "en_US-lessac-medium"][..],
-        &["setup", "model", "--set", "en_US-lessac-medium"],
+        &["setup", "model", "--verify", "unknown-model"][..],
+        &["setup", "model", "--set", "unknown-model"],
         &[
             "setup",
             "model",
             "--download",
-            "en_US-lessac-medium",
+            "unknown-model",
             "--archive",
             "/definitely/missing/archive.tar.bz2",
         ],
@@ -324,6 +388,39 @@ fn runtime_commands_report_expected_failures_without_a_model_or_daemon() {
     ] {
         assert!(!run(&root, args).status.success());
     }
+}
+
+#[test]
+fn voices_enumerates_installed_supertonic_speakers_and_marks_the_active_one() {
+    let root = sandbox();
+    let config_path = root.join("config/omaspeak/config.toml");
+    let model_dir = root.join("data/omaspeak/models/custom-supertonic");
+    fs::create_dir_all(&model_dir).unwrap();
+    fs::write(
+        model_dir.join("voice.bin"),
+        [2_i64, 1, 1, 2, 1, 1]
+            .into_iter()
+            .flat_map(i64::to_le_bytes)
+            .collect::<Vec<_>>(),
+    )
+    .unwrap();
+    let mut config = Config::default();
+    config.model.family = "supertonic".into();
+    config.model.name = "custom-supertonic".into();
+    config.model.voice_style = "voice.bin".into();
+    config.model.voice = 1;
+    config.save(&config_path).unwrap();
+
+    let output = run(&root, &["voices", "--json"]);
+    assert!(output.status.success(), "{}", stderr(&output));
+    let voices: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        voices,
+        serde_json::json!([
+            {"id":0,"name":"Voice 1","active":false},
+            {"id":1,"name":"Voice 2","active":true}
+        ])
+    );
 }
 
 #[test]

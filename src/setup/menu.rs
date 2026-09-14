@@ -17,7 +17,7 @@ pub fn launcher_path(paths: &AppPaths) -> PathBuf {
 pub fn install(paths: &AppPaths) -> Result<PathBuf> {
     let binary = std::env::current_exe()?.canonicalize()?;
     let contents = format!(
-        "[Desktop Entry]\nType=Application\nName=Omaspeak Setup\nComment=Install and select a local text-to-speech model\nExec=\"{}\" setup model\nTerminal=true\nCategories=Settings;\nKeywords=voice;speech;tts;\n",
+        "[Desktop Entry]\nType=Application\nName=Omaspeak Setup\nComment=Configure Omaspeak runtimes, models, and voices\nExec=\"{}\" setup\nTerminal=true\nCategories=Settings;\nKeywords=voice;speech;tts;\n",
         binary.display().to_string().replace('"', "\\\"")
     );
     let path = launcher_path(paths);

@@ -91,17 +91,22 @@ fn spec(archive_bytes: &[u8], url: &str) -> &'static ModelSpec {
     );
     Box::leak(Box::new(ModelSpec {
         id: "tiny",
-        backend: "sherpa-onnx",
-        family: "piper",
+        backend: "supertonic",
+        family: "supertonic",
         name: "tiny",
         description: "test model",
+        license: "MIT",
+        license_url: "https://example.invalid/license",
+        license_status: "verified",
+        downloadable: true,
+        requires_acceptance: false,
+        source_revision: "test-revision",
+        license_file: "",
+        license_sha256: "",
         archive_url: leak(url.to_owned()),
         archive_size: archive_bytes.len() as u64,
         archive_sha256: leak(digest(archive_bytes)),
         archive_root: "tiny-root",
-        model_file: "model.bin",
-        tokens_file: "model.bin",
-        data_directory: "model.bin",
         duration_predictor: "",
         text_encoder: "",
         vector_estimator: "",
@@ -111,6 +116,8 @@ fn spec(archive_bytes: &[u8], url: &str) -> &'static ModelSpec {
         voice_style: "",
         language: "en",
         steps: 5,
+        voices: &[],
+        openvino_capable: false,
         npu_capable: false,
         required_files: required,
         supplemental_files: &[],
@@ -170,8 +177,87 @@ fn model_path_is_backend_neutral() {
     let spec = crate::catalog::models().first().unwrap();
     assert_eq!(
         model_directory(&paths, spec),
-        PathBuf::from("/tmp/data/models/en_US-lessac-medium")
+        PathBuf::from("/tmp/data/models/supertonic-3-int8")
     );
+}
+
+#[test]
+fn restricted_models_are_user_supplied_only() {
+    let root = temp("restricted-license");
+    let archive_bytes = archive("tiny-root", "model.bin", b"tiny model");
+    let archive_path = root.join("tiny.tar.bz2");
+    fs::write(&archive_path, &archive_bytes).unwrap();
+    let mut restricted = *spec(&archive_bytes, "https://example.invalid/model");
+    restricted.downloadable = false;
+    restricted.license = "research-only terms";
+    restricted.license_status = "restricted";
+    let restricted = Box::leak(Box::new(restricted));
+    let app_paths = paths(&root);
+
+    let error = install(&app_paths, restricted, None, ProgressFormat::Human, None).unwrap_err();
+    assert!(error.to_string().contains("user-supplied only"));
+    assert!(!app_paths.data_dir.exists());
+
+    install(
+        &app_paths,
+        restricted,
+        Some(&archive_path),
+        ProgressFormat::Human,
+        None,
+    )
+    .unwrap();
+}
+
+#[test]
+fn accepted_model_license_and_provenance_are_preserved_beside_weights() {
+    let root = temp("accepted-license");
+    let archive_bytes = archive("tiny-root", "model.bin", b"tiny model");
+    let archive_path = root.join("tiny.tar.bz2");
+    fs::write(&archive_path, &archive_bytes).unwrap();
+    let mut licensed = *spec(&archive_bytes, "https://example.invalid/model");
+    licensed.license = "OpenRAIL-M";
+    licensed.license_url = "https://example.invalid/OpenRAIL-M";
+    licensed.requires_acceptance = true;
+    licensed.source_revision = "pinned-revision";
+    licensed.license_file = "MODEL-LICENSE";
+    licensed.license_sha256 = "0d944a9110fed9a9602d60e0423a272903e7bd21ab060490774efc77c2275e9f";
+    let licensed = Box::leak(Box::new(licensed));
+    let app_paths = paths(&root);
+
+    let error = install(
+        &app_paths,
+        licensed,
+        Some(&archive_path),
+        ProgressFormat::Human,
+        None,
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("--accept-license OpenRAIL-M"));
+    assert!(!app_paths.data_dir.exists());
+
+    let directory = install(
+        &app_paths,
+        licensed,
+        Some(&archive_path),
+        ProgressFormat::Human,
+        Some("OpenRAIL-M"),
+    )
+    .unwrap();
+    assert_eq!(
+        sha256_file(&directory.join("MODEL-LICENSE")).unwrap(),
+        licensed.license_sha256
+    );
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&fs::read(directory.join(".omaspeak-model.json")).unwrap()).unwrap();
+    assert_eq!(manifest["license_acceptance"]["license"], "OpenRAIL-M");
+    assert_eq!(manifest["provenance"]["source"], "user-supplied-archive");
+    assert_eq!(manifest["provenance"]["source_revision"], "pinned-revision");
+    assert!(
+        manifest["license_acceptance"]["accepted_at_unix_seconds"]
+            .as_u64()
+            .is_some()
+    );
+    verify(&app_paths, licensed).unwrap();
 }
 
 #[test]
@@ -194,15 +280,36 @@ fn local_archive_install_is_verified_idempotent_and_repairable() {
     let spec = spec(&archive_bytes, "http://unused.invalid/model");
     let paths = paths(&root);
 
-    let installed = install(&paths, spec, Some(&archive_path), ProgressFormat::Json).unwrap();
+    let installed = install(
+        &paths,
+        spec,
+        Some(&archive_path),
+        ProgressFormat::Json,
+        None,
+    )
+    .unwrap();
     assert_eq!(installed, model_directory(&paths, spec));
     assert!(installed.join(".omaspeak-model.json").is_file());
     verify(&paths, spec).unwrap();
-    install(&paths, spec, Some(&archive_path), ProgressFormat::Human).unwrap();
+    install(
+        &paths,
+        spec,
+        Some(&archive_path),
+        ProgressFormat::Human,
+        None,
+    )
+    .unwrap();
 
     fs::write(installed.join("model.bin"), b"bad").unwrap();
     assert!(verify(&paths, spec).is_err());
-    install(&paths, spec, Some(&archive_path), ProgressFormat::Human).unwrap();
+    install(
+        &paths,
+        spec,
+        Some(&archive_path),
+        ProgressFormat::Human,
+        None,
+    )
+    .unwrap();
     verify(&paths, spec).unwrap();
 }
 
@@ -218,7 +325,14 @@ fn supplemental_asset_is_cached_verified_and_installed_with_the_archive() {
     fs::create_dir_all(&downloads).unwrap();
     fs::write(downloads.join("tiny.extra-model.fp32"), b"float model").unwrap();
 
-    let installed = install(&paths, spec, Some(&archive_path), ProgressFormat::Json).unwrap();
+    let installed = install(
+        &paths,
+        spec,
+        Some(&archive_path),
+        ProgressFormat::Json,
+        None,
+    )
+    .unwrap();
     assert_eq!(
         fs::read(installed.join("extra/model.fp32")).unwrap(),
         b"float model"
@@ -227,7 +341,14 @@ fn supplemental_asset_is_cached_verified_and_installed_with_the_archive() {
     verify(&paths, spec).unwrap();
 
     fs::write(installed.join("extra/model.fp32"), b"broken file").unwrap();
-    install(&paths, spec, Some(&archive_path), ProgressFormat::Human).unwrap();
+    install(
+        &paths,
+        spec,
+        Some(&archive_path),
+        ProgressFormat::Human,
+        None,
+    )
+    .unwrap();
     verify(&paths, spec).unwrap();
 }
 
@@ -265,6 +386,51 @@ fn supplemental_download_and_paths_are_strictly_verified() {
     assert!(validate_relative_file("../escape").is_err());
     assert!(validate_relative_file("/absolute").is_err());
     assert!(validate_relative_file("").is_err());
+}
+
+#[test]
+fn unavailable_catalog_downloads_fail_without_leaving_partial_files() {
+    let root = temp("network-failures");
+    let archive_bytes = archive("tiny-root", "model.bin", b"tiny model");
+    let mut unavailable = *spec(&archive_bytes, "http://127.0.0.1:9/model.tar.bz2");
+    unavailable.id = "unavailable";
+    let unavailable = Box::leak(Box::new(unavailable));
+    let app_paths = paths(&root);
+    fs::create_dir_all(app_paths.data_dir.join("downloads")).unwrap();
+    assert!(download_archive(&app_paths, unavailable, ProgressFormat::Json).is_err());
+    assert!(
+        !app_paths
+            .data_dir
+            .join("downloads/unavailable.tar.bz2.part")
+            .exists()
+    );
+
+    let mut with_supplement = *spec_with_supplement(&archive_bytes);
+    with_supplement.id = "unavailable-supplement";
+    let bad_asset: &'static [SupplementalFile] = Box::leak(
+        vec![SupplementalFile {
+            url: "http://127.0.0.1:9/model.fp32",
+            ..with_supplement.supplemental_files[0]
+        }]
+        .into_boxed_slice(),
+    );
+    with_supplement.supplemental_files = bad_asset;
+    let with_supplement = Box::leak(Box::new(with_supplement));
+    assert!(
+        download_supplemental(
+            &app_paths,
+            with_supplement,
+            &bad_asset[0],
+            ProgressFormat::Human,
+        )
+        .is_err()
+    );
+    assert!(
+        !app_paths
+            .data_dir
+            .join("downloads/unavailable-supplement.extra-model.fp32.part")
+            .exists()
+    );
 }
 
 #[test]
@@ -408,7 +574,7 @@ fn install_uses_cached_download_and_cleans_stale_work_directories() {
     fs::create_dir_all(models.join(format!(".tiny.install-{}", std::process::id()))).unwrap();
     fs::create_dir_all(models.join(format!(".tiny.old-{}", std::process::id()))).unwrap();
 
-    let installed = install(&paths, spec, None, ProgressFormat::Human).unwrap();
+    let installed = install(&paths, spec, None, ProgressFormat::Human, None).unwrap();
     assert_eq!(
         fs::read(installed.join("model.bin")).unwrap(),
         b"tiny model"
@@ -427,7 +593,14 @@ fn failed_model_finalization_restores_the_previous_directory() {
     fs::create_dir_all(&previous).unwrap();
     fs::write(previous.join("previous"), b"keep me").unwrap();
 
-    let error = install(&paths, spec, Some(&archive_path), ProgressFormat::Human).unwrap_err();
+    let error = install(
+        &paths,
+        spec,
+        Some(&archive_path),
+        ProgressFormat::Human,
+        None,
+    )
+    .unwrap_err();
     assert!(error.to_string().contains("finalize installed model"));
     assert_eq!(fs::read(previous.join("previous")).unwrap(), b"keep me");
     assert!(!previous.join("model.bin").exists());

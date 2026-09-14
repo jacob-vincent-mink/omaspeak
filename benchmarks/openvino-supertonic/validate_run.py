@@ -15,9 +15,9 @@ def main() -> int:
     root = Path(sys.argv[1])
     backends = sys.argv[2:]
     errors: list[str] = []
-    profiles = json.loads((root / "profile-summary.json").read_text())
-
     for backend in backends:
+        expected_runtime = "default" if backend == "default-cpu" else "openvino"
+        expected_device = backend.rsplit("-", 1)[-1]
         for phase, warmup, iterations in (("cold", 0, 1), ("hot", 2, 10)):
             case = root / backend / phase
             status_path = case.with_suffix(".exit-status.txt")
@@ -36,16 +36,26 @@ def main() -> int:
                 errors.append(f"{backend}/{phase}: expected {iterations} iterations")
             if len(benchmark.get("iterations", [])) != iterations:
                 errors.append(f"{backend}/{phase}: incomplete iteration results")
+            placement = benchmark.get("backend", {})
+            if placement.get("effective_runtime") != expected_runtime:
+                errors.append(
+                    f"{backend}/{phase}: expected effective runtime "
+                    f"{expected_runtime}, got {placement.get('effective_runtime')}"
+                )
+            if placement.get("requested_device") != expected_device:
+                errors.append(
+                    f"{backend}/{phase}: expected requested device "
+                    f"{expected_device}, got {placement.get('requested_device')}"
+                )
+            if placement.get("fallback_used") is not False:
+                errors.append(f"{backend}/{phase}: runtime fallback was used")
+            if placement.get("placement_verified") is not True:
+                errors.append(f"{backend}/{phase}: placement was not verified")
+            if not placement.get("placement_evidence"):
+                errors.append(f"{backend}/{phase}: placement evidence is empty")
             for iteration in benchmark.get("iterations", []):
                 if not Path(iteration["output"]).is_file():
                     errors.append(f"{backend}/{phase}: missing {iteration['output']}")
-
-        if backend.startswith("openvino-"):
-            provider_count = profiles.get(backend, {}).get(
-                "provider_event_counts", {}
-            ).get("OpenVINOExecutionProvider", 0)
-            if provider_count <= 0:
-                errors.append(f"{backend}: no OpenVINO provider profile events")
 
         asr_status = root / backend / "cold.asr.exit-status.txt"
         wer_path = root / backend / "cold.wer.json"

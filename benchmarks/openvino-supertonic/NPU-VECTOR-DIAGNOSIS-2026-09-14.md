@@ -1,5 +1,9 @@
 # Supertonic vector-estimator NPU diagnosis
 
+> Historical diagnosis: this report records the experiment that selected the
+> FP32 vector estimator for `supertonic-3-npu`. Current validation uses
+> Omaspeak's direct OpenVINO backend rather than the former sherpa/ORT route.
+
 On the same Dell XPS and native stack described in
 [`DELL-XPS-OPENVINO-2026-09-14.md`](DELL-XPS-OPENVINO-2026-09-14.md), the fully
 INT8 Supertonic vector estimator produced loud, clipped, unintelligible speech.

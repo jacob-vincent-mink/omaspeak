@@ -21,6 +21,12 @@ fn unit_preserves_and_escapes_the_native_library_path() {
 }
 
 #[test]
+fn generated_unit_does_not_capture_the_ambient_loader_path() {
+    let unit = generate(Path::new("/opt/omaspeak"), Path::new("/tmp/config.toml"));
+    assert!(!unit.contains("LD_LIBRARY_PATH"));
+}
+
+#[test]
 fn setup_reload_only_restarts_a_service_that_was_active() {
     use std::cell::Cell;
 

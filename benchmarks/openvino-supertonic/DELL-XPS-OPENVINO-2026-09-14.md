@@ -8,9 +8,9 @@ On 2026-09-14, Omaspeak synthesized `Omaspeak now supports Supertonic.` with
 the official Supertonic 3 int8 model on a Dell XPS with an Intel Panther Lake
 Arc B390 iGPU (`8086:b080`) and Series 3 NPU (`8086:b03e`). The host ran Linux
 7.2.3. The native stack was ONNX Runtime 1.29, OpenVINO 2026.2.1, and
-sherpa-onnx 1.13.8, built by [`native/openvino/build.sh`](../../native/openvino/build.sh).
-It included the required zero-element boundary-tensor patch and Supertonic
-component-routing patch described in [`native/openvino/README.md`](../../native/openvino/README.md).
+sherpa-onnx 1.13.8. This historical run used the predecessor combined native
+builder and patches, which are no longer part of the Omaspeak source or release
+architecture.
 
 Each cold process loaded the model and synthesized once. Each independent hot
 process loaded once, warmed up twice, then recorded ten syntheses. Every output
@@ -60,7 +60,6 @@ dynamic shapes, and uses the host-specific inline `NPU_PLATFORM=5010` property.
 The benchmark JSON intentionally retained `placement_verified=false`; profile
 and hardware evidence are reported independently.
 
-Run ID `2026-09-14-dell-xps-final` passed the harness validation. Raw profiles,
-WAVs, caches, and rendered configs remain under
-`/tmp/omaspeak-openvino-supertonic/2026-09-14-dell-xps-final`; the reproducible
-harness and compact evidence format are tracked in this directory.
+Run ID `2026-09-14-dell-xps-final` passed the historical harness validation.
+The compact evidence remains tracked in this directory. The current harness
+targets direct OpenVINO and produces a separate proof record.

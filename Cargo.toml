@@ -2,13 +2,10 @@
 name = "omaspeak"
 version = "0.1.0"
 edition = "2024"
-
-[features]
-default = []
-shared-runtime = ["sherpa-onnx/shared"]
-openvino = ["shared-runtime"]
-cuda = ["shared-runtime"]
-all-runtimes = ["openvino", "cuda"]
+description = "Local Supertonic text-to-speech CLI and daemon with runtime-selectable inference backends"
+license = "MIT"
+repository = "https://github.com/jacob-vincent-mink/omaspeak"
+readme = "README.md"
 
 [dependencies]
 anyhow = "1"
@@ -16,12 +13,17 @@ clap = { version = "4", features = ["derive"] }
 bzip2 = "0.5"
 crossterm = { version = "0.28", default-features = false, features = ["events"] }
 hound = "3.5"
+openvino = { version = "0.11", features = ["runtime-linking"] }
+openvino-sys = { version = "0.11", features = ["runtime-linking"] }
+ort = { version = "=2.0.0-rc.13", default-features = false, features = ["cuda", "load-dynamic", "std"] }
+rand = "0.8"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
-sherpa-onnx = { version = "=1.13.8", default-features = false }
+libc = "0.2"
 signal-hook = "0.3"
 tar = "0.4"
 thiserror = "2"
 toml = "0.9"
 ureq = { version = "2.12", default-features = false, features = ["tls"] }
+unicode-normalization = "0.1"

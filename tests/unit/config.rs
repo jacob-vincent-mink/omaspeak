@@ -16,10 +16,10 @@ fn partial_config_uses_defaults() {
     )
     .unwrap();
     assert_eq!(cfg.model.voice, 2);
-    assert_eq!(cfg.model.family, "piper");
+    assert_eq!(cfg.model.family, "supertonic");
     assert_eq!(cfg.model.language, "en");
     assert_eq!(cfg.model.steps, 5);
-    assert!(cfg.model.duration_predictor.is_empty());
+    assert_eq!(cfg.model.duration_predictor, "duration_predictor.int8.onnx");
     assert_eq!(cfg.backend.threads, 2);
 }
 
@@ -44,7 +44,7 @@ fn missing_save_load_and_model_paths_round_trip() {
     };
     assert_eq!(
         defaults.model_directory(&paths),
-        root.join("data/models/en_US-lessac-medium")
+        root.join("data/models/supertonic-3-int8")
     );
     let mut custom = defaults;
     custom.model.directory = root.join("custom").display().to_string();

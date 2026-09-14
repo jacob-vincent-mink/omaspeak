@@ -1,0 +1,41 @@
+{
+  "backend": {
+    "effective_runtime": "cuda",
+    "fallback_used": false,
+    "kind": "cuda",
+    "model": "supertonic-3-int8",
+    "placement_evidence": "",
+    "placement_verified": false,
+    "requested_device": "gpu",
+    "requested_runtime": "cuda"
+  },
+  "benchmark": "omaspeak-file-synthesis",
+  "iterations": [
+    {
+      "audio_duration_milliseconds": 3256.235828,
+      "elapsed_milliseconds": 1465.564259,
+      "iteration": 1,
+      "output": "/tmp/oma-runtime-delivery-zXvb7Q/acceptance/results/omaspeak-cuda-cold-audio/iteration-0001.wav",
+      "real_time_factor": 0.4497748515037837,
+      "sample_rate": 44100,
+      "samples": 143600,
+      "synthesis_milliseconds": 1464.5729860000001
+    }
+  ],
+  "measured_iterations": 1,
+  "model_load_milliseconds": 3569,
+  "out_dir": "/tmp/oma-runtime-delivery-zXvb7Q/acceptance/results/omaspeak-cuda-cold-audio",
+  "schema_version": 1,
+  "summary": {
+    "p50_elapsed_milliseconds": 1465.564259,
+    "p50_real_time_factor": 0.4497748515037837,
+    "p50_synthesis_milliseconds": 1464.5729860000001,
+    "p95_elapsed_milliseconds": 1465.564259,
+    "p95_real_time_factor": 0.4497748515037837,
+    "p95_synthesis_milliseconds": 1464.5729860000001,
+    "samples": 1
+  },
+  "text": "The quick brown fox jumps over the lazy dog.",
+  "voice": 0,
+  "warmup_iterations": 0
+}

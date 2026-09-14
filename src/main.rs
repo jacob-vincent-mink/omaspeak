@@ -1,7 +1,11 @@
+#![recursion_limit = "256"]
+
 use std::fs;
 use std::io::{BufRead, BufReader, IsTerminal, Read, Write};
 use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};
 use std::os::unix::net::{UnixListener, UnixStream};
+#[cfg(target_os = "linux")]
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command as ProcessCommand, ExitCode};
 use std::sync::Arc;
@@ -10,7 +14,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, anyhow, bail};
 use clap::{Args, Parser, Subcommand};
-use omaspeak::backend::{Fallback, Runtime, compiled_capabilities};
+use omaspeak::backend::{Fallback, Runtime, canonical_device, supported_capabilities};
 use omaspeak::config::Config;
 use omaspeak::engine::{Engine, Synthesis};
 use omaspeak::paths::AppPaths;
@@ -83,6 +87,9 @@ struct BenchmarkArgs {
     warmup: u32,
     #[arg(long, default_value_t = 5, value_parser = clap::value_parser!(u32).range(1..))]
     iterations: u32,
+    /// Override the configured model voice for this benchmark.
+    #[arg(long)]
+    voice: Option<i32>,
 }
 
 #[derive(Subcommand)]
@@ -118,10 +125,13 @@ enum SetupCommand {
     /// This leaves the systemd unit unchanged; use `omaspeak setup systemd`
     /// explicitly. An already-active daemon is safely restarted after setup.
     All {
-        #[arg(long, default_value = "en_US-lessac-medium")]
+        #[arg(long, default_value = "supertonic-3-int8")]
         model: String,
         #[arg(long)]
         archive: Option<PathBuf>,
+        /// Confirm acceptance of the model license required for catalog installation.
+        #[arg(long, value_name = "LICENSE")]
+        accept_license: Option<String>,
         #[arg(long, value_enum, default_value_t)]
         progress_format: ProgressFormat,
     },
@@ -130,13 +140,13 @@ enum SetupCommand {
         /// List catalog models and their local installation status.
         #[arg(
             long,
-            conflicts_with_all = ["json", "download", "set", "verify", "archive", "no_activate"]
+            conflicts_with_all = ["json", "download", "set", "verify", "archive", "no_activate", "accept_license"]
         )]
         list: bool,
         /// Print the complete catalog as JSON.
         #[arg(
             long,
-            conflicts_with_all = ["list", "download", "set", "verify", "archive", "no_activate"]
+            conflicts_with_all = ["list", "download", "set", "verify", "archive", "no_activate", "accept_license"]
         )]
         json: bool,
         /// Download, verify, install, and activate a catalog model.
@@ -163,6 +173,9 @@ enum SetupCommand {
         /// Install from a local pinned archive instead of downloading it.
         #[arg(long, requires = "download")]
         archive: Option<PathBuf>,
+        /// Confirm acceptance of the model license required for catalog installation.
+        #[arg(long, value_name = "LICENSE", requires = "download")]
+        accept_license: Option<String>,
         /// Install the downloaded model without making it active.
         #[arg(long, requires = "download")]
         no_activate: bool,
@@ -172,8 +185,17 @@ enum SetupCommand {
     /// Select a runtime and device, or print discovery data outside a terminal.
     Runtime {
         /// Print runtimes, devices, capabilities, and models as JSON.
-        #[arg(long)]
+        #[arg(long, conflicts_with_all = ["dir", "runtime", "device"])]
         json: bool,
+        /// Select a runtime without opening the terminal UI.
+        #[arg(long, value_name = "RUNTIME", requires = "device")]
+        runtime: Option<String>,
+        /// Select a device without opening the terminal UI.
+        #[arg(long, value_name = "DEVICE", requires = "runtime")]
+        device: Option<String>,
+        /// Configure the current runtime from a directory containing matching native libraries.
+        #[arg(long, value_name = "DIRECTORY")]
+        dir: Option<PathBuf>,
     },
     /// Install, inspect, or remove the systemd user service.
     Systemd {
@@ -201,6 +223,10 @@ trait SetupSelector {
         items: &[MenuItem],
         preferred: usize,
     ) -> Result<Option<usize>>;
+
+    fn input(&mut self, _title: &str, _help: &str) -> Result<Option<String>> {
+        Ok(Some(String::new()))
+    }
 }
 
 struct TerminalSetupSelector;
@@ -215,6 +241,17 @@ impl SetupSelector for TerminalSetupSelector {
     ) -> Result<Option<usize>> {
         app_setup::wizard::select(title, help, items, preferred)
     }
+
+    fn input(&mut self, title: &str, help: &str) -> Result<Option<String>> {
+        println!("\n{title}\n{help}");
+        print!("> ");
+        std::io::stdout().flush()?;
+        let mut value = String::new();
+        if std::io::stdin().read_line(&mut value)? == 0 {
+            return Ok(None);
+        }
+        Ok(Some(value.trim().to_owned()))
+    }
 }
 
 trait ModelSetupOperations {
@@ -227,6 +264,7 @@ trait ModelSetupOperations {
         spec: &omaspeak::catalog::ModelSpec,
         archive: Option<&Path>,
         progress: ProgressFormat,
+        accepted_license: Option<&str>,
     ) -> Result<PathBuf>;
 }
 
@@ -251,8 +289,9 @@ impl ModelSetupOperations for BuiltinModels {
         spec: &omaspeak::catalog::ModelSpec,
         archive: Option<&Path>,
         progress: ProgressFormat,
+        accepted_license: Option<&str>,
     ) -> Result<PathBuf> {
-        app_setup::model::install(paths, spec, archive, progress)
+        app_setup::model::install(paths, spec, archive, progress, accepted_license)
     }
 }
 
@@ -269,16 +308,53 @@ fn main() -> ExitCode {
 fn run(cli: Cli) -> Result<()> {
     let mut paths = AppPaths::discover();
     let config_path = select_config_path(cli.config, &mut paths);
+    prepare_native_library_path(&cli.command, &config_path)?;
     match cli.command {
         TopCommand::Daemon => run_daemon(&config_path, &paths),
         TopCommand::Status { json } => print_status(&config_path, &paths, json),
         TopCommand::Say(args) => say(&config_path, &paths, args),
         TopCommand::Benchmark(args) => benchmark(&config_path, &paths, args),
         TopCommand::Stop => stop(&paths),
-        TopCommand::Voices { json } => voices(&config_path, json),
+        TopCommand::Voices { json } => voices(&config_path, &paths, json),
         TopCommand::Config { command } => config_command(command, &config_path, &paths),
         TopCommand::Setup { command } => setup(command, &config_path, &paths),
     }
+}
+
+fn command_loads_engine(command: &TopCommand) -> bool {
+    matches!(
+        command,
+        TopCommand::Daemon
+            | TopCommand::Say(_)
+            | TopCommand::Benchmark(_)
+            | TopCommand::Setup {
+                command: Some(SetupCommand::Check { .. })
+            }
+    )
+}
+
+#[cfg(target_os = "linux")]
+fn prepare_native_library_path(command: &TopCommand, config_path: &Path) -> Result<()> {
+    if !command_loads_engine(command) {
+        return Ok(());
+    }
+    let config = Config::load(config_path)?;
+    let report = omaspeak::runtime::inspect(&config.backend, config_path);
+    let Some(loader_path) = omaspeak::runtime::reexec_loader_path(&report)? else {
+        return Ok(());
+    };
+    let executable = std::env::current_exe().context("locate Omaspeak executable for re-exec")?;
+    let error = ProcessCommand::new(executable)
+        .args(std::env::args_os().skip(1))
+        .env("LD_LIBRARY_PATH", loader_path)
+        .env(omaspeak::runtime::REEXEC_SENTINEL, "1")
+        .exec();
+    Err(error).context("re-exec Omaspeak with its configured native library path")
+}
+
+#[cfg(not(target_os = "linux"))]
+fn prepare_native_library_path(_command: &TopCommand, _config_path: &Path) -> Result<()> {
+    Ok(())
 }
 
 fn select_config_path(config: Option<PathBuf>, paths: &mut AppPaths) -> PathBuf {
@@ -289,13 +365,25 @@ fn select_config_path(config: Option<PathBuf>, paths: &mut AppPaths) -> PathBuf 
 
 fn say(config_path: &Path, paths: &AppPaths, args: SayArgs) -> Result<()> {
     let config = Config::load(config_path)?;
+    let request = build_say_request(&config, paths, args, std::io::stdin())?;
+    let response = send_or_handle_locally(&paths.socket(), request, |request| {
+        let engine = Engine::load(&config, paths)?;
+        Ok(handle_request(&engine, &config, paths, request))
+    })?;
+    print_response(response)
+}
+
+fn build_say_request(
+    config: &Config,
+    paths: &AppPaths,
+    args: SayArgs,
+    mut input: impl Read,
+) -> Result<Request> {
     let text = match args.text {
         Some(text) => text,
         None => {
             let mut text = String::new();
-            std::io::stdin()
-                .read_to_string(&mut text)
-                .context("read stdin")?;
+            input.read_to_string(&mut text).context("read stdin")?;
             text
         }
     };
@@ -306,7 +394,7 @@ fn say(config_path: &Path, paths: &AppPaths, args: SayArgs) -> Result<()> {
         bail!("text exceeds {} bytes", config.daemon.max_text_bytes);
     }
     let output = args.out.unwrap_or_else(|| paths.state_dir.join("last.wav"));
-    let request = Request {
+    Ok(Request {
         protocol: 1,
         id: request_id(),
         command: Command::Say {
@@ -316,12 +404,7 @@ fn say(config_path: &Path, paths: &AppPaths, args: SayArgs) -> Result<()> {
             output: Some(output.to_string_lossy().into_owned()),
             no_play: args.no_play,
         },
-    };
-    let response = send_or_handle_locally(&paths.socket(), request, |request| {
-        let engine = Engine::load(&config, paths)?;
-        Ok(handle_request(&engine, &config, paths, request))
-    })?;
-    print_response(response)
+    })
 }
 
 #[derive(Debug, Serialize)]
@@ -351,12 +434,13 @@ fn benchmark(config_path: &Path, paths: &AppPaths, args: BenchmarkArgs) -> Resul
     let config = Config::load(config_path)?;
     validate_benchmark_text(&args.text, config.daemon.max_text_bytes)?;
     let engine = Engine::load(&config, paths)?;
+    let voice = args.voice.unwrap_or(config.model.voice);
     let iterations = benchmark_syntheses(
         &args.text,
         &args.out_dir,
         args.warmup,
         args.iterations,
-        |output| engine.synthesize(&args.text, 1.0, config.model.voice, output),
+        |output| engine.synthesize(&args.text, 1.0, voice, output),
         Instant::now,
     )?;
     let report = benchmark_report(&config, &engine, &args, iterations)?;
@@ -438,6 +522,7 @@ fn benchmark_report(
         "schema_version": 1,
         "benchmark": "omaspeak-file-synthesis",
         "text": args.text,
+        "voice": args.voice.unwrap_or(config.model.voice),
         "out_dir": args.out_dir,
         "model_load_milliseconds": engine.load_milliseconds(),
         "warmup_iterations": args.warmup,
@@ -449,7 +534,14 @@ fn benchmark_report(
             "requested_device": config.backend.canonical_device()?,
             "effective_runtime": engine.effective_runtime(),
             "fallback_used": engine.fallback_used(),
-            "placement_verified": engine.effective_runtime() == Runtime::Default,
+            "placement_verified": engine.effective_runtime() == Runtime::Default || engine.backend_kind() == "openvino",
+            "placement_evidence": if engine.backend_kind() == "openvino" {
+                "OpenVINO EXECUTION_DEVICES matched the requested device for every compiled graph"
+            } else if engine.effective_runtime() == Runtime::Default {
+                "runtime-loaded ONNX Runtime CPU engine initialized"
+            } else {
+                ""
+            },
         },
         "iterations": iterations,
         "summary": summary,
@@ -550,14 +642,26 @@ fn accept_daemon_connection(
     listener: &UnixListener,
     interrupted: &AtomicBool,
 ) -> Result<UnixStream> {
+    accept_daemon_connection_with(
+        interrupted,
+        || listener.accept().map(|(stream, _)| stream),
+        || std::thread::sleep(Duration::from_millis(25)),
+    )
+}
+
+fn accept_daemon_connection_with<T>(
+    interrupted: &AtomicBool,
+    mut accept: impl FnMut() -> std::io::Result<T>,
+    mut wait: impl FnMut(),
+) -> Result<T> {
     loop {
         if interrupted.load(Ordering::Relaxed) {
             return Err(DaemonInterrupted.into());
         }
-        match listener.accept() {
-            Ok((stream, _)) => return Ok(stream),
+        match accept() {
+            Ok(stream) => return Ok(stream),
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                std::thread::sleep(Duration::from_millis(25));
+                wait();
             }
             Err(error) => return Err(error).context("accept daemon request"),
         }
@@ -569,11 +673,17 @@ fn finish_daemon(
     socket_metadata: &fs::Metadata,
     serve_result: Result<()>,
 ) -> Result<()> {
-    if let Err(error) = remove_stale_socket(socket, socket_metadata) {
-        eprintln!(
-            "omaspeak: failed to remove daemon socket {}: {error}",
-            socket.display()
-        );
+    finish_daemon_with(serve_result, || {
+        remove_stale_socket(socket, socket_metadata)
+    })
+}
+
+fn finish_daemon_with(
+    serve_result: Result<()>,
+    remove_socket: impl FnOnce() -> Result<()>,
+) -> Result<()> {
+    if let Err(error) = remove_socket() {
+        eprintln!("omaspeak: failed to remove daemon socket after shutdown: {error}");
     }
     serve_result
 }
@@ -749,11 +859,11 @@ fn status_payload(engine: &impl SpeechEngine, config: &Config) -> ResultPayload 
             "kind": engine.backend_kind(),
             "requested": {"runtime": config.backend.runtime, "device": config.backend.canonical_device().unwrap_or_else(|_| config.backend.device.clone())},
             "effective": {"runtime": effective_runtime, "device": if effective_runtime == Runtime::Default { "cpu" } else { config.backend.device.as_str() }, "provider": if effective_runtime == Runtime::Default { "CPUExecutionProvider" } else { "unverified" }},
-            "compiled_capabilities": compiled_capabilities(),
+            "supported_capabilities": supported_capabilities(),
             "fallback_policy": config.backend.fallback,
             "fallback_used": engine.fallback_used(),
             "placement_verified": effective_runtime == Runtime::Default,
-            "evidence": if effective_runtime == Runtime::Default { vec!["static CPU build"] } else { Vec::<&str>::new() }
+            "evidence": if effective_runtime == Runtime::Default { vec!["runtime-loaded ONNX Runtime CPU engine initialized"] } else { Vec::<&str>::new() }
         }),
     }
 }
@@ -773,13 +883,15 @@ fn try_send_request(socket: &Path, request: &Request) -> Result<Option<Response>
     let Some(mut stream) = connect_daemon(socket)? else {
         return Ok(None);
     };
-    serde_json::to_writer(&mut stream, request)?;
+    exchange_request(&mut stream, request).map(Some)
+}
+
+fn exchange_request(stream: &mut (impl Read + Write), request: &Request) -> Result<Response> {
+    serde_json::to_writer(&mut *stream, request)?;
     stream.write_all(b"\n")?;
     let mut line = String::new();
     BufReader::new(stream).read_line(&mut line)?;
-    serde_json::from_str(&line)
-        .context("decode daemon response")
-        .map(Some)
+    serde_json::from_str(&line).context("decode daemon response")
 }
 
 fn connect_daemon(socket: &Path) -> Result<Option<UnixStream>> {
@@ -863,7 +975,7 @@ fn print_status(config_path: &Path, paths: &AppPaths, as_json: bool) -> Result<(
     } else {
         let config = Config::load(config_path)?;
         json!({"type":"status","running":false,"pid":null,"model":config.model.name,"sample_rate":null,
-            "backend":{"kind":config.backend.kind,"requested":{"runtime":config.backend.runtime,"device":config.backend.device},"effective":null,"compiled_capabilities":compiled_capabilities(),"fallback_policy":config.backend.fallback,"fallback_used":false,"placement_verified":false,"evidence":[]}})
+            "backend":{"kind":config.backend.kind,"requested":{"runtime":config.backend.runtime,"device":config.backend.device},"effective":null,"supported_capabilities":supported_capabilities(),"fallback_policy":config.backend.fallback,"fallback_used":false,"placement_verified":false,"evidence":[]}})
     };
     if as_json {
         println!("{}", serde_json::to_string_pretty(&status)?);
@@ -888,15 +1000,34 @@ fn stop(paths: &AppPaths) -> Result<()> {
     print_response(response)
 }
 
-fn voices(config_path: &Path, as_json: bool) -> Result<()> {
+fn voices(config_path: &Path, paths: &AppPaths, as_json: bool) -> Result<()> {
     let config = Config::load(config_path)?;
+    let voices = omaspeak::voices::available(&config, paths)?;
     if as_json {
-        println!(
-            "{}",
-            json!([{"id":config.model.voice,"name":config.model.name}])
-        );
+        let output = voices
+            .iter()
+            .map(|voice| {
+                json!({
+                    "id": voice.id,
+                    "name": voice.name,
+                    "active": voice.id == config.model.voice,
+                })
+            })
+            .collect::<Vec<_>>();
+        println!("{}", serde_json::to_string_pretty(&output)?);
     } else {
-        println!("{}\t{}", config.model.voice, config.model.name);
+        for voice in voices {
+            println!(
+                "{}\t{}\t{}",
+                if voice.id == config.model.voice {
+                    "*"
+                } else {
+                    " "
+                },
+                voice.id,
+                voice.name
+            );
+        }
     }
     Ok(())
 }
@@ -909,7 +1040,7 @@ fn config_command(command: ConfigCommand, path: &Path, paths: &AppPaths) -> Resu
                 println!("{}", serde_json::to_string_pretty(&value)?);
             } else {
                 println!(
-                    "backend.runtime\tdefault|openvino|cuda\nbackend.device\truntime-dependent\nbackend.options.<name>\truntime provider option\nmodel.family\tpiper|vits|supertonic\nmodel.options.<name>\tmodel-specific option"
+                    "backend.runtime\tdefault|openvino|cuda\nbackend.device\truntime-dependent\nbackend.library_dirs\tpath list for native runtime libraries\nbackend.onnxruntime_library\texact ONNX Runtime core library\nbackend.provider_library\texact CUDA provider library\nbackend.openvino_library\texact OpenVINO C API library\nbackend.openvino_plugins\texact OpenVINO plugins.xml\nbackend.options.<name>\truntime property\nmodel.family\tsupertonic\nmodel.options.<name>\tmodel-specific option"
                 );
             }
         }
@@ -949,7 +1080,6 @@ fn save_config_mutation(
 ) -> Result<()> {
     if key == "backend.runtime" && config.backend.runtime != previous_runtime {
         config.backend.device = "auto".into();
-        config.backend.provider_config.clear();
         config.backend.options.clear();
         if config.backend.runtime != Runtime::Cuda {
             config.backend.device_id = 0;
@@ -975,13 +1105,18 @@ fn set_config(config: &mut Config, key: &str, value: &str) -> Result<()> {
         "backend.threads" => config.backend.threads = value.parse()?,
         "backend.fallback" => config.backend.fallback = parse_fallback(value)?,
         "backend.device_id" => config.backend.device_id = value.parse()?,
-        "backend.provider_config" => config.backend.provider_config = value.into(),
+        "backend.library_dirs" => {
+            config.backend.library_dirs = std::env::split_paths(value).collect()
+        }
+        "backend.onnxruntime_library" => {
+            config.backend.onnxruntime_library = Some(PathBuf::from(value))
+        }
+        "backend.provider_library" => config.backend.provider_library = Some(PathBuf::from(value)),
+        "backend.openvino_library" => config.backend.openvino_library = Some(PathBuf::from(value)),
+        "backend.openvino_plugins" => config.backend.openvino_plugins = Some(PathBuf::from(value)),
         "model.family" => config.model.family = value.into(),
         "model.name" => config.model.name = value.into(),
         "model.directory" => config.model.directory = value.into(),
-        "model.model_file" => config.model.model_file = value.into(),
-        "model.tokens_file" => config.model.tokens_file = value.into(),
-        "model.data_directory" => config.model.data_directory = value.into(),
         "model.duration_predictor" => config.model.duration_predictor = value.into(),
         "model.text_encoder" => config.model.text_encoder = value.into(),
         "model.vector_estimator" => config.model.vector_estimator = value.into(),
@@ -992,9 +1127,6 @@ fn set_config(config: &mut Config, key: &str, value: &str) -> Result<()> {
         "model.language" => config.model.language = value.into(),
         "model.steps" => config.model.steps = value.parse()?,
         "model.voice" => config.model.voice = value.parse()?,
-        "model.noise_scale" => config.model.noise_scale = value.parse()?,
-        "model.noise_scale_w" => config.model.noise_scale_w = value.parse()?,
-        "model.length_scale" => config.model.length_scale = value.parse()?,
         "audio.device" => config.audio.device = value.into(),
         "audio.volume" => config.audio.volume = value.parse()?,
         "daemon.queue_capacity" => config.daemon.queue_capacity = value.parse()?,
@@ -1021,15 +1153,22 @@ fn unset_config(config: &mut Config, key: &str) -> Result<()> {
         "backend.threads" => config.backend.threads = defaults.backend.threads,
         "backend.fallback" => config.backend.fallback = defaults.backend.fallback,
         "backend.device_id" => config.backend.device_id = defaults.backend.device_id,
-        "backend.provider_config" => {
-            config.backend.provider_config = defaults.backend.provider_config
+        "backend.library_dirs" => config.backend.library_dirs = defaults.backend.library_dirs,
+        "backend.onnxruntime_library" => {
+            config.backend.onnxruntime_library = defaults.backend.onnxruntime_library
+        }
+        "backend.provider_library" => {
+            config.backend.provider_library = defaults.backend.provider_library
+        }
+        "backend.openvino_library" => {
+            config.backend.openvino_library = defaults.backend.openvino_library
+        }
+        "backend.openvino_plugins" => {
+            config.backend.openvino_plugins = defaults.backend.openvino_plugins
         }
         "model.family" => config.model.family = defaults.model.family,
         "model.name" => config.model.name = defaults.model.name,
         "model.directory" => config.model.directory = defaults.model.directory,
-        "model.model_file" => config.model.model_file = defaults.model.model_file,
-        "model.tokens_file" => config.model.tokens_file = defaults.model.tokens_file,
-        "model.data_directory" => config.model.data_directory = defaults.model.data_directory,
         "model.duration_predictor" => {
             config.model.duration_predictor = defaults.model.duration_predictor
         }
@@ -1042,9 +1181,6 @@ fn unset_config(config: &mut Config, key: &str) -> Result<()> {
         "model.language" => config.model.language = defaults.model.language,
         "model.steps" => config.model.steps = defaults.model.steps,
         "model.voice" => config.model.voice = defaults.model.voice,
-        "model.noise_scale" => config.model.noise_scale = defaults.model.noise_scale,
-        "model.noise_scale_w" => config.model.noise_scale_w = defaults.model.noise_scale_w,
-        "model.length_scale" => config.model.length_scale = defaults.model.length_scale,
         "audio.device" => config.audio.device = defaults.audio.device,
         "audio.volume" => config.audio.volume = defaults.audio.volume,
         "daemon.queue_capacity" => config.daemon.queue_capacity = defaults.daemon.queue_capacity,
@@ -1100,14 +1236,28 @@ fn parse_fallback(value: &str) -> Result<Fallback> {
 
 fn schema(path: &Path, paths: &AppPaths) -> Result<Value> {
     let config = Config::load(path)?;
+    let voice_choices = omaspeak::voices::available(&config, paths)
+        .unwrap_or_else(|_| {
+            omaspeak::catalog::model(&config.model.name)
+                .map(omaspeak::voices::from_catalog)
+                .unwrap_or_default()
+        })
+        .into_iter()
+        .map(|voice| json!({"value":voice.id,"label":voice.name}))
+        .collect::<Vec<_>>();
     Ok(
         json!({"schema_version":1,"app":"omaspeak","app_version":env!("CARGO_PKG_VERSION"),"daemon_version":env!("CARGO_PKG_VERSION"),"config_path":path,
         "keys":[
-            {"key":"backend.kind","type":"enum","section":"Backend","label":"Backend","description":"Inference engine","value":config.backend.kind,"file_value":null,"compiled":true,"restart_required":true,"choices":["sherpa-onnx"]},
-            {"key":"backend.runtime","type":"enum","section":"Backend","label":"Runtime","description":"ONNX Runtime provider","value":config.backend.runtime,"file_value":null,"compiled":true,"restart_required":true,"choices":[{"value":"default","available":true,"capability":"cpu"},{"value":"openvino","available":compiled_capabilities().contains(&"openvino"),"capability":"openvino"},{"value":"cuda","available":compiled_capabilities().contains(&"cuda"),"capability":"cuda"}]},
+            {"key":"backend.kind","type":"enum","section":"Backend","label":"Backend","description":"Inference engine","value":config.backend.kind,"file_value":null,"compiled":true,"restart_required":true,"choices":["supertonic"]},
+            {"key":"backend.runtime","type":"enum","section":"Backend","label":"Runtime","description":"Inference runtime","value":config.backend.runtime,"file_value":null,"compiled":true,"restart_required":true,"choices":[{"value":"default","available":true,"capability":"cpu"},{"value":"openvino","available":supported_capabilities().contains(&"openvino"),"capability":"openvino"},{"value":"cuda","available":supported_capabilities().contains(&"cuda"),"capability":"cuda"}]},
             {"key":"backend.device","type":"string","section":"Backend","label":"Device","description":"Runtime-specific device","value":config.backend.device,"file_value":null,"compiled":true,"restart_required":true},
+            {"key":"backend.library_dirs","type":"path-list","section":"Backend","label":"Native library directories","description":"Application-owned provider/vendor runtime search path","value":config.backend.library_dirs,"file_value":null,"compiled":true,"restart_required":true},
+            {"key":"backend.onnxruntime_library","type":"path","section":"Backend","label":"ONNX Runtime library","description":"Exact external ONNX Runtime core library","value":config.backend.onnxruntime_library,"file_value":null,"compiled":true,"restart_required":true},
+            {"key":"backend.provider_library","type":"path","section":"Backend","label":"Provider library","description":"Exact CUDA execution-provider library","value":config.backend.provider_library,"file_value":null,"compiled":true,"restart_required":true},
+            {"key":"backend.openvino_library","type":"path","section":"Backend","label":"OpenVINO library","description":"Exact OpenVINO C API library","value":config.backend.openvino_library,"file_value":null,"compiled":true,"restart_required":true},
+            {"key":"backend.openvino_plugins","type":"path","section":"Backend","label":"OpenVINO plugins","description":"Exact OpenVINO plugins.xml","value":config.backend.openvino_plugins,"file_value":null,"compiled":true,"restart_required":true},
             {"key":"backend.threads","type":"integer","section":"Backend","label":"Threads","description":"Inference threads","value":config.backend.threads,"file_value":null,"compiled":true,"restart_required":true,"min":1,"max":64},
-            {"key":"model.family","type":"enum","section":"Model","label":"Family","description":"sherpa TTS model family","value":config.model.family,"file_value":null,"compiled":true,"restart_required":true,"choices":["piper","vits","supertonic"]},
+            {"key":"model.family","type":"enum","section":"Model","label":"Family","description":"TTS model family","value":config.model.family,"file_value":null,"compiled":true,"restart_required":true,"choices":["supertonic"]},
             {"key":"model.directory","type":"path","section":"Model","label":"Directory","description":"Model asset directory","value":config.model_directory(paths),"file_value":config.model.directory,"compiled":true,"restart_required":true},
             {"key":"model.duration_predictor","type":"string","section":"Model","label":"Duration predictor","description":"Supertonic duration predictor filename","value":config.model.duration_predictor,"file_value":null,"compiled":true,"restart_required":true},
             {"key":"model.text_encoder","type":"string","section":"Model","label":"Text encoder","description":"Supertonic text encoder filename","value":config.model.text_encoder,"file_value":null,"compiled":true,"restart_required":true},
@@ -1117,8 +1267,9 @@ fn schema(path: &Path, paths: &AppPaths) -> Result<Value> {
             {"key":"model.unicode_indexer","type":"string","section":"Model","label":"Unicode indexer","description":"Supertonic unicode indexer filename","value":config.model.unicode_indexer,"file_value":null,"compiled":true,"restart_required":true},
             {"key":"model.voice_style","type":"string","section":"Model","label":"Voice styles","description":"Supertonic voice style filename","value":config.model.voice_style,"file_value":null,"compiled":true,"restart_required":true},
             {"key":"model.language","type":"enum","section":"Model","label":"Language","description":"Supertonic generation language","value":config.model.language,"file_value":null,"compiled":true,"restart_required":true,"choices":["en","ko","ja","ar","bg","cs","da","de","el","es","et","fi","fr","hi","hr","hu","id","it","lt","lv","nl","pl","pt","ro","ru","sk","sl","sv","tr","uk","vi"]},
-            {"key":"model.steps","type":"integer","section":"Model","label":"Generation steps","description":"Supertonic denoising steps","value":config.model.steps,"file_value":null,"compiled":true,"restart_required":true,"min":1}],
-        "collections":[],"constraints":[{"kind":"matrix","keys":["backend.runtime","backend.device"],"rows":[{"backend.runtime":"default","backend.device":["auto","cpu"]},{"backend.runtime":"cuda","backend.device":["auto","gpu"]},{"backend.runtime":"openvino","backend.device":["auto","npu","gpu","cpu","auto:<devices>","hetero:<2+ devices>","multi:<2+ devices>"]}]}]}),
+            {"key":"model.steps","type":"integer","section":"Model","label":"Generation steps","description":"Supertonic denoising steps","value":config.model.steps,"file_value":null,"compiled":true,"restart_required":true,"min":1},
+            {"key":"model.voice","type":"enum","section":"Model","label":"Voice","description":"Default TTS speaker","value":config.model.voice,"file_value":null,"compiled":true,"restart_required":true,"choices":voice_choices}],
+        "collections":[],"constraints":[{"kind":"matrix","keys":["backend.runtime","backend.device"],"rows":[{"backend.runtime":"default","backend.device":["auto","cpu"]},{"backend.runtime":"cuda","backend.device":["auto","gpu"]},{"backend.runtime":"openvino","backend.device":["auto","npu","gpu","cpu"]}]}]}),
     )
 }
 
@@ -1133,17 +1284,32 @@ fn setup(command: Option<SetupCommand>, config_path: &Path, paths: &AppPaths) ->
             );
         }
         eprintln!(
-            "Run `omaspeak setup` in a terminal for guided setup, or use `omaspeak setup all` for an unattended install."
+            "Run `omaspeak setup` in a terminal for guided setup, or use `omaspeak setup all --accept-license OpenRAIL-M` for an unattended install."
         );
         return app_setup::print_checks(config_path, paths, false);
     };
     match command {
         SetupCommand::Check { json } => app_setup::print_checks(config_path, paths, json),
-        SetupCommand::Runtime { json } => {
-            if !json && is_interactive_terminal() {
+        SetupCommand::Runtime {
+            json,
+            runtime,
+            device,
+            dir,
+        } => {
+            if let (Some(runtime), Some(device)) = (runtime, device) {
+                let runtime = parse_runtime(&runtime)?;
+                canonical_device(runtime, &device)?;
+                save_runtime(config_path, runtime, &device, dir.as_deref())?;
+                println!("Runtime configured: {} on {device}", runtime_name(runtime));
+                Ok(())
+            } else if let Some(dir) = dir {
+                configure_runtime_directory(config_path, &dir)?;
+                println!("Runtime libraries configured from {}", dir.display());
+                Ok(())
+            } else if !json && is_interactive_terminal() {
                 guided_runtime(config_path, &mut TerminalSetupSelector).map(|_| ())
             } else {
-                app_setup::print_runtime(json)
+                app_setup::print_runtime(config_path, json)
             }
         }
         SetupCommand::Model {
@@ -1153,6 +1319,7 @@ fn setup(command: Option<SetupCommand>, config_path: &Path, paths: &AppPaths) ->
             set,
             verify,
             archive,
+            accept_license,
             no_activate,
             progress_format,
         } => {
@@ -1182,6 +1349,7 @@ fn setup(command: Option<SetupCommand>, config_path: &Path, paths: &AppPaths) ->
                     set,
                     verify,
                     archive,
+                    accept_license,
                     no_activate,
                     progress_format,
                 )
@@ -1217,13 +1385,16 @@ fn setup(command: Option<SetupCommand>, config_path: &Path, paths: &AppPaths) ->
         SetupCommand::All {
             model,
             archive,
+            accept_license,
             progress_format,
         } => setup_all(
             config_path,
             paths,
             &BuiltinModels,
             &model,
+            None,
             archive.as_deref(),
+            accept_license.as_deref(),
             progress_format,
             app_setup::menu::install,
             app_setup::systemd::is_active,
@@ -1305,11 +1476,40 @@ fn guided_full_setup_with(
     service_is_active: impl FnOnce() -> bool,
     reload_service: impl FnOnce(bool) -> Result<bool>,
 ) -> Result<()> {
-    let service_was_active = service_is_active();
-    let Some((runtime, device)) = choose_runtime(config_path, selector)? else {
+    guided_full_setup_with_validator(
+        config_path,
+        paths,
+        operations,
+        selector,
+        validate_runtime_configuration,
+        install_launcher,
+        service_is_active,
+        reload_service,
+        |config, paths| app_setup::print_checks(config, paths, false),
+        app_setup::print_checks_event,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn guided_full_setup_with_validator(
+    config_path: &Path,
+    paths: &AppPaths,
+    operations: &impl ModelSetupOperations,
+    selector: &mut impl SetupSelector,
+    validate_runtime: impl FnOnce(&Config, &Path, bool) -> Result<()>,
+    install_launcher: impl FnOnce(&AppPaths) -> Result<PathBuf>,
+    service_is_active: impl FnOnce() -> bool,
+    reload_service: impl FnOnce(bool) -> Result<bool>,
+    check_human: impl FnOnce(&Path, &AppPaths) -> Result<()>,
+    check_json: impl FnOnce(&Path, &AppPaths) -> Result<()>,
+) -> Result<()> {
+    let Some((runtime, device, library_dir)) = choose_runtime(config_path, selector)? else {
         println!("Setup cancelled.");
         return Ok(());
     };
+    let candidate =
+        runtime_configuration_candidate(config_path, runtime, &device, library_dir.as_deref())?;
+    validate_runtime(&candidate, config_path, library_dir.as_deref().is_some())?;
     let Some(model) = choose_model(
         config_path,
         paths,
@@ -1321,6 +1521,16 @@ fn guided_full_setup_with(
         println!("Setup cancelled.");
         return Ok(());
     };
+    let spec = operations.resolve(&model)?;
+    let installed = operations.verify(paths, spec).is_ok();
+    let Some(voice) = choose_voice(config_path, paths, spec, installed, selector)? else {
+        println!("Setup cancelled.");
+        return Ok(());
+    };
+    if !confirm_model_license(spec, installed, selector)? {
+        println!("Setup cancelled; the model license was not accepted.");
+        return Ok(());
+    }
     let confirmation = [
         MenuItem::available(
             "Apply setup",
@@ -1329,26 +1539,32 @@ fn guided_full_setup_with(
         MenuItem::available("Cancel", "Leave the current configuration unchanged."),
     ];
     let summary = format!(
-        "Runtime: {} · Device: {} · Model: {} · Service unit: unchanged (`omaspeak setup systemd` installs it)",
+        "Runtime: {} · Device: {} · Model: {} · Voice: {} (ID {}) · Service unit: unchanged (`omaspeak setup systemd` installs it)",
         runtime_name(runtime),
         device,
-        model
+        model,
+        voice.name,
+        voice.id,
     );
     if selector.select("Apply Omaspeak setup", &summary, &confirmation, 0)? != Some(0) {
         println!("Setup cancelled; no changes were made.");
         return Ok(());
     }
-    save_runtime(config_path, runtime, &device)?;
-    setup_all(
+    setup_all_with_config(
+        candidate,
         config_path,
         paths,
         operations,
         &model,
+        Some(voice.id),
         None,
+        spec.requires_acceptance.then_some(spec.license),
         ProgressFormat::Human,
         install_launcher,
-        || service_was_active,
+        service_is_active,
         reload_service,
+        check_human,
+        check_json,
     )
 }
 
@@ -1356,20 +1572,35 @@ fn guided_runtime(
     config_path: &Path,
     selector: &mut impl SetupSelector,
 ) -> Result<Option<(Runtime, String)>> {
-    let Some((runtime, device)) = choose_runtime(config_path, selector)? else {
+    let Some((runtime, device, library_dir)) = choose_runtime(config_path, selector)? else {
         println!("Runtime setup cancelled.");
         return Ok(None);
     };
-    if runtime == Runtime::Openvino && device.eq_ignore_ascii_case("npu") {
+    if runtime == Runtime::Openvino {
         let config = Config::load(config_path)?;
-        if omaspeak::catalog::model(&config.model.name).is_some_and(|model| !model.npu_capable) {
+        let compatible = omaspeak::catalog::model(&config.model.name).is_some_and(|model| {
+            model.openvino_capable && (!device.eq_ignore_ascii_case("npu") || model.npu_capable)
+        });
+        if !compatible {
             bail!(
-                "model {} is not validated for Intel NPU; run `omaspeak setup` and choose Full setup to select a compatible model",
+                "model {} is not compatible with direct OpenVINO on {device}; run `omaspeak setup` and choose Full setup to select a compatible Supertonic model",
                 config.model.name
             );
         }
     }
-    save_runtime(config_path, runtime, &device)?;
+    let confirmation = [
+        MenuItem::available(
+            "Apply runtime",
+            "Validate the selected runtime and device, then save them to the config.",
+        ),
+        MenuItem::available("Cancel", "Leave the current configuration unchanged."),
+    ];
+    let summary = format!("Runtime: {} · Device: {device}", runtime_name(runtime));
+    if selector.select("Apply Omaspeak runtime", &summary, &confirmation, 0)? != Some(0) {
+        println!("Runtime setup cancelled; no changes were made.");
+        return Ok(None);
+    }
+    save_runtime(config_path, runtime, &device, library_dir.as_deref())?;
     println!("Runtime configured: {} on {device}", runtime_name(runtime));
     Ok(Some((runtime, device)))
 }
@@ -1377,24 +1608,30 @@ fn guided_runtime(
 fn choose_runtime(
     config_path: &Path,
     selector: &mut impl SetupSelector,
-) -> Result<Option<(Runtime, String)>> {
+) -> Result<Option<(Runtime, String, Option<PathBuf>)>> {
     let config = Config::load(config_path)?;
-    let compiled = compiled_capabilities();
+    let locations = omaspeak::runtime::discover(&config.backend, config_path);
     let runtimes = [
         (
             Runtime::Default,
-            MenuItem::available(
+            runtime_item(
                 "Default CPU",
-                "Built in · portable ONNX Runtime CPU execution",
+                "Portable ONNX Runtime CPU execution",
+                locations.runtime_loadable.get("default") == Some(&true),
+                &locations
+                    .remediation(Runtime::Default)
+                    .unwrap_or_else(|| "configure an ONNX Runtime library".into()),
             ),
         ),
         (
             Runtime::Openvino,
             runtime_item(
                 "OpenVINO",
-                "Intel CPU, GPU, and NPU execution",
-                compiled.contains(&"openvino"),
-                "rebuild Omaspeak with --features openvino and the native OpenVINO stack",
+                "Direct OpenVINO execution for compatible Supertonic models",
+                locations.runtime_loadable.get("openvino") == Some(&true),
+                &locations
+                    .remediation(Runtime::Openvino)
+                    .unwrap_or_else(|| "configure libopenvino_c and plugins.xml".into()),
             ),
         ),
         (
@@ -1402,8 +1639,10 @@ fn choose_runtime(
             runtime_item(
                 "CUDA",
                 "NVIDIA GPU execution",
-                compiled.contains(&"cuda"),
-                "rebuild Omaspeak with --features cuda and a CUDA-enabled native runtime",
+                locations.runtime_loadable.get("cuda") == Some(&true),
+                &locations.remediation(Runtime::Cuda).unwrap_or_else(|| {
+                    "configure matching ONNX Runtime and CUDA provider libraries".into()
+                }),
             ),
         ),
     ];
@@ -1412,12 +1651,24 @@ fn choose_runtime(
         .iter()
         .position(|(runtime, _)| *runtime == config.backend.runtime)
         .unwrap_or_default();
-    let Some(selected) = selector.select(
-        "Omaspeak runtime",
-        "Choose an inference runtime. Unavailable runtimes show how to enable them.",
-        &items,
-        preferred,
-    )?
+    let runtime_help = format!(
+        "Choose an inference runtime. Runtimes that need an external stack remain selectable.\r\nConfigured paths: {}\r\nEffective paths: {}\r\nResolved ORT: {}\r\nResolved OpenVINO: {}\r\nOpenVINO plugins: {}",
+        setup_path_list(&locations.configured_library_dirs),
+        setup_path_list(&locations.effective_library_dirs),
+        locations
+            .onnxruntime_library
+            .as_deref()
+            .map_or_else(|| "not found".to_owned(), |path| path.display().to_string()),
+        locations
+            .openvino_library
+            .as_deref()
+            .map_or_else(|| "not found".to_owned(), |path| path.display().to_string()),
+        locations
+            .openvino_plugins
+            .as_deref()
+            .map_or_else(|| "not found".to_owned(), |path| path.display().to_string())
+    );
+    let Some(selected) = selector.select("Omaspeak runtime", &runtime_help, &items, preferred)?
     else {
         return Ok(None);
     };
@@ -1430,24 +1681,48 @@ fn choose_runtime(
     let items: Vec<_> = devices.iter().map(|(_, item)| item.clone()).collect();
     let Some(selected) = selector.select(
         "Omaspeak device",
-        &format!(
-            "Choose the device for {}. Composite OpenVINO device strings remain available through `omaspeak config set backend.device ...`.",
-            runtime_name(runtime)
-        ),
+        &format!("Choose the device for {}.", runtime_name(runtime)),
         &items,
         preferred,
     )?
     else {
         return Ok(None);
     };
-    Ok(Some((runtime, devices[selected].0.into())))
+    let device = devices[selected].0.to_owned();
+    let loadable = locations.runtime_loadable.get(runtime_name(runtime)) == Some(&true);
+    let library_dir = if loadable {
+        None
+    } else {
+        let directory_help = if runtime == Runtime::Openvino {
+            "Enter an absolute OpenVINO installation directory containing libopenvino_c and plugins.xml. Leave empty to use a runtime already available through configured, package, or system paths."
+        } else {
+            "Enter an absolute directory containing libonnxruntime plus the selected provider. Leave empty to use a runtime already available through configured, package, or system paths."
+        };
+        let Some(value) = selector.input("Native runtime directory", directory_help)? else {
+            return Ok(None);
+        };
+        (!value.is_empty()).then(|| PathBuf::from(value))
+    };
+    Ok(Some((runtime, device, library_dir)))
+}
+
+fn setup_path_list(paths: &[PathBuf]) -> String {
+    if paths.is_empty() {
+        "none".to_owned()
+    } else {
+        paths
+            .iter()
+            .map(|path| path.display().to_string())
+            .collect::<Vec<_>>()
+            .join(":")
+    }
 }
 
 fn runtime_item(label: &str, detail: &str, available: bool, remediation: &str) -> MenuItem {
     if available {
-        MenuItem::available(label, format!("Available · {detail}"))
+        MenuItem::available(label, format!("Detected · {detail}"))
     } else {
-        MenuItem::unavailable(label, format!("Unavailable · {detail}; {remediation}"))
+        MenuItem::available(label, format!("Needs setup · {detail}; {remediation}"))
     }
 }
 
@@ -1486,22 +1761,249 @@ fn device_items(runtime: Runtime) -> Vec<(&'static str, MenuItem)> {
         .collect()
 }
 
-fn save_runtime(config_path: &Path, runtime: Runtime, device: &str) -> Result<()> {
-    let mut config = app_setup::ensure_config(config_path)?;
+fn save_runtime(
+    config_path: &Path,
+    runtime: Runtime,
+    device: &str,
+    library_dir: Option<&Path>,
+) -> Result<()> {
+    save_runtime_with(
+        config_path,
+        runtime,
+        device,
+        library_dir,
+        validate_runtime_configuration,
+    )
+}
+
+fn save_runtime_with(
+    config_path: &Path,
+    runtime: Runtime,
+    device: &str,
+    library_dir: Option<&Path>,
+    validate: impl FnOnce(&Config, &Path, bool) -> Result<()>,
+) -> Result<()> {
+    let config = runtime_configuration_candidate(config_path, runtime, device, library_dir)?;
+    validate(&config, config_path, library_dir.is_some())?;
+    config.save(config_path)
+}
+
+fn runtime_configuration_candidate(
+    config_path: &Path,
+    runtime: Runtime,
+    device: &str,
+    library_dir: Option<&Path>,
+) -> Result<Config> {
+    let mut config = Config::load(config_path)?;
     let runtime_changed = config.backend.runtime != runtime;
     config.backend.runtime = runtime;
     config.backend.device = device.into();
     if runtime_changed {
-        config.backend.provider_config.clear();
         config.backend.options.clear();
     }
     if runtime != Runtime::Cuda {
         config.backend.device_id = 0;
     }
-    config
-        .backend
-        .validate_capabilities(compiled_capabilities())?;
+    if let Some(directory) = library_dir {
+        apply_runtime_directory(&mut config, config_path, directory)?;
+    }
+    config.backend.validate_shape()?;
+    Ok(config)
+}
+
+fn configure_runtime_directory(config_path: &Path, directory: &Path) -> Result<()> {
+    configure_runtime_directory_with(config_path, directory, validate_runtime_configuration)
+}
+
+fn configure_runtime_directory_with(
+    config_path: &Path,
+    directory: &Path,
+    validate: impl FnOnce(&Config, &Path, bool) -> Result<()>,
+) -> Result<()> {
+    let mut config = Config::load(config_path)?;
+    apply_runtime_directory(&mut config, config_path, directory)?;
+    validate(&config, config_path, true)?;
     config.save(config_path)
+}
+
+fn validate_runtime_configuration(
+    config: &Config,
+    config_path: &Path,
+    explicit_directory: bool,
+) -> Result<()> {
+    if config.backend.runtime == Runtime::Default && !explicit_directory {
+        return Ok(());
+    }
+    let report = omaspeak::runtime::inspect(&config.backend, config_path);
+    validate_runtime_report(config.backend.runtime, &report)
+}
+
+fn validate_runtime_report(
+    runtime: Runtime,
+    report: &omaspeak::runtime::LibraryPathReport,
+) -> Result<()> {
+    let name = runtime_name(runtime);
+    if report.runtime_loadable.get(name) != Some(&true) {
+        let detail = report
+            .runtime_probe_errors
+            .get(name)
+            .cloned()
+            .or_else(|| report.remediation(runtime))
+            .unwrap_or_else(|| "runtime probe failed".into());
+        bail!("{name} runtime validation failed; configuration was not changed: {detail}");
+    }
+    if report.runtime_device_accessible.get(name) == Some(&false) {
+        let detail = report
+            .device_probe_errors
+            .get(name)
+            .cloned()
+            .unwrap_or_else(|| "selected device is not accessible".into());
+        bail!("{name} device validation failed; configuration was not changed: {detail}");
+    }
+    Ok(())
+}
+
+fn apply_runtime_directory(
+    config: &mut Config,
+    config_path: &Path,
+    directory: &Path,
+) -> Result<()> {
+    let base = config_path.parent().unwrap_or_else(|| Path::new("."));
+    let directory = if directory.is_absolute() {
+        directory.to_owned()
+    } else {
+        base.join(directory)
+    };
+    let directory = directory
+        .canonicalize()
+        .with_context(|| format!("resolve native runtime directory {}", directory.display()))?;
+    if !directory.is_dir() {
+        bail!(
+            "native runtime path is not a directory: {}",
+            directory.display()
+        );
+    }
+    let mut candidates = vec![
+        directory.clone(),
+        directory.join("lib"),
+        directory.join("lib64"),
+        directory.join("runtime/lib/intel64"),
+        directory.join("runtime/lib/intel64/Release"),
+    ];
+    candidates = candidates
+        .into_iter()
+        .filter(|path| path.is_dir())
+        .filter_map(|path| path.canonicalize().ok())
+        .fold(Vec::new(), |mut paths, path| {
+            if !paths.contains(&path) {
+                paths.push(path);
+            }
+            paths
+        });
+    if config.backend.runtime == Runtime::Openvino {
+        config.backend.openvino_library = Some(find_runtime_file(
+            &candidates,
+            &directory,
+            "libopenvino_c.so",
+        )?);
+        config.backend.openvino_plugins = Some(find_openvino_plugins(&candidates, &directory)?);
+        config.backend.provider_library = None;
+    } else {
+        config.backend.onnxruntime_library = Some(find_runtime_file(
+            &candidates,
+            &directory,
+            "libonnxruntime.so",
+        )?);
+        config.backend.provider_library = match config.backend.runtime {
+            Runtime::Default => None,
+            Runtime::Cuda => Some(find_runtime_file(
+                &candidates,
+                &directory,
+                "libonnxruntime_providers_cuda.so",
+            )?),
+            Runtime::Openvino => unreachable!(),
+        };
+    }
+    let mut selected_parents = [
+        config.backend.onnxruntime_library.as_ref(),
+        config.backend.provider_library.as_ref(),
+        config.backend.openvino_library.as_ref(),
+        config.backend.openvino_plugins.as_ref(),
+    ]
+    .into_iter()
+    .flatten()
+    .filter_map(|path| path.parent().map(Path::to_owned))
+    .collect::<Vec<_>>();
+    selected_parents.extend(
+        candidates
+            .into_iter()
+            .filter(|directory| directory_contains_shared_libraries(directory)),
+    );
+    let mut library_dirs = Vec::new();
+    for directory in selected_parents {
+        if !library_dirs.contains(&directory) {
+            library_dirs.push(directory);
+        }
+    }
+    config.backend.library_dirs = library_dirs;
+    Ok(())
+}
+
+fn find_openvino_plugins(candidates: &[PathBuf], root: &Path) -> Result<PathBuf> {
+    candidates
+        .iter()
+        .flat_map(|directory| {
+            [
+                directory.join("plugins.xml"),
+                directory.join("openvino/plugins.xml"),
+            ]
+        })
+        .find(|path| path.is_file())
+        .with_context(|| format!("plugins.xml was not found below {}", root.display()))?
+        .canonicalize()
+        .with_context(|| format!("resolve OpenVINO plugins.xml below {}", root.display()))
+}
+
+fn find_runtime_file(candidates: &[PathBuf], root: &Path, name: &str) -> Result<PathBuf> {
+    for directory in candidates {
+        let direct = directory.join(name);
+        if direct.is_file() {
+            return direct
+                .canonicalize()
+                .with_context(|| format!("resolve native library {}", direct.display()));
+        }
+    }
+    let prefix = format!("{name}.");
+    let mut matches = candidates
+        .iter()
+        .flat_map(|directory| fs::read_dir(directory).into_iter().flatten().flatten())
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.is_file()
+                && path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.starts_with(&prefix))
+        })
+        .collect::<Vec<_>>();
+    matches.sort();
+    matches
+        .pop()
+        .with_context(|| format!("{name} was not found below {}", root.display()))?
+        .canonicalize()
+        .with_context(|| format!("resolve {name} below {}", root.display()))
+}
+
+fn directory_contains_shared_libraries(directory: &Path) -> bool {
+    fs::read_dir(directory).is_ok_and(|entries| {
+        entries.flatten().any(|entry| {
+            entry.path().is_file()
+                && entry
+                    .file_name()
+                    .to_str()
+                    .is_some_and(|name| name.contains(".so"))
+        })
+    })
 }
 
 fn runtime_name(runtime: Runtime) -> &'static str {
@@ -1532,13 +2034,28 @@ fn guided_model(
     };
     let spec = operations.resolve(&id)?;
     let installed = operations.verify(paths, spec).is_ok();
+    let Some(voice) = choose_voice(config_path, paths, spec, installed, selector)? else {
+        println!("Model setup cancelled.");
+        return Ok(None);
+    };
+    if !confirm_model_license(spec, installed, selector)? {
+        println!("Model setup cancelled; the model license was not accepted.");
+        return Ok(None);
+    }
     let directory = if installed {
         app_setup::model::model_directory(paths, spec)
     } else {
-        operations.install(paths, spec, None, ProgressFormat::Human)?
+        operations.install(
+            paths,
+            spec,
+            None,
+            ProgressFormat::Human,
+            spec.requires_acceptance.then_some(spec.license),
+        )?
     };
     let mut config = app_setup::ensure_config(config_path)?;
     spec.activate(&mut config);
+    config.model.voice = voice.id;
     config.save(config_path)?;
     println!(
         "Active model: {} ({})",
@@ -1551,6 +2068,77 @@ fn guided_model(
     );
     println!("Model directory: {}", directory.display());
     Ok(Some(id))
+}
+
+fn confirm_model_license(
+    spec: &omaspeak::catalog::ModelSpec,
+    installed: bool,
+    selector: &mut impl SetupSelector,
+) -> Result<bool> {
+    if installed || !spec.requires_acceptance {
+        return Ok(true);
+    }
+    let items = [
+        MenuItem::available(
+            format!("Accept {} and continue", spec.license),
+            "I have reviewed the model license and accept its use restrictions and distribution terms.",
+        ),
+        MenuItem::available("Cancel", "Do not download or install this model."),
+    ];
+    Ok(selector.select(
+        "Model license",
+        &format!(
+            "{} is licensed under {}. Review the full terms at {}. Omaspeak stores the exact license and this acceptance beside the model.",
+            spec.name, spec.license, spec.license_url
+        ),
+        &items,
+        1,
+    )? == Some(0))
+}
+
+fn choose_voice(
+    config_path: &Path,
+    paths: &AppPaths,
+    spec: &omaspeak::catalog::ModelSpec,
+    installed: bool,
+    selector: &mut impl SetupSelector,
+) -> Result<Option<omaspeak::voices::Voice>> {
+    let current = Config::load(config_path)?;
+    let mut candidate = current.clone();
+    spec.activate(&mut candidate);
+    let voices = if installed {
+        omaspeak::voices::installed(&candidate, paths)?
+    } else {
+        omaspeak::voices::from_catalog(spec)
+    };
+    if voices.is_empty() {
+        bail!("model {} does not expose any voices", spec.id);
+    }
+    let preferred_id = if current.model.name == spec.name {
+        current.model.voice
+    } else {
+        voices[0].id
+    };
+    let preferred = voices
+        .iter()
+        .position(|voice| voice.id == preferred_id)
+        .unwrap_or_default();
+    let items = voices
+        .iter()
+        .map(|voice| {
+            MenuItem::available(
+                &voice.name,
+                format!("Speaker ID {} for {}", voice.id, spec.name),
+            )
+        })
+        .collect::<Vec<_>>();
+    let selected = selector.select(
+        "Omaspeak voice",
+        "Choose the default speaker. `omaspeak say --voice ID` can override it per request.",
+        &items,
+        preferred,
+    )?;
+    Ok(selected.map(|index| voices[index].clone()))
 }
 
 fn choose_model(
@@ -1566,17 +2154,27 @@ fn choose_model(
         .iter()
         .map(|model| {
             let installed = operations.verify(paths, model).is_ok();
-            let exact_npu = runtime.is_some_and(|(runtime, device)| {
-                runtime == Runtime::Openvino && device.eq_ignore_ascii_case("npu")
+            let runtime_compatible = runtime.is_none_or(|(runtime, device)| {
+                runtime != Runtime::Openvino
+                    || (model.openvino_capable
+                        && (!device.eq_ignore_ascii_case("npu") || model.npu_capable))
             });
-            let compatible = !exact_npu || model.npu_capable;
+            let selectable = installed || model.downloadable;
             let active = model.id == config.model.name;
             let status = if active && installed {
                 "● active"
+            } else if active && !model.downloadable {
+                "● active · user-supplied archive required"
+            } else if active && model.requires_acceptance {
+                "● active · license acceptance required"
             } else if active {
                 "● active · download required"
             } else if installed {
                 "○ installed"
+            } else if !model.downloadable {
+                "· user-supplied only"
+            } else if model.requires_acceptance {
+                "· license acceptance required"
             } else {
                 "· download"
             };
@@ -1591,20 +2189,32 @@ fn choose_model(
             } else {
                 ""
             };
+            let license = if model.requires_acceptance {
+                format!(" · {} acceptance required", model.license)
+            } else if !model.downloadable {
+                format!(" · {}", model.license)
+            } else {
+                String::new()
+            };
             let detail = format!(
-                "{} · {} / {} · ~{} MiB download{}",
+                "{} · {} / {} · ~{} MiB{}{}",
                 model.description,
                 model.backend,
                 model.family,
                 bytes.div_ceil(1024 * 1024),
+                license,
                 npu
             );
-            if compatible {
+            if runtime_compatible && selectable {
                 MenuItem::available(format!("{}  {status}", model.id), detail)
             } else {
                 MenuItem::unavailable(
                     format!("{}  {status}", model.id),
-                    format!("Incompatible with selected NPU · {detail}"),
+                    if !selectable {
+                        format!("Use `omaspeak setup model --download {} --archive PATH` with a model archive you are licensed to use · {detail}", model.id)
+                    } else {
+                        format!("Incompatible with selected OpenVINO device · {detail}")
+                    },
                 )
             }
         })
@@ -1615,7 +2225,7 @@ fn choose_model(
         .unwrap_or_default();
     let Some(selected) = selector.select(
         "Omaspeak model",
-        "Choose a catalog model. Missing assets will download after you select it.",
+        "Choose a catalog model. Downloads begin only after any required license acceptance.",
         &items,
         preferred,
     )?
@@ -1631,20 +2241,104 @@ fn setup_all(
     paths: &AppPaths,
     operations: &impl ModelSetupOperations,
     model: &str,
+    voice: Option<i32>,
     archive: Option<&Path>,
+    accepted_license: Option<&str>,
     progress_format: ProgressFormat,
     install_launcher: impl FnOnce(&AppPaths) -> Result<PathBuf>,
     service_is_active: impl FnOnce() -> bool,
     reload_service: impl FnOnce(bool) -> Result<bool>,
 ) -> Result<()> {
-    let service_was_active = service_is_active();
+    let config = Config::load(config_path)?;
+    validate_runtime_configuration(&config, config_path, false)?;
+    setup_all_with_config(
+        config,
+        config_path,
+        paths,
+        operations,
+        model,
+        voice,
+        archive,
+        accepted_license,
+        progress_format,
+        install_launcher,
+        service_is_active,
+        reload_service,
+        |config, paths| app_setup::print_checks(config, paths, false),
+        app_setup::print_checks_event,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn setup_all_with_config(
+    mut config: Config,
+    config_path: &Path,
+    paths: &AppPaths,
+    operations: &impl ModelSetupOperations,
+    model: &str,
+    voice: Option<i32>,
+    archive: Option<&Path>,
+    accepted_license: Option<&str>,
+    progress_format: ProgressFormat,
+    install_launcher: impl FnOnce(&AppPaths) -> Result<PathBuf>,
+    service_is_active: impl FnOnce() -> bool,
+    reload_service: impl FnOnce(bool) -> Result<bool>,
+    check_human: impl FnOnce(&Path, &AppPaths) -> Result<()>,
+    check_json: impl FnOnce(&Path, &AppPaths) -> Result<()>,
+) -> Result<()> {
     let spec = operations.resolve(model)?;
-    let mut config = app_setup::ensure_config(config_path)?;
-    let directory = operations.install(paths, spec, archive, progress_format)?;
-    spec.activate(&mut config);
-    config.save(config_path)?;
-    let launcher = install_launcher(paths)?;
-    let service_restarted = reload_service(service_was_active)?;
+    if let Some(voice) = voice
+        && !spec.voices.iter().any(|candidate| candidate.id == voice)
+    {
+        bail!("voice {voice} is unavailable for model {}", spec.id);
+    }
+    let original = config_snapshot(config_path)?;
+    let result = (|| {
+        let service_was_active = service_is_active();
+        let directory =
+            operations.install(paths, spec, archive, progress_format, accepted_license)?;
+        spec.activate(&mut config);
+        if let Some(voice) = voice {
+            config.model.voice = voice;
+        }
+        config.save(config_path)?;
+        let launcher = install_launcher(paths)?;
+        match progress_format {
+            ProgressFormat::Human => check_human(config_path, paths)?,
+            ProgressFormat::Json => check_json(config_path, paths)?,
+        }
+        let service_restarted = reload_service(service_was_active)?;
+        print_setup_complete(
+            &directory,
+            config_path,
+            paths,
+            &launcher,
+            service_was_active,
+            service_restarted,
+            progress_format,
+        )
+    })();
+    if let Err(error) = result {
+        if let Err(restore_error) = restore_config_snapshot(config_path, original.as_deref()) {
+            return Err(error.context(format!(
+                "setup also failed to restore the prior config: {restore_error:#}"
+            )));
+        }
+        return Err(error);
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn print_setup_complete(
+    directory: &Path,
+    config_path: &Path,
+    paths: &AppPaths,
+    launcher: &Path,
+    service_was_active: bool,
+    service_restarted: bool,
+    progress_format: ProgressFormat,
+) -> Result<()> {
     let service = app_setup::systemd::service_path(paths);
     let service_installed = service.is_file();
     match progress_format {
@@ -1663,7 +2357,7 @@ fn setup_all(
                 launcher.display(),
                 service_detail,
             );
-            app_setup::print_checks(config_path, paths, false)
+            Ok(())
         }
         ProgressFormat::Json => {
             println!(
@@ -1684,9 +2378,41 @@ fn setup_all(
                     },
                 }))?
             );
-            app_setup::print_checks_event(config_path, paths)
+            Ok(())
         }
     }
+}
+
+fn config_snapshot(path: &Path) -> Result<Option<Vec<u8>>> {
+    match fs::read(path) {
+        Ok(bytes) => Ok(Some(bytes)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => {
+            Err(error).with_context(|| format!("read config snapshot {}", path.display()))
+        }
+    }
+}
+
+fn restore_config_snapshot(path: &Path, bytes: Option<&[u8]>) -> Result<()> {
+    let temporary = path.with_extension("toml.tmp");
+    match bytes {
+        Some(bytes) => {
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            fs::write(&temporary, bytes)?;
+            fs::rename(&temporary, path)?;
+        }
+        None => {
+            if path.exists() {
+                fs::remove_file(path)?;
+            }
+            if temporary.exists() {
+                fs::remove_file(temporary)?;
+            }
+        }
+    }
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1700,6 +2426,7 @@ fn setup_model(
     set: Option<String>,
     verify: Option<String>,
     archive: Option<PathBuf>,
+    accepted_license: Option<String>,
     no_activate: bool,
     progress_format: ProgressFormat,
 ) -> Result<()> {
@@ -1736,14 +2463,20 @@ fn setup_model(
         None => {
             print_models_with(paths, operations);
             println!(
-                "Run `omaspeak setup model --download en_US-lessac-medium` to install the default model."
+                "Run `omaspeak setup model --download supertonic-3-int8 --accept-license OpenRAIL-M` to install the default model."
             );
             None
         }
     };
     if let Some(id) = selected {
         let spec = operations.resolve(&id)?;
-        let directory = operations.install(paths, spec, archive.as_deref(), progress_format)?;
+        let directory = operations.install(
+            paths,
+            spec,
+            archive.as_deref(),
+            progress_format,
+            accepted_license.as_deref(),
+        )?;
         if !no_activate {
             let mut config = app_setup::ensure_config(config_path)?;
             spec.activate(&mut config);
@@ -1769,6 +2502,10 @@ fn print_models_with(paths: &AppPaths, operations: &impl ModelSetupOperations) {
     for model in operations.models() {
         let status = if operations.verify(paths, model).is_ok() {
             "installed"
+        } else if !model.downloadable {
+            "user-supplied"
+        } else if model.requires_acceptance {
+            "acceptance-required"
         } else {
             "available"
         };

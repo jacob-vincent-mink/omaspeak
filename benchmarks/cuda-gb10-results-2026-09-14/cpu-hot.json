@@ -1,0 +1,131 @@
+{
+  "backend": {
+    "effective_runtime": "default",
+    "fallback_used": false,
+    "kind": "onnxruntime",
+    "model": "supertonic-3-int8",
+    "placement_evidence": "runtime-loaded ONNX Runtime CPU engine initialized",
+    "placement_verified": true,
+    "requested_device": "cpu",
+    "requested_runtime": "default"
+  },
+  "benchmark": "omaspeak-file-synthesis",
+  "iterations": [
+    {
+      "audio_duration_milliseconds": 3256.712018,
+      "elapsed_milliseconds": 756.8447699999999,
+      "iteration": 1,
+      "output": "/tmp/oma-runtime-delivery-zXvb7Q/acceptance/results/omaspeak-cpu-hot-audio/iteration-0001.wav",
+      "real_time_factor": 0.23216682095960503,
+      "sample_rate": 44100,
+      "samples": 143621,
+      "synthesis_milliseconds": 756.100476
+    },
+    {
+      "audio_duration_milliseconds": 3256.712018,
+      "elapsed_milliseconds": 760.849108,
+      "iteration": 2,
+      "output": "/tmp/oma-runtime-delivery-zXvb7Q/acceptance/results/omaspeak-cpu-hot-audio/iteration-0002.wav",
+      "real_time_factor": 0.23339031323585702,
+      "sample_rate": 44100,
+      "samples": 143621,
+      "synthesis_milliseconds": 760.085038
+    },
+    {
+      "audio_duration_milliseconds": 3256.712018,
+      "elapsed_milliseconds": 761.059605,
+      "iteration": 3,
+      "output": "/tmp/oma-runtime-delivery-zXvb7Q/acceptance/results/omaspeak-cpu-hot-audio/iteration-0003.wav",
+      "real_time_factor": 0.2334055770969922,
+      "sample_rate": 44100,
+      "samples": 143621,
+      "synthesis_milliseconds": 760.1347480000001
+    },
+    {
+      "audio_duration_milliseconds": 3256.712018,
+      "elapsed_milliseconds": 764.775396,
+      "iteration": 4,
+      "output": "/tmp/oma-runtime-delivery-zXvb7Q/acceptance/results/omaspeak-cpu-hot-audio/iteration-0004.wav",
+      "real_time_factor": 0.23459277724813554,
+      "sample_rate": 44100,
+      "samples": 143621,
+      "synthesis_milliseconds": 764.0011169999999
+    },
+    {
+      "audio_duration_milliseconds": 3256.712018,
+      "elapsed_milliseconds": 765.5786340000001,
+      "iteration": 5,
+      "output": "/tmp/oma-runtime-delivery-zXvb7Q/acceptance/results/omaspeak-cpu-hot-audio/iteration-0005.wav",
+      "real_time_factor": 0.23483190615965602,
+      "sample_rate": 44100,
+      "samples": 143621,
+      "synthesis_milliseconds": 764.779891
+    },
+    {
+      "audio_duration_milliseconds": 3256.712018,
+      "elapsed_milliseconds": 760.9190540000001,
+      "iteration": 6,
+      "output": "/tmp/oma-runtime-delivery-zXvb7Q/acceptance/results/omaspeak-cpu-hot-audio/iteration-0006.wav",
+      "real_time_factor": 0.23341396715415688,
+      "sample_rate": 44100,
+      "samples": 143621,
+      "synthesis_milliseconds": 760.162072
+    },
+    {
+      "audio_duration_milliseconds": 3256.712018,
+      "elapsed_milliseconds": 763.981305,
+      "iteration": 7,
+      "output": "/tmp/oma-runtime-delivery-zXvb7Q/acceptance/results/omaspeak-cpu-hot-audio/iteration-0007.wav",
+      "real_time_factor": 0.23434138381958708,
+      "sample_rate": 44100,
+      "samples": 143621,
+      "synthesis_milliseconds": 763.182401
+    },
+    {
+      "audio_duration_milliseconds": 3256.712018,
+      "elapsed_milliseconds": 760.457767,
+      "iteration": 8,
+      "output": "/tmp/oma-runtime-delivery-zXvb7Q/acceptance/results/omaspeak-cpu-hot-audio/iteration-0008.wav",
+      "real_time_factor": 0.2332451367519104,
+      "sample_rate": 44100,
+      "samples": 143621,
+      "synthesis_milliseconds": 759.61224
+    },
+    {
+      "audio_duration_milliseconds": 3256.712018,
+      "elapsed_milliseconds": 760.24826,
+      "iteration": 9,
+      "output": "/tmp/oma-runtime-delivery-zXvb7Q/acceptance/results/omaspeak-cpu-hot-audio/iteration-0009.wav",
+      "real_time_factor": 0.23320653002239145,
+      "sample_rate": 44100,
+      "samples": 143621,
+      "synthesis_milliseconds": 759.4865090000001
+    },
+    {
+      "audio_duration_milliseconds": 3256.712018,
+      "elapsed_milliseconds": 763.429167,
+      "iteration": 10,
+      "output": "/tmp/oma-runtime-delivery-zXvb7Q/acceptance/results/omaspeak-cpu-hot-audio/iteration-0010.wav",
+      "real_time_factor": 0.2341817206387083,
+      "sample_rate": 44100,
+      "samples": 143621,
+      "synthesis_milliseconds": 762.662424
+    }
+  ],
+  "measured_iterations": 10,
+  "model_load_milliseconds": 682,
+  "out_dir": "/tmp/oma-runtime-delivery-zXvb7Q/acceptance/results/omaspeak-cpu-hot-audio",
+  "schema_version": 1,
+  "summary": {
+    "p50_elapsed_milliseconds": 760.9190540000001,
+    "p50_real_time_factor": 0.2334055770969922,
+    "p50_synthesis_milliseconds": 760.1347480000001,
+    "p95_elapsed_milliseconds": 765.5786340000001,
+    "p95_real_time_factor": 0.23483190615965602,
+    "p95_synthesis_milliseconds": 764.779891,
+    "samples": 10
+  },
+  "text": "The quick brown fox jumps over the lazy dog.",
+  "voice": 0,
+  "warmup_iterations": 2
+}

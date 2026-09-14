@@ -1,6 +1,7 @@
 use std::fs::{self, File};
 use std::io::{BufReader, BufWriter, Read, Write};
 use std::path::{Component, Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, bail};
 use bzip2::read::BzDecoder;
@@ -40,12 +41,15 @@ pub fn install(
     spec: &ModelSpec,
     archive_override: Option<&Path>,
     progress: ProgressFormat,
+    accepted_license: Option<&str>,
 ) -> Result<PathBuf> {
     let target = model_directory(paths, spec);
     if verify_directory(&target, spec).is_ok() {
         emit(progress, "already-installed", spec, None, None)?;
         return Ok(target);
     }
+
+    validate_install_authorization(spec, archive_override, accepted_license)?;
 
     fs::create_dir_all(paths.data_dir.join("models"))?;
     fs::create_dir_all(paths.data_dir.join("downloads"))?;
@@ -85,6 +89,7 @@ pub fn install(
                 }
             }
         }
+        install_model_license(&extracted, spec)?;
         verify_directory(&extracted, spec)?;
         Ok(extracted)
     };
@@ -114,10 +119,7 @@ pub fn install(
         return Err(error).context("activate extracted model");
     }
     let activate = || -> Result<()> {
-        fs::write(
-            target.join(".omaspeak-model.json"),
-            serde_json::to_vec_pretty(spec)?,
-        )?;
+        write_install_manifest(&target, spec, archive_override, accepted_license)?;
         verify_directory(&target, spec)
     };
     if let Err(error) = activate() {
@@ -132,6 +134,82 @@ pub fn install(
     let _ = fs::remove_dir_all(&staging);
     emit(progress, "installed", spec, None, None)?;
     Ok(target)
+}
+
+fn validate_install_authorization(
+    spec: &ModelSpec,
+    archive_override: Option<&Path>,
+    accepted_license: Option<&str>,
+) -> Result<()> {
+    if archive_override.is_none() && !spec.downloadable {
+        bail!(
+            "{} is user-supplied only because its model terms are {}; Omaspeak will not download it; supply an archive you have the right to use with --archive",
+            spec.id,
+            spec.license_status
+        );
+    }
+    if spec.requires_acceptance && accepted_license != Some(spec.license) {
+        bail!(
+            "installing {} requires acceptance of {}; review {} and rerun with --accept-license {}",
+            spec.id,
+            spec.license,
+            spec.license_url,
+            spec.license
+        );
+    }
+    Ok(())
+}
+
+fn install_model_license(directory: &Path, spec: &ModelSpec) -> Result<()> {
+    let Some(text) = crate::catalog::model_license_text(spec) else {
+        return Ok(());
+    };
+    validate_relative_file(spec.license_file)?;
+    fs::write(directory.join(spec.license_file), text)
+        .with_context(|| format!("write {} model license", spec.id))?;
+    verify_pinned_file(
+        &directory.join(spec.license_file),
+        text.len() as u64,
+        spec.license_sha256,
+    )
+}
+
+fn write_install_manifest(
+    directory: &Path,
+    spec: &ModelSpec,
+    archive_override: Option<&Path>,
+    accepted_license: Option<&str>,
+) -> Result<()> {
+    let accepted_at = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let acceptance = spec.requires_acceptance.then(|| {
+        serde_json::json!({
+            "license": accepted_license.expect("authorization checked before installation"),
+            "license_url": spec.license_url,
+            "license_file": spec.license_file,
+            "license_sha256": spec.license_sha256,
+            "accepted_at_unix_seconds": accepted_at,
+        })
+    });
+    let manifest = serde_json::json!({
+        "catalog": spec,
+        "provenance": {
+            "source": if archive_override.is_some() { "user-supplied-archive" } else { "catalog-download" },
+            "source_revision": spec.source_revision,
+            "archive_url": spec.archive_url,
+            "archive_sha256": spec.archive_sha256,
+            "supplemental_assets": spec.supplemental_files,
+            "modified": !spec.supplemental_files.is_empty(),
+        },
+        "license_acceptance": acceptance,
+    });
+    fs::write(
+        directory.join(".omaspeak-model.json"),
+        serde_json::to_vec_pretty(&manifest)?,
+    )
+    .context("write model provenance manifest")
 }
 
 fn download_supplemental(
@@ -453,6 +531,14 @@ fn verify_directory(directory: &Path, spec: &ModelSpec) -> Result<()> {
         if sha256_file(&path)? != required.sha256 {
             bail!("model asset checksum mismatch: {}", path.display());
         }
+    }
+    if let Some(text) = crate::catalog::model_license_text(spec) {
+        validate_relative_file(spec.license_file)?;
+        verify_pinned_file(
+            &directory.join(spec.license_file),
+            text.len() as u64,
+            spec.license_sha256,
+        )?;
     }
     Ok(())
 }

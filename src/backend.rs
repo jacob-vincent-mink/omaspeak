@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -39,20 +40,34 @@ pub struct BackendConfig {
     pub threads: u16,
     pub fallback: Fallback,
     pub device_id: u32,
-    pub provider_config: String,
+    /// Application-owned native library directories, searched before the
+    /// process's ambient loader path.
+    pub library_dirs: Vec<PathBuf>,
+    /// Exact ONNX Runtime core library. Relative paths resolve from config.toml.
+    pub onnxruntime_library: Option<PathBuf>,
+    /// Exact external execution-provider library. Relative paths resolve from config.toml.
+    pub provider_library: Option<PathBuf>,
+    /// Exact OpenVINO C API library used by the direct OpenVINO runtime.
+    pub openvino_library: Option<PathBuf>,
+    /// Exact OpenVINO plugins.xml used to register CPU, GPU, and NPU devices.
+    pub openvino_plugins: Option<PathBuf>,
     pub options: BTreeMap<String, String>,
 }
 
 impl Default for BackendConfig {
     fn default() -> Self {
         Self {
-            kind: "sherpa-onnx".into(),
+            kind: "supertonic".into(),
             runtime: Runtime::Default,
             device: "auto".into(),
             threads: 2,
             fallback: Fallback::Error,
             device_id: 0,
-            provider_config: String::new(),
+            library_dirs: Vec::new(),
+            onnxruntime_library: None,
+            provider_library: None,
+            openvino_library: None,
+            openvino_plugins: None,
             options: BTreeMap::new(),
         }
     }
@@ -70,15 +85,6 @@ pub enum BackendError {
     InvalidOptionKey { key: String },
     #[error("backend option {key:?} contains a newline or NUL byte")]
     InvalidOptionValue { key: String },
-    #[error(
-        "backend option SherpaOnnx.SupertonicComponents must be empty, all, or a comma-separated allowlist of duration_predictor, text_encoder, vector_estimator, and vocoder"
-    )]
-    InvalidSupertonicComponents,
-    #[error("backend runtime {runtime:?} is unavailable in this build (requires {capability})")]
-    CapabilityUnavailable {
-        runtime: Runtime,
-        capability: &'static str,
-    },
 }
 
 impl BackendConfig {
@@ -100,53 +106,14 @@ impl BackendConfig {
             if value.contains(['\r', '\n', '\0']) {
                 return Err(BackendError::InvalidOptionValue { key: key.clone() });
             }
-            if key == "SherpaOnnx.SupertonicComponents" && !valid_supertonic_components(value) {
-                return Err(BackendError::InvalidSupertonicComponents);
-            }
         }
         self.canonical_device()?;
         Ok(())
     }
-
-    pub fn validate_capabilities(&self, compiled: &[&str]) -> Result<(), BackendError> {
-        self.validate_shape()?;
-        let required = self.runtime.capability();
-        if compiled.contains(&required) {
-            Ok(())
-        } else {
-            Err(BackendError::CapabilityUnavailable {
-                runtime: self.runtime,
-                capability: required,
-            })
-        }
-    }
 }
 
-fn valid_supertonic_components(value: &str) -> bool {
-    const COMPONENTS: &[&str] = &[
-        "duration_predictor",
-        "text_encoder",
-        "vector_estimator",
-        "vocoder",
-    ];
-    if value.is_empty() || value == "all" {
-        return true;
-    }
-    let selected: Vec<_> = value.split(',').collect();
-    !selected.is_empty()
-        && selected.len() <= COMPONENTS.len()
-        && selected.iter().enumerate().all(|(index, component)| {
-            COMPONENTS.contains(component) && !selected[..index].contains(component)
-        })
-}
-
-pub const fn compiled_capabilities() -> &'static [&'static str] {
-    match (cfg!(feature = "openvino"), cfg!(feature = "cuda")) {
-        (true, true) => &["cpu", "openvino", "cuda"],
-        (true, false) => &["cpu", "openvino"],
-        (false, true) => &["cpu", "cuda"],
-        (false, false) => &["cpu"],
-    }
+pub const fn supported_capabilities() -> &'static [&'static str] {
+    &["cpu", "openvino", "cuda"]
 }
 
 fn valid_option_key(key: &str) -> bool {
@@ -184,21 +151,7 @@ fn canonical_openvino_device(raw: &str) -> Option<String> {
     if matches!(upper.as_str(), "AUTO" | "NPU" | "GPU" | "CPU") {
         return Some(upper.to_ascii_lowercase());
     }
-
-    let (mode, entries) = upper.split_once(':')?;
-    if !matches!(mode, "AUTO" | "HETERO" | "MULTI") {
-        return None;
-    }
-    let devices: Vec<_> = entries.split(',').map(str::trim).collect();
-    let minimum = if mode == "AUTO" { 1 } else { 2 };
-    if devices.len() < minimum
-        || devices
-            .iter()
-            .any(|item| !matches!(*item, "CPU" | "GPU" | "NPU"))
-    {
-        return None;
-    }
-    Some(format!("{mode}:{}", devices.join(",")))
+    None
 }
 
 #[cfg(test)]

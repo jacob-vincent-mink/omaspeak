@@ -9,7 +9,24 @@ fn every_model_references_a_backend() {
                 .any(|backend| backend.kind == model.backend)
         );
         assert_eq!(model.archive_sha256.len(), 64);
+        assert!(!model.license.is_empty());
+        assert!(model.license_url.starts_with("https://"));
+        assert!(!model.license_status.is_empty());
+        if model.requires_acceptance {
+            assert!(model.downloadable);
+            assert!(!model.license_file.is_empty());
+            assert_eq!(model.license_sha256.len(), 64);
+            assert!(model_license_text(model).is_some());
+        }
         assert!(!model.required_files.is_empty());
+        assert!(!model.voices.is_empty());
+        assert_eq!(model.voices[0].id, 0);
+        assert!(
+            model
+                .voices
+                .windows(2)
+                .all(|pair| pair[1].id == pair[0].id + 1)
+        );
         for required in model.required_files {
             assert_eq!(required.sha256.len(), 64);
             assert!(required.size > 0);
@@ -23,16 +40,29 @@ fn every_model_references_a_backend() {
 }
 
 #[test]
+fn catalog_enforces_current_model_license_policy() {
+    for id in ["supertonic-3-int8", "supertonic-3-npu"] {
+        let supertonic = model(id).unwrap();
+        assert!(supertonic.downloadable);
+        assert!(supertonic.requires_acceptance);
+        assert_eq!(supertonic.license, "OpenRAIL-M");
+        assert_eq!(supertonic.source_revision.len(), 40);
+        assert_eq!(supertonic.license_file, "MODEL-LICENSE");
+        assert_eq!(model_license_text(supertonic).unwrap().len(), 15_007);
+    }
+}
+
+#[test]
 fn lookup_and_activation_populate_config() {
     assert!(model("missing").is_none());
-    let spec = model("en_US-lessac-medium").unwrap();
+    let spec = model("supertonic-3-int8").unwrap();
     let mut config = Config::default();
     config.backend.kind = "other".into();
     config.model.directory = "/custom".into();
     config.model.voice = 9;
     spec.activate(&mut config);
-    assert_eq!(config.backend.kind, "sherpa-onnx");
-    assert_eq!(config.model.family, "piper");
+    assert_eq!(config.backend.kind, "supertonic");
+    assert_eq!(config.model.family, "supertonic");
     assert_eq!(config.model.name, spec.name);
     assert!(config.model.directory.is_empty());
     assert_eq!(config.model.voice, 0);
@@ -47,7 +77,7 @@ fn lookup_and_activation_populate_config() {
     );
     assert_eq!(config.model.language, "en");
     assert_eq!(config.model.steps, 5);
-    assert!(config.model.model_file.is_empty());
+    assert_eq!(config.model.voice_style, "voice.bin");
 
     let npu = model("supertonic-3-npu").unwrap();
     assert!(npu.npu_capable);

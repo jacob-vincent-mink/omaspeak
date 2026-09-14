@@ -1,68 +1,58 @@
-# Supertonic OpenVINO hardware benchmark
+# Supertonic runtime hardware benchmark
 
-This harness compares the official Supertonic 3 int8 model using the default
-ONNX Runtime CPU provider and the OpenVINO CPU, GPU, and NPU devices. Each
-backend gets a cold process with one measured synthesis and a separate hot
-process with two warmups followed by ten measured syntheses. OpenVINO CPU runs
-all four graphs; GPU runs only the vector estimator at FP32; NPU runs the
-duration predictor, text encoder, and vocoder. The remaining graphs in each
-mixed lane run on ORT CPU.
+This harness compares one Supertonic model through Omaspeak's shipped runtime
+paths: dynamically loaded ONNX Runtime on CPU and direct OpenVINO on CPU, Intel
+GPU, and Intel NPU. Each lane gets a cold process with one measured synthesis
+and a hot process with two warmups followed by ten measured syntheses. Audio is
+written directly to WAV files; the harness never plays it.
 
-Build against an OpenVINO-enabled shared sherpa-onnx stack, then run:
+Build the ordinary runtime-neutral binary, point the harness at installed
+runtimes, and run it:
 
 ```bash
-SHERPA_ONNX_LIB_DIR=/tmp/oma-native/runtime/lib \
-  CARGO_TARGET_DIR=target-openvino \
-  cargo build --release --locked --features openvino
+cargo build --release --locked
 
+BINARY=target/release/omaspeak \
+ORT_LIBRARY=/path/to/libonnxruntime.so.1.29.0 \
+OPENVINO_LIBRARY=/opt/intel/openvino/runtime/lib/intel64/libopenvino_c.so \
+OPENVINO_PLUGINS=/opt/intel/openvino/runtime/lib/intel64/plugins.xml \
+MODEL_DIR="$HOME/.local/share/omaspeak/models/supertonic-3-npu" \
 benchmarks/openvino-supertonic/run-hardware.sh
 ```
 
-The defaults use ORT 1.29 with Intel OpenVINO 2026.2.1, the version supported
-by that ORT release, plus the required
-[`zero-element tensor patch`](../../native/openvino/patches/onnxruntime-openvino-zero-element-tensors-v1.29.0.patch).
-Stock ORT 1.29 aborts on Supertonic, and upstream sherpa-onnx lacks the
-per-component routing key used by the accurate mixed placements. Follow the
-pinned [`native build recipe`](../../native/openvino/README.md). Override
-`BINARY`, `RUNTIME_LIB`, `OPENVINO_LIB`, `TBB_LIB`, `MODEL_DIR`, `RESULT_ROOT`,
-`WORK_ROOT`, `PROFILE_ROOT`, `NPU_BUSY_PATH`, `VOXTYPE`, `RUN_ID`, `TEXT`, or the
-space-separated `BACKENDS` list when needed. Rendered
-configs, benchmark JSON, process timing, stderr, exit status, hardware metadata,
-NPU busy-time snapshots, profile hashes, Voxtype transcripts, and normalized
-WER go under `results/<run-id>/`.
-Synthesized WAVs, generated provider caches, and raw ORT profiles stay below
-`WORK_ROOT` (under `/tmp` by default) so large artifacts are not added to Git.
-`profile-summary.json` retains provider-event counts, OpenVINO node timings, and
-the size and SHA-256 of every external raw profile.
-`audio-summary.json` retains WAV hashes, format, duration, RMS/peak levels, and
-zero/clipping fractions without copying the WAVs into Git.
+The default model is `supertonic-3-npu` for all lanes so CPU, GPU, and NPU
+process the same weights. It uses the official FP32 vector estimator with the
+other three INT8 graphs. Override `MODEL_NAME`, `MODEL_DIR`, and
+`VECTOR_ESTIMATOR` together to measure another installed model.
 
-Some NPU compiler diagnostics are written to stdout. The byte-for-byte output
-is retained as `*.benchmark.raw.log`; `*.benchmark.json` contains the extracted
-JSON object. Missing output, a nonzero lane exit, invalid JSON, missing WAVs,
-missing OpenVINO profile events, a nonpositive aggregate NPU busy-time delta,
-or nonzero normalized WER causes the harness to exit nonzero. NPU profiling is
-collected on the cold run;
-the hot run omits profiling because this patched ORT stack has shown unstable
-profile teardown on NPU.
+The executable does not contain or install either runtime. `ORT_LIBRARY`
+selects the external ONNX Runtime core for the default CPU lane.
+`OPENVINO_LIBRARY` and `OPENVINO_PLUGINS` select an external OpenVINO install;
+`OPENVINO_LIB` and `TBB_LIB` add its dependency directories to the loader path.
+`RUNTIME_LIB` is retained as the directory default for `ORT_LIBRARY`.
 
-The NPU template supplies the host-specific ORT 1.29 property as inline JSON:
+Override `RESULT_ROOT`, `WORK_ROOT`, `NPU_BUSY_PATH`, `VOXTYPE`, `RUN_ID`,
+`TEXT`, or the space-separated `BACKENDS` list when needed. Rendered configs,
+benchmark JSON, process timing, stderr, exit status, runtime hashes, hardware
+metadata, NPU busy-time snapshots, transcripts, normalized WER, and compact
+audio metrics go under `results/<run-id>/`. WAVs and the OpenVINO compiled-model
+cache stay under `WORK_ROOT` in `/tmp` by default.
 
-```toml
-load_config = '{"NPU":{"NPU_PLATFORM":"5010"}}'
-```
+Every benchmark JSON record must report the requested effective runtime,
+`fallback_used=false`, and `placement_verified=true`. For direct OpenVINO this
+means every compiled graph reported the requested physical device through
+`EXECUTION_DEVICES`. The NPU lane also requires a positive kernel NPU busy-time
+delta. Successful synthesis alone is not accepted as placement proof.
 
-Benchmark JSON always reports `placement_verified=false`. Treat NPU busy-time
-deltas and OpenVINO entries in the ORT profile as separate placement evidence;
-successful synthesis alone is insufficient.
+The harness transcribes every cold WAV with the local Voxtype model and requires
+zero normalized word error for its fixed phrase. Use
+`run-npu-accuracy.sh` for the broader fixed-phrase CPU-versus-NPU check.
 
-`run-npu-accuracy.sh` synthesizes a fixed four-word phrase with incremental NPU
-accuracy settings, transcribes each WAV with the local Voxtype Whisper model,
-and computes normalized WER. It exits zero only when at least one variant has
-zero WER; the normalizer treats `OMA speak` and `Omaspeak` as the same product
-name. This is a narrow intelligibility regression check rather than a general
-speech-quality score.
+The committed reports dated 2026-09-14 record earlier experiments that led to
+the direct OpenVINO implementation and the NPU-specific model. Reports that say
+`sherpa-onnx`, ONNX Runtime OpenVINO EP, or Piper are historical evidence; they
+do not describe the current harness or release architecture.
 
-See [`DELL-XPS-OPENVINO-2026-09-14.md`](DELL-XPS-OPENVINO-2026-09-14.md) for
-the passing four-lane hardware matrix and the failed full-device accuracy
-experiments that determined the generated mixed-placement defaults.
+See
+[`DELL-XPS-DIRECT-OPENVINO-2026-09-14.md`](DELL-XPS-DIRECT-OPENVINO-2026-09-14.md)
+for the passing current four-lane matrix and CPU-versus-NPU accuracy proof.

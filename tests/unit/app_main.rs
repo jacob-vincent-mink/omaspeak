@@ -1,5 +1,5 @@
 use super::*;
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -65,6 +65,14 @@ struct FakeModelOperations {
     installed: bool,
 }
 
+struct MatrixModelOperations {
+    models: &'static [omaspeak::catalog::ModelSpec],
+    installed: &'static [&'static str],
+    install_fails: bool,
+}
+
+struct ErrorSelector;
+
 #[derive(Default)]
 struct ScriptedSelector {
     selections: VecDeque<Option<usize>>,
@@ -93,6 +101,12 @@ impl SetupSelector for ScriptedSelector {
     }
 }
 
+impl SetupSelector for ErrorSelector {
+    fn select(&mut self, _: &str, _: &str, _: &[MenuItem], _: usize) -> Result<Option<usize>> {
+        bail!("injected selection failure")
+    }
+}
+
 impl ModelSetupOperations for FakeModelOperations {
     fn models(&self) -> &'static [omaspeak::catalog::ModelSpec] {
         omaspeak::catalog::models()
@@ -116,7 +130,43 @@ impl ModelSetupOperations for FakeModelOperations {
         spec: &omaspeak::catalog::ModelSpec,
         _: Option<&Path>,
         _: ProgressFormat,
+        _: Option<&str>,
     ) -> Result<PathBuf> {
+        Ok(paths.data_dir.join("models").join(spec.id))
+    }
+}
+
+impl ModelSetupOperations for MatrixModelOperations {
+    fn models(&self) -> &'static [omaspeak::catalog::ModelSpec] {
+        self.models
+    }
+
+    fn resolve(&self, id: &str) -> Result<&'static omaspeak::catalog::ModelSpec> {
+        self.models
+            .iter()
+            .find(|model| model.id == id)
+            .ok_or_else(|| anyhow!("unknown matrix model {id}"))
+    }
+
+    fn verify(&self, _: &AppPaths, spec: &omaspeak::catalog::ModelSpec) -> Result<()> {
+        if self.installed.contains(&spec.id) {
+            Ok(())
+        } else {
+            bail!("not installed")
+        }
+    }
+
+    fn install(
+        &self,
+        paths: &AppPaths,
+        spec: &omaspeak::catalog::ModelSpec,
+        _: Option<&Path>,
+        _: ProgressFormat,
+        _: Option<&str>,
+    ) -> Result<PathBuf> {
+        if self.install_fails {
+            bail!("injected installation failure")
+        }
         Ok(paths.data_dir.join("models").join(spec.id))
     }
 }
@@ -464,14 +514,18 @@ fn config_helpers_cover_supported_values_defaults_and_schema() {
         ("backend.threads", "7"),
         ("backend.fallback", "CPU"),
         ("backend.device_id", "2"),
-        ("backend.provider_config", "provider.json"),
+        ("backend.library_dirs", "/opt/openvino:/opt/cuda"),
+        ("backend.onnxruntime_library", "/opt/ort/libonnxruntime.so"),
+        (
+            "backend.provider_library",
+            "/opt/ort/libonnxruntime_providers_cuda.so",
+        ),
+        ("backend.openvino_library", "/opt/openvino/libopenvino_c.so"),
+        ("backend.openvino_plugins", "/opt/openvino/plugins.xml"),
         ("backend.options.ProfilingFilePrefix", "/tmp/ort-profile"),
-        ("model.family", "vits"),
+        ("model.family", "future-family"),
         ("model.name", "custom-model"),
         ("model.directory", "/models/custom"),
-        ("model.model_file", "model.onnx"),
-        ("model.tokens_file", "tokens.txt"),
-        ("model.data_directory", "data"),
         ("model.duration_predictor", "duration.onnx"),
         ("model.text_encoder", "text.onnx"),
         ("model.vector_estimator", "vector.onnx"),
@@ -482,9 +536,6 @@ fn config_helpers_cover_supported_values_defaults_and_schema() {
         ("model.language", "fr"),
         ("model.steps", "8"),
         ("model.voice", "3"),
-        ("model.noise_scale", "0.4"),
-        ("model.noise_scale_w", "0.6"),
-        ("model.length_scale", "1.2"),
         ("model.options.custom_key", "custom-value"),
         ("audio.device", "speakers"),
         ("audio.volume", "0.5"),
@@ -498,13 +549,16 @@ fn config_helpers_cover_supported_values_defaults_and_schema() {
     assert_eq!(config.backend.fallback, Fallback::Cpu);
     assert_eq!(config.backend.threads, 7);
     assert_eq!(
+        config.backend.library_dirs,
+        [PathBuf::from("/opt/openvino"), PathBuf::from("/opt/cuda")]
+    );
+    assert_eq!(
         config.backend.options.get("ProfilingFilePrefix"),
         Some(&"/tmp/ort-profile".to_string())
     );
     assert_eq!(config.model.voice, 3);
     assert_eq!(config.model.language, "fr");
     assert_eq!(config.model.steps, 8);
-    assert_eq!(config.model.noise_scale, 0.4);
     assert_eq!(config.daemon.queue_capacity, 12);
     assert_eq!(config.audio.volume, 0.5);
     assert!(set_config(&mut config, "unknown", "x").is_err());
@@ -518,6 +572,14 @@ fn config_helpers_cover_supported_values_defaults_and_schema() {
     let description = schema(&paths.config_file, &paths).unwrap();
     assert_eq!(description["app"], "omaspeak");
     assert_eq!(description["schema_version"], 1);
+    let voice = description["keys"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["key"] == "model.voice")
+        .unwrap();
+    assert_eq!(voice["value"], 3);
+    assert!(voice["choices"].is_array());
     assert!(
         description["keys"]
             .as_array()
@@ -551,7 +613,6 @@ fn runtime_config_mutations_reconcile_provider_specific_state() {
     config.backend.runtime = Runtime::Cuda;
     config.backend.device = "gpu".into();
     config.backend.device_id = 1;
-    config.backend.provider_config = "cuda.config".into();
     config
         .backend
         .options
@@ -570,7 +631,6 @@ fn runtime_config_mutations_reconcile_provider_specific_state() {
     assert_eq!(saved.backend.runtime, Runtime::Default);
     assert_eq!(saved.backend.device, "auto");
     assert_eq!(saved.backend.device_id, 0);
-    assert!(saved.backend.provider_config.is_empty());
     assert!(saved.backend.options.is_empty());
 }
 
@@ -612,13 +672,14 @@ fn cli_parser_and_catalog_helpers_cover_command_surface() {
         vec!["omaspeak", "setup"],
         vec!["omaspeak", "setup", "check", "--json"],
         vec!["omaspeak", "setup", "runtime", "--json"],
+        vec!["omaspeak", "setup", "runtime", "--dir", "/opt/oma-sdk"],
         vec!["omaspeak", "setup", "model", "--list"],
         vec![
             "omaspeak",
             "setup",
             "model",
             "--download",
-            "en_US-lessac-medium",
+            "supertonic-3-int8",
             "--no-activate",
             "--progress-format",
             "json",
@@ -658,7 +719,7 @@ fn cli_parser_and_catalog_helpers_cover_command_surface() {
             "model",
             "--json",
             "--download",
-            "en_US-lessac-medium",
+            "supertonic-3-int8",
         ])
         .is_err()
     );
@@ -676,7 +737,7 @@ fn cli_parser_and_catalog_helpers_cover_command_surface() {
         ])
         .is_err()
     );
-    assert!(model_spec("en_US-lessac-medium").is_ok());
+    assert!(model_spec("supertonic-3-int8").is_ok());
     assert!(
         model_spec("missing")
             .unwrap_err()
@@ -754,6 +815,7 @@ fn benchmark_writes_deterministic_outputs_and_reports_timings() {
         out_dir: output,
         warmup: 2,
         iterations: 3,
+        voice: None,
     };
     let engine = FakeEngine {
         fail: false,
@@ -979,6 +1041,166 @@ fn interrupted_daemon_accept_exits_for_graceful_socket_cleanup() {
 }
 
 #[test]
+fn daemon_native_boundaries_are_injected_for_deterministic_error_coverage() {
+    let interrupted = AtomicBool::new(false);
+    let calls = AtomicUsize::new(0);
+    let waits = AtomicUsize::new(0);
+    let accepted = accept_daemon_connection_with(
+        &interrupted,
+        || {
+            if calls.fetch_add(1, Ordering::Relaxed) == 0 {
+                Err(std::io::Error::from(std::io::ErrorKind::WouldBlock))
+            } else {
+                Ok(7)
+            }
+        },
+        || {
+            waits.fetch_add(1, Ordering::Relaxed);
+        },
+    )
+    .unwrap();
+    assert_eq!(accepted, 7);
+    assert_eq!(waits.load(Ordering::Relaxed), 1);
+
+    let error = accept_daemon_connection_with::<()>(
+        &interrupted,
+        || Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied)),
+        || unreachable!(),
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("accept daemon request"));
+    interrupted.store(true, Ordering::Relaxed);
+    assert!(
+        accept_daemon_connection_with::<()>(&interrupted, || unreachable!(), || unreachable!())
+            .unwrap_err()
+            .downcast_ref::<DaemonInterrupted>()
+            .is_some()
+    );
+
+    finish_daemon_with(Ok(()), || Ok(())).unwrap();
+    finish_daemon_with(Ok(()), || bail!("remove failed")).unwrap();
+    assert!(finish_daemon_with(Err(anyhow!("serve failed")), || Ok(())).is_err());
+}
+
+#[test]
+fn daemon_exchange_serializes_requests_and_decodes_responses() {
+    let response = Response {
+        protocol: 1,
+        id: "response".into(),
+        result: ResultPayload::Shutdown,
+    };
+    let output = Arc::new(Mutex::new(Vec::new()));
+    let mut stream = MemoryStream {
+        input: std::io::Cursor::new({
+            let mut bytes = serde_json::to_vec(&response).unwrap();
+            bytes.push(b'\n');
+            bytes
+        }),
+        output: output.clone(),
+        fail_write: false,
+    };
+    let decoded = exchange_request(&mut stream, &request(Command::Status)).unwrap();
+    assert!(matches!(decoded.result, ResultPayload::Shutdown));
+    assert!(output.lock().unwrap().ends_with(b"\n"));
+
+    stream.input = std::io::Cursor::new(b"not-json\n".to_vec());
+    assert!(exchange_request(&mut stream, &request(Command::Status)).is_err());
+    stream.fail_write = true;
+    assert!(exchange_request(&mut stream, &request(Command::Status)).is_err());
+}
+
+#[test]
+fn say_request_supports_explicit_text_and_piped_stdin_defaults() {
+    let root = sandbox();
+    let paths = paths(&root);
+    let mut config = Config::default();
+    config.model.voice = 2;
+    let expected_output = root.join("spoken.wav");
+    let received = build_say_request(
+        &config,
+        &paths,
+        SayArgs {
+            text: Some("hello from the client".into()),
+            voice: Some(4),
+            speed: Some(1.25),
+            out: Some(expected_output),
+            no_play: true,
+        },
+        std::io::empty(),
+    )
+    .unwrap();
+    assert_eq!(received.protocol, 1);
+    match received.command {
+        Command::Say {
+            text,
+            speed,
+            voice,
+            output,
+            no_play,
+        } => {
+            assert_eq!(text, "hello from the client");
+            assert_eq!(speed, 1.25);
+            assert_eq!(voice, 4);
+            assert_eq!(
+                output.as_deref(),
+                Some(root.join("spoken.wav").to_str().unwrap())
+            );
+            assert!(no_play);
+        }
+        command => panic!("unexpected command: {command:?}"),
+    }
+
+    let received = build_say_request(
+        &config,
+        &paths,
+        SayArgs {
+            text: None,
+            voice: None,
+            speed: None,
+            out: None,
+            no_play: false,
+        },
+        std::io::Cursor::new("piped text\n"),
+    )
+    .unwrap();
+    match received.command {
+        Command::Say {
+            text,
+            speed,
+            voice,
+            output,
+            no_play,
+        } => {
+            assert_eq!(text, "piped text\n");
+            assert_eq!(speed, 1.0);
+            assert_eq!(voice, 2);
+            assert_eq!(
+                output.as_deref(),
+                Some(paths.state_dir.join("last.wav").to_str().unwrap())
+            );
+            assert!(!no_play);
+        }
+        command => panic!("unexpected command: {command:?}"),
+    }
+
+    assert!(
+        build_say_request(
+            &config,
+            &paths,
+            SayArgs {
+                text: Some("  ".into()),
+                voice: None,
+                speed: None,
+                out: None,
+                no_play: true,
+            },
+            std::io::empty(),
+        )
+        .is_err()
+    );
+}
+
+#[test]
 fn production_engine_adapter_exposes_loaded_backend_metadata() {
     let root = sandbox();
     let paths = paths(&root);
@@ -1082,8 +1304,8 @@ fn offline_socket_paths_cover_local_dispatch_and_safe_errors() {
     Config::default().save(&paths.config_file).unwrap();
     let socket = paths.socket();
 
-    voices(&paths.config_file, false).unwrap();
-    voices(&paths.config_file, true).unwrap();
+    voices(&paths.config_file, &paths, false).unwrap();
+    voices(&paths.config_file, &paths, true).unwrap();
 
     let response = send_or_handle_locally(&socket, request(Command::Status), |request| {
         Ok(Response {
@@ -1133,6 +1355,7 @@ fn model_setup_dispatches_list_verify_set_and_install_actions() {
         None,
         None,
         None,
+        None,
         false,
         ProgressFormat::Human,
     )
@@ -1144,6 +1367,7 @@ fn model_setup_dispatches_list_verify_set_and_install_actions() {
         &installed,
         false,
         true,
+        None,
         None,
         None,
         None,
@@ -1160,7 +1384,8 @@ fn model_setup_dispatches_list_verify_set_and_install_actions() {
         false,
         None,
         None,
-        Some("en_US-lessac-medium".into()),
+        Some("supertonic-3-int8".into()),
+        None,
         None,
         false,
         ProgressFormat::Human,
@@ -1173,7 +1398,8 @@ fn model_setup_dispatches_list_verify_set_and_install_actions() {
         false,
         false,
         None,
-        Some("en_US-lessac-medium".into()),
+        Some("supertonic-3-int8".into()),
+        None,
         None,
         None,
         false,
@@ -1188,10 +1414,11 @@ fn model_setup_dispatches_list_verify_set_and_install_actions() {
         &available,
         false,
         false,
-        Some("en_US-lessac-medium".into()),
+        Some("supertonic-3-int8".into()),
         None,
         None,
         Some(root.join("archive")),
+        None,
         false,
         ProgressFormat::Human,
     )
@@ -1202,7 +1429,8 @@ fn model_setup_dispatches_list_verify_set_and_install_actions() {
         &available,
         false,
         false,
-        Some("en_US-lessac-medium".into()),
+        Some("supertonic-3-int8".into()),
+        None,
         None,
         None,
         None,
@@ -1221,6 +1449,7 @@ fn model_setup_dispatches_list_verify_set_and_install_actions() {
             None,
             Some("missing".into()),
             None,
+            None,
             false,
             ProgressFormat::Human,
         )
@@ -1235,7 +1464,7 @@ fn guided_runtime_preselects_current_values_and_saves_selection() {
     let mut config = Config::default();
     config.backend.device = "cpu".into();
     config.save(&paths.config_file).unwrap();
-    let mut selector = ScriptedSelector::new([Some(0), Some(1)]);
+    let mut selector = ScriptedSelector::new([Some(0), Some(1), Some(0)]);
 
     let selected = guided_runtime(&paths.config_file, &mut selector)
         .unwrap()
@@ -1245,10 +1474,12 @@ fn guided_runtime_preselects_current_values_and_saves_selection() {
     assert_eq!(selector.calls[0].2, 0);
     assert!(selector.calls[0].1[0].enabled);
     assert!(selector.calls[0].1.iter().any(|item| {
-        item.label == "CUDA" && !item.enabled && item.detail.contains("Unavailable")
+        item.label == "CUDA" && item.enabled && item.detail.contains("Needs setup")
     }));
     assert_eq!(selector.calls[1].0, "Omaspeak device");
     assert_eq!(selector.calls[1].2, 1);
+    assert_eq!(selector.calls[2].0, "Apply Omaspeak runtime");
+    assert_eq!(selector.calls[2].1[0].label, "Apply runtime");
     assert_eq!(
         Config::load(&paths.config_file).unwrap().backend.device,
         "cpu"
@@ -1262,19 +1493,94 @@ fn guided_runtime_change_clears_provider_specific_configuration() {
     let mut config = Config::default();
     config.backend.runtime = Runtime::Openvino;
     config.backend.device = "gpu".into();
-    config.backend.provider_config = "openvino.conf".into();
     config
         .backend
         .options
         .insert("device_type".into(), "GPU".into());
     config.save(&paths.config_file).unwrap();
 
-    save_runtime(&paths.config_file, Runtime::Default, "cpu").unwrap();
+    save_runtime(&paths.config_file, Runtime::Default, "cpu", None).unwrap();
     let saved = Config::load(&paths.config_file).unwrap();
     assert_eq!(saved.backend.runtime, Runtime::Default);
     assert_eq!(saved.backend.device, "cpu");
-    assert!(saved.backend.provider_config.is_empty());
     assert!(saved.backend.options.is_empty());
+}
+
+#[test]
+fn runtime_directory_setup_discovers_flat_and_sdk_library_layouts() {
+    let root = sandbox();
+    let paths = paths(&root);
+    let bundle = root.join("native-sdk");
+    let lib = bundle.join("lib");
+    let lib64 = bundle.join("lib64");
+    let vendor = bundle.join("runtime/lib/intel64");
+    let release = vendor.join("Release");
+    for directory in [&lib, &lib64, &vendor, &release] {
+        fs::create_dir_all(directory).unwrap();
+    }
+    fs::write(lib.join("libonnxruntime.so.1.29.0"), b"ort").unwrap();
+    fs::write(release.join("libopenvino_c.so.2600"), b"openvino").unwrap();
+    fs::create_dir_all(vendor.join("openvino")).unwrap();
+    fs::write(vendor.join("openvino/plugins.xml"), b"<ie/>").unwrap();
+    fs::write(vendor.join("libopenvino.so.2600"), b"dependency").unwrap();
+
+    let mut config = Config::default();
+    config.backend.runtime = Runtime::Openvino;
+    config.save(&paths.config_file).unwrap();
+    configure_runtime_directory_with(&paths.config_file, &bundle, |_, _, _| Ok(())).unwrap();
+
+    let configured = Config::load(&paths.config_file).unwrap().backend;
+    assert!(configured.onnxruntime_library.is_none());
+    assert!(configured.provider_library.is_none());
+    assert_eq!(
+        configured.openvino_library.unwrap(),
+        release
+            .join("libopenvino_c.so.2600")
+            .canonicalize()
+            .unwrap()
+    );
+    assert_eq!(
+        configured.openvino_plugins.unwrap(),
+        vendor.join("openvino/plugins.xml").canonicalize().unwrap()
+    );
+    assert!(
+        !configured
+            .library_dirs
+            .contains(&lib64.canonicalize().unwrap())
+    );
+    for directory in [lib, vendor, release] {
+        assert!(
+            configured
+                .library_dirs
+                .contains(&directory.canonicalize().unwrap())
+        );
+    }
+
+    fs::remove_file(bundle.join("runtime/lib/intel64/Release/libopenvino_c.so.2600")).unwrap();
+    assert!(configure_runtime_directory(&paths.config_file, &bundle).is_err());
+}
+
+#[test]
+fn runtime_directory_setup_accepts_cpu_ort() {
+    let root = sandbox();
+    let paths = paths(&root);
+    let bundle = root.join("cpu-runtime");
+    let lib = bundle.join("lib");
+    fs::create_dir_all(&lib).unwrap();
+    let ort = lib.join("libonnxruntime.so.1.29.0");
+    fs::write(&ort, b"ort").unwrap();
+
+    let mut config = Config::default();
+    config.backend.runtime = Runtime::Default;
+    config.save(&paths.config_file).unwrap();
+    configure_runtime_directory_with(&paths.config_file, &bundle, |_, _, _| Ok(())).unwrap();
+
+    let configured = Config::load(&paths.config_file).unwrap().backend;
+    assert_eq!(
+        configured.onnxruntime_library.unwrap(),
+        ort.canonicalize().unwrap()
+    );
+    assert!(configured.provider_library.is_none());
 }
 
 #[test]
@@ -1288,9 +1594,131 @@ fn guided_runtime_rejects_npu_when_active_catalog_model_is_incompatible() {
 
     let error = guided_runtime(&paths.config_file, &mut selector).unwrap_err();
 
-    assert!(error.to_string().contains("not validated for Intel NPU"));
+    assert!(
+        error
+            .to_string()
+            .contains("not compatible with direct OpenVINO")
+    );
     assert!(error.to_string().contains("choose Full setup"));
     assert_eq!(fs::read_to_string(&paths.config_file).unwrap(), original);
+}
+
+#[test]
+fn runtime_validation_failure_never_persists_the_staged_selection() {
+    let root = sandbox();
+    let app_paths = paths(&root);
+    let config = Config::default();
+    config.save(&app_paths.config_file).unwrap();
+    let original = fs::read_to_string(&app_paths.config_file).unwrap();
+
+    let error = save_runtime_with(
+        &app_paths.config_file,
+        Runtime::Cuda,
+        "gpu",
+        None,
+        |staged, path, explicit_directory| {
+            assert_eq!(path, app_paths.config_file);
+            assert_eq!(staged.backend.runtime, Runtime::Cuda);
+            assert_eq!(staged.backend.device, "gpu");
+            assert!(!explicit_directory);
+            bail!("injected ABI probe failure")
+        },
+    )
+    .unwrap_err();
+
+    assert!(error.to_string().contains("injected ABI probe failure"));
+    assert_eq!(
+        fs::read_to_string(&app_paths.config_file).unwrap(),
+        original
+    );
+
+    let new_paths = paths(&sandbox());
+    assert!(
+        save_runtime_with(
+            &new_paths.config_file,
+            Runtime::Cuda,
+            "gpu",
+            None,
+            |_, _, _| bail!("new config probe failure"),
+        )
+        .is_err()
+    );
+    assert!(!new_paths.config_file.exists());
+}
+
+#[test]
+fn guided_runtime_cancel_at_apply_leaves_configuration_untouched() {
+    let root = sandbox();
+    let paths = paths(&root);
+    let mut config = Config::default();
+    config.backend.device = "cpu".into();
+    config.save(&paths.config_file).unwrap();
+    let original = fs::read_to_string(&paths.config_file).unwrap();
+    let mut selector = ScriptedSelector::new([Some(0), Some(0), Some(1)]);
+
+    assert!(
+        guided_runtime(&paths.config_file, &mut selector)
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(selector.calls[2].0, "Apply Omaspeak runtime");
+    assert_eq!(fs::read_to_string(&paths.config_file).unwrap(), original);
+}
+
+fn runtime_report(
+    runtime: Runtime,
+    loadable: bool,
+    device_accessible: Option<bool>,
+) -> omaspeak::runtime::LibraryPathReport {
+    let name = runtime_name(runtime);
+    omaspeak::runtime::LibraryPathReport {
+        configured_library_dirs: Vec::new(),
+        environment_library_dirs: Vec::new(),
+        package_library_dirs: Vec::new(),
+        effective_library_dirs: Vec::new(),
+        missing_library_dirs: Vec::new(),
+        onnxruntime_library: None,
+        provider_library: None,
+        openvino_library: None,
+        openvino_plugins: None,
+        runtime_loadable: BTreeMap::from([(name, loadable)]),
+        runtime_probe_errors: if loadable {
+            BTreeMap::new()
+        } else {
+            BTreeMap::from([(name, "injected ABI failure".into())])
+        },
+        runtime_device_accessible: match device_accessible {
+            Some(accessible) => BTreeMap::from([(name, accessible)]),
+            None => BTreeMap::new(),
+        },
+        device_probe_errors: if device_accessible == Some(false) {
+            BTreeMap::from([(name, "injected device failure".into())])
+        } else {
+            BTreeMap::new()
+        },
+        remediation: Vec::new(),
+    }
+}
+
+#[test]
+fn runtime_report_validation_covers_abi_device_and_success_paths() {
+    let abi = validate_runtime_report(Runtime::Cuda, &runtime_report(Runtime::Cuda, false, None))
+        .unwrap_err();
+    assert!(abi.to_string().contains("injected ABI failure"));
+    assert!(abi.to_string().contains("configuration was not changed"));
+
+    let device = validate_runtime_report(
+        Runtime::Openvino,
+        &runtime_report(Runtime::Openvino, true, Some(false)),
+    )
+    .unwrap_err();
+    assert!(device.to_string().contains("injected device failure"));
+
+    validate_runtime_report(
+        Runtime::Openvino,
+        &runtime_report(Runtime::Openvino, true, Some(true)),
+    )
+    .unwrap();
 }
 
 #[test]
@@ -1302,23 +1730,74 @@ fn guided_model_marks_active_installed_and_downloadable_models() {
     let mut selector = ScriptedSelector::new([Some(0)]);
     let selected =
         choose_model(&paths.config_file, &paths, &installed, None, &mut selector).unwrap();
-    assert_eq!(selected.as_deref(), Some("en_US-lessac-medium"));
+    assert_eq!(selected.as_deref(), Some("supertonic-3-int8"));
     assert!(selector.calls[0].1[0].label.contains("● active"));
-    assert!(selector.calls[0].1[1].label.contains("○ installed"));
     assert!(
-        selector.calls[0].1[2]
+        selector.calls[0].1[1]
             .detail
             .contains("Intel NPU validated")
     );
 
     let available = FakeModelOperations { installed: false };
-    let mut selector = ScriptedSelector::new([Some(1)]);
+    let mut selector = ScriptedSelector::new([Some(0), Some(0), Some(0)]);
     guided_model(&paths.config_file, &paths, &available, &mut selector).unwrap();
-    assert!(selector.calls[0].1[1].label.contains("· download"));
+    assert!(
+        selector.calls[0].1[0]
+            .label
+            .contains("license acceptance required")
+    );
     assert_eq!(
         Config::load(&paths.config_file).unwrap().model.name,
         "supertonic-3-int8"
     );
+    assert_eq!(selector.calls[1].0, "Omaspeak voice");
+    assert_eq!(selector.calls[1].1.len(), 10);
+    assert_eq!(selector.calls[2].0, "Model license");
+    assert!(selector.calls[2].1[0].label.contains("Accept OpenRAIL-M"));
+}
+
+#[test]
+fn model_license_prompt_requires_an_explicit_accept_choice() {
+    let spec = omaspeak::catalog::model("supertonic-3-int8").unwrap();
+    let mut cancelled = ScriptedSelector::new([Some(1)]);
+    assert!(!confirm_model_license(spec, false, &mut cancelled).unwrap());
+    assert!(cancelled.calls[0].1[0].detail.contains("use restrictions"));
+
+    let mut accepted = ScriptedSelector::new([Some(0)]);
+    assert!(confirm_model_license(spec, false, &mut accepted).unwrap());
+    assert!(accepted.calls[0].1[0].label.contains(spec.license));
+}
+
+#[test]
+fn voice_picker_uses_installed_metadata_and_preselects_active_voice() {
+    let root = sandbox();
+    let paths = paths(&root);
+    let spec = omaspeak::catalog::model("supertonic-3-int8").unwrap();
+    let mut config = Config::default();
+    spec.activate(&mut config);
+    config.model.voice = 1;
+    config.save(&paths.config_file).unwrap();
+    let directory = config.model_directory(&paths);
+    fs::create_dir_all(&directory).unwrap();
+    let dimensions = [2_i64, 1, 1, 2, 1, 1];
+    fs::write(
+        directory.join("voice.bin"),
+        dimensions
+            .into_iter()
+            .flat_map(i64::to_le_bytes)
+            .collect::<Vec<_>>(),
+    )
+    .unwrap();
+    let mut selector = ScriptedSelector::new([Some(0)]);
+
+    let selected = choose_voice(&paths.config_file, &paths, spec, true, &mut selector)
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(selected.id, 0);
+    assert_eq!(selector.calls[0].0, "Omaspeak voice");
+    assert_eq!(selector.calls[0].1.len(), 2);
+    assert_eq!(selector.calls[0].2, 1);
 }
 
 #[test]
@@ -1330,7 +1809,7 @@ fn model_only_flow_constrains_catalog_for_active_npu_runtime() {
     config.backend.device = "NPU".into();
     config.model.name = "supertonic-3-npu".into();
     config.save(&paths.config_file).unwrap();
-    let mut selector = ScriptedSelector::new([Some(2)]);
+    let mut selector = ScriptedSelector::new([Some(1)]);
     let selected = choose_model(
         &paths.config_file,
         &paths,
@@ -1342,9 +1821,8 @@ fn model_only_flow_constrains_catalog_for_active_npu_runtime() {
 
     assert_eq!(selected.as_deref(), Some("supertonic-3-npu"));
     assert!(!selector.calls[0].1[0].enabled);
-    assert!(!selector.calls[0].1[1].enabled);
-    assert!(selector.calls[0].1[2].enabled);
-    assert_eq!(selector.calls[0].2, 2);
+    assert!(selector.calls[0].1[1].enabled);
+    assert_eq!(selector.calls[0].2, 1);
     assert!(selector.calls[0].1[0].detail.contains("Incompatible"));
 }
 
@@ -1352,7 +1830,8 @@ fn model_only_flow_constrains_catalog_for_active_npu_runtime() {
 fn full_setup_confirmation_cancel_leaves_configuration_untouched() {
     let root = sandbox();
     let paths = paths(&root);
-    let mut selector = ScriptedSelector::new([Some(0), Some(0), Some(0), Some(1)]);
+    let mut selector =
+        ScriptedSelector::new([Some(0), Some(0), Some(0), Some(0), Some(0), Some(1)]);
     guided_full_setup(
         &paths.config_file,
         &paths,
@@ -1361,8 +1840,10 @@ fn full_setup_confirmation_cancel_leaves_configuration_untouched() {
     )
     .unwrap();
 
-    assert_eq!(selector.calls[3].0, "Apply Omaspeak setup");
-    assert_eq!(selector.calls[3].1[0].label, "Apply setup");
+    assert_eq!(selector.calls[3].0, "Omaspeak voice");
+    assert_eq!(selector.calls[4].0, "Model license");
+    assert_eq!(selector.calls[5].0, "Apply Omaspeak setup");
+    assert_eq!(selector.calls[5].1[0].label, "Apply setup");
     assert!(!paths.config_file.exists());
 }
 
@@ -1431,6 +1912,11 @@ fn top_level_guide_routes_every_choice_and_rejects_invalid_selection() {
 
 #[test]
 fn runtime_catalog_covers_each_device_matrix_and_back_at_device_picker() {
+    assert_eq!(setup_path_list(&[]), "none");
+    assert_eq!(
+        setup_path_list(&[PathBuf::from("/one"), PathBuf::from("/two")]),
+        "/one:/two"
+    );
     assert_eq!(runtime_name(Runtime::Default), "default");
     assert_eq!(runtime_name(Runtime::Openvino), "openvino");
     assert_eq!(runtime_name(Runtime::Cuda), "cuda");
@@ -1456,7 +1942,7 @@ fn runtime_catalog_covers_each_device_matrix_and_back_at_device_picker() {
         ["auto", "cpu", "gpu", "npu"]
     );
     assert!(runtime_item("x", "y", true, "z").enabled);
-    assert!(!runtime_item("x", "y", false, "z").enabled);
+    assert!(runtime_item("x", "y", false, "z").enabled);
 
     let root = sandbox();
     let paths = paths(&root);
@@ -1469,6 +1955,49 @@ fn runtime_catalog_covers_each_device_matrix_and_back_at_device_picker() {
 }
 
 #[test]
+fn only_engine_loading_commands_require_runtime_path_preparation() {
+    assert!(command_loads_engine(&TopCommand::Daemon));
+    assert!(command_loads_engine(&TopCommand::Say(SayArgs {
+        text: Some("test".into()),
+        voice: None,
+        speed: None,
+        out: None,
+        no_play: true,
+    })));
+    assert!(command_loads_engine(&TopCommand::Setup {
+        command: Some(SetupCommand::Check { json: true }),
+    }));
+    assert!(!command_loads_engine(&TopCommand::Setup {
+        command: Some(SetupCommand::Runtime {
+            json: true,
+            runtime: None,
+            device: None,
+            dir: None,
+        }),
+    }));
+    assert!(!command_loads_engine(&TopCommand::Config {
+        command: ConfigCommand::Get {
+            key: None,
+            json: true,
+        },
+    }));
+    assert!(!command_loads_engine(&TopCommand::Config {
+        command: ConfigCommand::Set {
+            key: "audio.volume".into(),
+            value: "0.8".into(),
+        },
+    }));
+    assert!(!command_loads_engine(&TopCommand::Setup {
+        command: Some(SetupCommand::All {
+            model: "supertonic-3-int8".into(),
+            archive: None,
+            accept_license: None,
+            progress_format: ProgressFormat::Human,
+        }),
+    }));
+}
+
+#[test]
 fn confirmed_full_setup_applies_runtime_model_and_launcher_but_leaves_service_untouched() {
     use std::cell::Cell;
 
@@ -1478,11 +2007,12 @@ fn confirmed_full_setup_applies_runtime_model_and_launcher_but_leaves_service_un
     fs::create_dir_all(service.parent().unwrap()).unwrap();
     fs::write(&service, "existing service").unwrap();
     let reload_called = Cell::new(false);
-    let mut selector = ScriptedSelector::new([Some(0), Some(1), Some(1), Some(0)]);
+    let mut selector =
+        ScriptedSelector::new([Some(0), Some(1), Some(0), Some(1), Some(0), Some(0)]);
     let result = guided_full_setup_with(
         &paths.config_file,
         &paths,
-        &FakeModelOperations { installed: true },
+        &FakeModelOperations { installed: false },
         &mut selector,
         |paths| {
             let path = paths.data_dir.join("applications/omaspeak.desktop");
@@ -1497,13 +2027,10 @@ fn confirmed_full_setup_applies_runtime_model_and_launcher_but_leaves_service_un
             Ok(true)
         },
     );
-    // Fake model operations do not install bytes, so the final health check
-    // fails after all intended mutations have been exercised.
+    // Fake model operations do not install bytes, so the pre-restart health
+    // check fails and the transaction restores the absent config.
     assert!(result.is_err());
-    let config = Config::load(&paths.config_file).unwrap();
-    assert_eq!(config.backend.runtime, Runtime::Default);
-    assert_eq!(config.backend.device, "cpu");
-    assert_eq!(config.model.name, "supertonic-3-int8");
+    assert!(!paths.config_file.exists());
     assert!(
         paths
             .data_dir
@@ -1511,7 +2038,41 @@ fn confirmed_full_setup_applies_runtime_model_and_launcher_but_leaves_service_un
             .is_file()
     );
     assert_eq!(fs::read_to_string(service).unwrap(), "existing service");
-    assert!(reload_called.get());
+    assert!(!reload_called.get());
+}
+
+#[test]
+fn guided_full_validates_runtime_before_model_launcher_or_service_callbacks() {
+    let root = sandbox();
+    let paths = paths(&root);
+    let original = b"# preserve exact config bytes\n";
+    fs::create_dir_all(paths.config_file.parent().unwrap()).unwrap();
+    fs::write(&paths.config_file, original).unwrap();
+    let mut selector = ScriptedSelector::new([Some(0), Some(1)]);
+
+    let error = guided_full_setup_with_validator(
+        &paths.config_file,
+        &paths,
+        &FakeModelOperations { installed: true },
+        &mut selector,
+        |candidate, path, explicit_directory| {
+            assert_eq!(candidate.backend.runtime, Runtime::Default);
+            assert_eq!(candidate.backend.device, "cpu");
+            assert_eq!(path, paths.config_file);
+            assert!(!explicit_directory);
+            bail!("staged runtime rejected")
+        },
+        |_| unreachable!("launcher must follow runtime validation"),
+        || unreachable!("service probe must follow runtime validation"),
+        |_| unreachable!("restart must follow runtime validation"),
+        |_, _| unreachable!("checks must follow runtime validation"),
+        |_, _| unreachable!("checks must follow runtime validation"),
+    )
+    .unwrap_err();
+
+    assert!(error.to_string().contains("staged runtime rejected"));
+    assert_eq!(selector.calls.len(), 2);
+    assert_eq!(fs::read(&paths.config_file).unwrap(), original);
 }
 
 #[test]
@@ -1560,8 +2121,10 @@ fn setup_all_installs_model_and_launcher_but_leaves_service_untouched() {
             &paths.config_file,
             &paths,
             &operations,
-            "en_US-lessac-medium",
+            "supertonic-3-int8",
             None,
+            None,
+            Some("OpenRAIL-M"),
             format,
             |paths| {
                 let path = paths.data_dir.join("applications/omaspeak.desktop");
@@ -1576,15 +2139,601 @@ fn setup_all_installs_model_and_launcher_but_leaves_service_untouched() {
                 Ok(was_active)
             },
         );
-        // The final health check correctly reports that the fake install did not
-        // place real model bytes, after every setup action has completed.
+        // The health check runs before restart and rolls back the config when
+        // the fake install did not place real model bytes.
         assert!(result.is_err());
-        assert!(paths.config_file.is_file());
-        assert!(reload_called.get());
+        assert!(!paths.config_file.exists());
+        assert!(!reload_called.get());
         if matches!(format, ProgressFormat::Json) {
             assert_eq!(fs::read_to_string(service).unwrap(), "existing service");
         } else {
             assert!(!service.exists());
         }
     }
+}
+
+#[test]
+fn setup_transaction_restores_existing_and_new_configs_on_late_failures() {
+    let operations = FakeModelOperations { installed: true };
+
+    let existing_root = sandbox();
+    let existing = paths(&existing_root);
+    let original = b"# byte-for-byte rollback\n[model]\nvoice = 3\n";
+    fs::create_dir_all(existing.config_file.parent().unwrap()).unwrap();
+    fs::write(&existing.config_file, original).unwrap();
+    let error = setup_all_with_config(
+        Config::load(&existing.config_file).unwrap(),
+        &existing.config_file,
+        &existing,
+        &operations,
+        "supertonic-3-int8",
+        Some(2),
+        None,
+        Some("OpenRAIL-M"),
+        ProgressFormat::Human,
+        |_| bail!("launcher failed after config save"),
+        || false,
+        |_| unreachable!(),
+        |_, _| unreachable!(),
+        |_, _| unreachable!(),
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("launcher failed"));
+    assert_eq!(fs::read(&existing.config_file).unwrap(), original);
+
+    let new = paths(&sandbox());
+    let restarts = std::cell::Cell::new(0);
+    let error = setup_all_with_config(
+        Config::default(),
+        &new.config_file,
+        &new,
+        &operations,
+        "supertonic-3-int8",
+        None,
+        None,
+        Some("OpenRAIL-M"),
+        ProgressFormat::Json,
+        |paths| Ok(paths.data_dir.join("omaspeak.desktop")),
+        || true,
+        |_| {
+            restarts.set(restarts.get() + 1);
+            Ok(true)
+        },
+        |_, _| unreachable!(),
+        |_, _| bail!("final setup check failed"),
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("final setup check failed"));
+    assert_eq!(restarts.get(), 0);
+    assert!(!new.config_file.exists());
+
+    let restart_root = sandbox();
+    let restart = paths(&restart_root);
+    let original = b"# restore after restart failure\n";
+    fs::create_dir_all(restart.config_file.parent().unwrap()).unwrap();
+    fs::write(&restart.config_file, original).unwrap();
+    let error = setup_all_with_config(
+        Config::load(&restart.config_file).unwrap(),
+        &restart.config_file,
+        &restart,
+        &operations,
+        "supertonic-3-int8",
+        None,
+        None,
+        Some("OpenRAIL-M"),
+        ProgressFormat::Human,
+        |paths| Ok(paths.data_dir.join("omaspeak.desktop")),
+        || true,
+        |_| bail!("active service restart failed"),
+        |_, _| Ok(()),
+        |_, _| unreachable!(),
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("restart failed"));
+    assert_eq!(fs::read(&restart.config_file).unwrap(), original);
+}
+
+#[test]
+fn setup_transaction_checks_then_restarts_and_prints_both_formats() {
+    let operations = FakeModelOperations { installed: true };
+    for (format, active) in [(ProgressFormat::Human, false), (ProgressFormat::Json, true)] {
+        let root = sandbox();
+        let paths = paths(&root);
+        if active {
+            let service = app_setup::systemd::service_path(&paths);
+            fs::create_dir_all(service.parent().unwrap()).unwrap();
+            fs::write(service, "existing").unwrap();
+        }
+        let order = std::cell::RefCell::new(Vec::new());
+        setup_all_with_config(
+            Config::default(),
+            &paths.config_file,
+            &paths,
+            &operations,
+            "supertonic-3-int8",
+            Some(1),
+            None,
+            Some("OpenRAIL-M"),
+            format,
+            |paths| Ok(paths.data_dir.join("omaspeak.desktop")),
+            || active,
+            |was_active| {
+                assert_eq!(was_active, active);
+                order.borrow_mut().push("restart");
+                Ok(was_active)
+            },
+            |_, _| {
+                order.borrow_mut().push("check");
+                Ok(())
+            },
+            |_, _| {
+                order.borrow_mut().push("check");
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(&*order.borrow(), &["check", "restart"]);
+        assert_eq!(Config::load(&paths.config_file).unwrap().model.voice, 1);
+    }
+}
+
+#[test]
+fn builtin_model_boundaries_and_offline_command_validation_are_actionable() {
+    let root = sandbox();
+    let paths = paths(&root);
+    let spec = BuiltinModels.resolve("supertonic-3-int8").unwrap();
+    assert_eq!(BuiltinModels.models().len(), 2);
+    assert!(BuiltinModels.verify(&paths, spec).is_err());
+    assert!(
+        BuiltinModels
+            .install(
+                &paths,
+                spec,
+                Some(&root.join("missing-archive.tar.bz2")),
+                ProgressFormat::Human,
+                Some("OpenRAIL-M"),
+            )
+            .is_err()
+    );
+
+    let mut config = Config::default();
+    config.daemon.max_text_bytes = 3;
+    config.save(&paths.config_file).unwrap();
+    assert!(
+        say(
+            &paths.config_file,
+            &paths,
+            SayArgs {
+                text: Some("four".into()),
+                voice: None,
+                speed: None,
+                out: None,
+                no_play: true,
+            },
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("exceeds")
+    );
+    assert!(
+        benchmark(
+            &paths.config_file,
+            &paths,
+            BenchmarkArgs {
+                text: "four".into(),
+                out_dir: root.join("out"),
+                warmup: 0,
+                iterations: 1,
+                voice: None,
+            },
+        )
+        .is_err()
+    );
+    assert!(play(&root.join("missing.wav")).is_err());
+}
+
+#[test]
+fn guided_setup_cancellation_paths_preserve_configuration() {
+    let operations = FakeModelOperations { installed: false };
+    for selections in [
+        vec![Some(0), Some(0), None],
+        vec![Some(0), Some(0), Some(0), None],
+        vec![Some(0), Some(0), Some(0), Some(0), Some(1)],
+    ] {
+        let root = sandbox();
+        let paths = paths(&root);
+        let mut selector = ScriptedSelector::new(selections);
+        guided_full_setup(&paths.config_file, &paths, &operations, &mut selector).unwrap();
+        assert!(!paths.config_file.exists());
+    }
+
+    let root = sandbox();
+    let paths = paths(&root);
+    let mut selector = ScriptedSelector::new([None]);
+    assert!(
+        guided_model(&paths.config_file, &paths, &operations, &mut selector)
+            .unwrap()
+            .is_none()
+    );
+    let mut selector = ScriptedSelector::new([None]);
+    assert!(
+        choose_model(&paths.config_file, &paths, &operations, None, &mut selector)
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[test]
+fn installed_guided_model_and_voice_validation_cover_local_only_paths() {
+    let root = sandbox();
+    let paths = paths(&root);
+    let config = Config::default();
+    let model = config.model_directory(&paths);
+    fs::create_dir_all(&model).unwrap();
+    fs::write(
+        model.join("voice.bin"),
+        [10_i64, 1, 1, 10, 1, 1]
+            .into_iter()
+            .flat_map(i64::to_le_bytes)
+            .collect::<Vec<_>>(),
+    )
+    .unwrap();
+    config.save(&paths.config_file).unwrap();
+    let operations = FakeModelOperations { installed: true };
+    let mut selector = ScriptedSelector::new([Some(0), Some(2)]);
+    assert_eq!(
+        guided_model(&paths.config_file, &paths, &operations, &mut selector)
+            .unwrap()
+            .as_deref(),
+        Some("supertonic-3-int8")
+    );
+    assert_eq!(Config::load(&paths.config_file).unwrap().model.voice, 2);
+
+    let mut empty = *omaspeak::catalog::model("supertonic-3-int8").unwrap();
+    empty.id = "empty-voices";
+    empty.name = "empty-voices";
+    empty.voices = &[];
+    let empty = Box::leak(Box::new(empty));
+    let mut selector = ScriptedSelector::new([]);
+    assert!(choose_voice(&paths.config_file, &paths, empty, false, &mut selector).is_err());
+
+    let error = setup_all(
+        &paths.config_file,
+        &paths,
+        &operations,
+        "supertonic-3-int8",
+        Some(99),
+        None,
+        Some("OpenRAIL-M"),
+        ProgressFormat::Human,
+        |_| unreachable!(),
+        || false,
+        |_| unreachable!(),
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("voice 99"));
+}
+
+#[test]
+fn catalog_status_matrix_and_guided_model_cancellations_use_existing_paths() {
+    let root = sandbox();
+    let paths = paths(&root);
+    let base = *omaspeak::catalog::model("supertonic-3-int8").unwrap();
+    let model = |id, downloadable, requires_acceptance| {
+        let mut model = base;
+        model.id = id;
+        model.name = id;
+        model.downloadable = downloadable;
+        model.requires_acceptance = requires_acceptance;
+        model.npu_capable = false;
+        model
+    };
+    let models = Box::leak(
+        vec![
+            model("active-user", false, false),
+            model("installed", true, false),
+            model("user-only", false, false),
+            model("acceptance", true, true),
+            model("plain-download", true, false),
+        ]
+        .into_boxed_slice(),
+    );
+    let operations = MatrixModelOperations {
+        models,
+        installed: &["installed"],
+        install_fails: false,
+    };
+    let mut config = Config::default();
+    config.model.name = "active-user".into();
+    config.save(&paths.config_file).unwrap();
+
+    let mut selector = ScriptedSelector::new([Some(4)]);
+    assert_eq!(
+        choose_model(&paths.config_file, &paths, &operations, None, &mut selector)
+            .unwrap()
+            .as_deref(),
+        Some("plain-download")
+    );
+    let items = &selector.calls[0].1;
+    assert!(items[0].label.contains("active · user-supplied"));
+    assert!(!items[0].enabled);
+    assert!(items[0].detail.contains("--archive PATH"));
+    assert!(items[1].label.contains("installed"));
+    assert!(items[2].label.contains("user-supplied only"));
+    assert!(items[2].detail.contains("OpenRAIL-M"));
+    assert!(items[3].label.contains("license acceptance required"));
+    assert!(items[4].label.contains("download"));
+    assert!(!items[4].detail.contains("acceptance required"));
+    print_models_with(&paths, &operations);
+
+    config.model.name = "plain-download".into();
+    config.save(&paths.config_file).unwrap();
+    let mut selector = ScriptedSelector::new([Some(4)]);
+    choose_model(&paths.config_file, &paths, &operations, None, &mut selector).unwrap();
+    assert!(
+        selector.calls[0].1[4]
+            .label
+            .contains("active · download required")
+    );
+
+    setup_model(
+        &paths.config_file,
+        &paths,
+        &operations,
+        false,
+        false,
+        None,
+        None,
+        None,
+        None,
+        None,
+        false,
+        ProgressFormat::Human,
+    )
+    .unwrap();
+
+    let mut selector = ScriptedSelector::new([Some(4), None]);
+    assert!(
+        guided_model(&paths.config_file, &paths, &operations, &mut selector)
+            .unwrap()
+            .is_none()
+    );
+    let mut selector = ScriptedSelector::new([Some(3), Some(0), Some(1)]);
+    assert!(
+        guided_model(&paths.config_file, &paths, &operations, &mut selector)
+            .unwrap()
+            .is_none()
+    );
+
+    assert!(guided_setup(&paths.config_file, &paths, &operations, &mut ErrorSelector).is_err());
+    assert!(
+        choose_model(
+            &paths.config_file,
+            &paths,
+            &operations,
+            None,
+            &mut ErrorSelector
+        )
+        .is_err()
+    );
+    assert!(
+        choose_voice(
+            &paths.config_file,
+            &paths,
+            &models[4],
+            false,
+            &mut ErrorSelector
+        )
+        .is_err()
+    );
+
+    let failing = MatrixModelOperations {
+        models,
+        installed: &[],
+        install_fails: true,
+    };
+    let mut selector = ScriptedSelector::new([Some(4), Some(0)]);
+    assert!(guided_model(&paths.config_file, &paths, &failing, &mut selector).is_err());
+    assert!(
+        setup_model(
+            &paths.config_file,
+            &paths,
+            &failing,
+            false,
+            false,
+            Some("plain-download".into()),
+            None,
+            None,
+            None,
+            None,
+            false,
+            ProgressFormat::Human,
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn filesystem_daemon_and_report_branches_need_no_native_runtime() {
+    let root = sandbox();
+    let paths = paths(&root);
+    fs::create_dir_all(paths.config_file.parent().unwrap()).unwrap();
+    let runtime = root.join("runtime");
+    fs::create_dir_all(&runtime).unwrap();
+    fs::write(runtime.join("libonnxruntime.so"), b"fixture").unwrap();
+    fs::write(runtime.join("libonnxruntime_providers_cuda.so"), b"fixture").unwrap();
+
+    let mut config = Config::default();
+    apply_runtime_directory(&mut config, &paths.config_file, Path::new("../runtime")).unwrap();
+    assert_eq!(
+        config.backend.onnxruntime_library.as_deref(),
+        Some(runtime.join("libonnxruntime.so").as_path())
+    );
+    config.backend.runtime = Runtime::Cuda;
+    apply_runtime_directory(&mut config, &paths.config_file, &runtime).unwrap();
+    assert_eq!(
+        config.backend.provider_library.as_deref(),
+        Some(runtime.join("libonnxruntime_providers_cuda.so").as_path())
+    );
+
+    let regular = root.join("not-a-directory");
+    fs::write(&regular, b"file").unwrap();
+    assert!(apply_runtime_directory(&mut config, &paths.config_file, &regular).is_err());
+    let metadata = fs::symlink_metadata(&regular).unwrap();
+    finish_daemon(&regular, &metadata, Ok(())).unwrap();
+    assert!(regular.is_file());
+
+    let engine = FakeEngine {
+        fail: false,
+        runtime: Runtime::Default,
+    };
+    let args = BenchmarkArgs {
+        text: "coverage".into(),
+        out_dir: root.join("bench"),
+        warmup: 0,
+        iterations: 0,
+        voice: None,
+    };
+    let report = benchmark_report(&Config::default(), &engine, &args, Vec::new()).unwrap();
+    assert_eq!(report["backend"]["placement_verified"], true);
+    assert!(
+        report["backend"]["placement_evidence"]
+            .as_str()
+            .unwrap()
+            .contains("CPU engine")
+    );
+
+    let response = handle_request(
+        &engine,
+        &Config::default(),
+        &paths,
+        request(Command::Say {
+            text: "play".into(),
+            speed: 1.0,
+            voice: 0,
+            output: Some(root.join("missing.wav").to_string_lossy().into_owned()),
+            no_play: false,
+        }),
+    );
+    assert!(matches!(response.result, ResultPayload::Error { .. }));
+}
+
+#[test]
+fn noninteractive_runtime_setup_persists_selection_and_rejects_an_invalid_library() {
+    let root = sandbox();
+    let paths = paths(&root);
+    setup(
+        Some(SetupCommand::Runtime {
+            json: false,
+            runtime: Some("default".into()),
+            device: Some("cpu".into()),
+            dir: None,
+        }),
+        &paths.config_file,
+        &paths,
+    )
+    .unwrap();
+
+    let config = Config::load(&paths.config_file).unwrap();
+    assert_eq!(config.backend.runtime, Runtime::Default);
+    assert_eq!(config.backend.device, "cpu");
+
+    let runtime = root.join("runtime-sdk/lib");
+    fs::create_dir_all(&runtime).unwrap();
+    fs::write(runtime.join("libonnxruntime.so.1"), b"fixture").unwrap();
+    let original = fs::read_to_string(&paths.config_file).unwrap();
+    let error = setup(
+        Some(SetupCommand::Runtime {
+            json: false,
+            runtime: None,
+            device: None,
+            dir: Some(root.join("runtime-sdk")),
+        }),
+        &paths.config_file,
+        &paths,
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("runtime validation failed"));
+    assert_eq!(fs::read_to_string(&paths.config_file).unwrap(), original);
+    setup(
+        Some(SetupCommand::Runtime {
+            json: true,
+            runtime: None,
+            device: None,
+            dir: None,
+        }),
+        &paths.config_file,
+        &paths,
+    )
+    .unwrap();
+
+    for json in [false, true] {
+        setup(
+            Some(SetupCommand::Model {
+                list: !json,
+                json,
+                download: None,
+                set: None,
+                verify: None,
+                archive: None,
+                accept_license: None,
+                no_activate: false,
+                progress_format: ProgressFormat::Human,
+            }),
+            &paths.config_file,
+            &paths,
+        )
+        .unwrap();
+    }
+
+    assert!(
+        setup(
+            Some(SetupCommand::Menu {
+                uninstall: false,
+                status: true,
+            }),
+            &paths.config_file,
+            &paths,
+        )
+        .is_err()
+    );
+    setup(
+        Some(SetupCommand::Menu {
+            uninstall: false,
+            status: false,
+        }),
+        &paths.config_file,
+        &paths,
+    )
+    .unwrap();
+    setup(
+        Some(SetupCommand::Menu {
+            uninstall: false,
+            status: true,
+        }),
+        &paths.config_file,
+        &paths,
+    )
+    .unwrap();
+    setup(
+        Some(SetupCommand::Menu {
+            uninstall: true,
+            status: false,
+        }),
+        &paths.config_file,
+        &paths,
+    )
+    .unwrap();
+    assert!(
+        setup(
+            Some(SetupCommand::Systemd {
+                uninstall: false,
+                status: true,
+                no_start: false,
+            }),
+            &paths.config_file,
+            &paths,
+        )
+        .is_err()
+    );
 }

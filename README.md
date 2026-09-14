@@ -1,6 +1,16 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/omaspeak-mark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="assets/omaspeak-mark-on-light.svg">
+    <img alt="Omaspeak: a speaker and sound waves inside the Omarchy frame" src="assets/omaspeak-mark-on-light.svg" width="160">
+  </picture>
+</p>
+
 # Omaspeak
 
-Omaspeak is a local text-to-speech CLI and hot-model daemon written in Rust. sherpa-onnx is the first registered backend and currently supports Piper/VITS and Supertonic models, with model-reported sample rates, WAV output, optional PipeWire/ALSA playback, stdin, JSON status, and config mutation.
+Omaspeak is a local Supertonic text-to-speech CLI and hot-model daemon written
+in Rust, with model-reported sample rates, selectable voices, WAV output,
+optional PipeWire/ALSA playback, stdin, JSON status, and config mutation.
 
 ## Build
 
@@ -9,59 +19,29 @@ cargo build --release
 cargo test
 ```
 
-The default build uses sherpa-onnx's implicit static CPU runtime. An OpenVINO
-build must link to a separately built shared sherpa-onnx stack whose ONNX
-Runtime includes the OpenVINO Execution Provider:
+Omaspeak does not link ONNX Runtime or OpenVINO into the executable. Every
+build supports CPU, OpenVINO, and CUDA. Build the same runtime-neutral
+executable for every deployment:
 
 ```bash
-export SHERPA_ONNX_LIB_DIR=/absolute/path/to/openvino-enabled-sherpa-onnx/lib
-cargo build --release --features openvino
+cargo build --release
 ```
 
-A CUDA build uses the same shared-runtime boundary. Point
-`SHERPA_ONNX_LIB_DIR` at a sherpa-onnx/ONNX Runtime stack built with the CUDA
-Execution Provider and Omaspeak's tracked sherpa patch, then enable `cuda`:
+The normal Linux release archive includes a working CPU default under `lib/`:
+the official ONNX Runtime 1.29.0 CPU library. An unpacked release therefore
+needs only a Supertonic model for CPU inference. OpenVINO setup loads a
+user-supplied OpenVINO runtime directly. CUDA setup points the same executable
+at a user-supplied, ABI-matched ONNX Runtime, CUDA provider plugin, and vendor
+runtime. Omaspeak validates each selected runtime before it creates the TTS
+engine. The release does not bundle acceleration libraries.
 
-```bash
-export SHERPA_ONNX_LIB_DIR=/absolute/path/to/cuda-enabled-sherpa-onnx/lib
-cargo build --release --features cuda
-```
-
-The distributable Linux build enables every runtime in one application binary:
-
-```bash
-export SHERPA_ONNX_LIB_DIR=/absolute/path/to/openvino-and-cuda-runtime/lib
-cargo build --release --all-features
-```
-
-That shared native stack must contain both
-`libonnxruntime_providers_openvino.so` and
-`libonnxruntime_providers_cuda.so`. Runtime selection remains a config choice;
-the binary does not initialize an accelerator until a command loads a model
-with that runtime selected. The relevant provider library, vendor runtime, and
-device driver must be discoverable when the command runs.
-
-Supertonic currently also requires the ORT 1.29 zero-element tensor patch in
-[`native/openvino/patches`](native/openvino/patches).
-Stock ORT 1.29 OpenVINO EP aborts when Supertonic passes a zero-element tensor
-across a provider partition boundary. The pinned, reproducible native build is
-documented in [`native/openvino`](native/openvino/README.md). It also carries
-the sherpa patch for selecting OpenVINO independently for each Supertonic
-component.
-
-[`native/cuda`](native/cuda/README.md) builds the CUDA-only stack on Linux
-x86_64 or aarch64. [`native/unified`](native/unified/README.md) builds the
-x86_64 stack used by release CI and documents what the all-runtime archive
-bundles versus what the host must provide.
-The [GB10 CUDA validation](benchmarks/cuda-gb10-2026-09-14.md) records Piper
-and Supertonic placement, signal quality, and CPU comparisons.
-
-At runtime, make the matching ONNX Runtime, sherpa-onnx, and OpenVINO shared
-libraries discoverable (for example with their setup script or
-`LD_LIBRARY_PATH`). Intel's OpenVINO runtime alone is insufficient: ONNX
-Runtime itself must have been built with the OpenVINO EP. The upstream
-sherpa-onnx shared release is CPU-only, so it can exercise shared linking but
-cannot establish OpenVINO placement.
+The Rust Supertonic frontend handles text, voice styles, diffusion, and audio
+assembly for both ONNX Runtime and direct OpenVINO execution. The direct ONNX
+Runtime CUDA path is proven on an NVIDIA GB10 with provider probing, process
+telemetry, Nsight kernel traces, CPU comparison, and independent ASR. See the
+[GB10 CUDA report](benchmarks/cuda-gb10-2026-09-14.md). The
+[Dell XPS OpenVINO report](benchmarks/openvino-supertonic/DELL-XPS-DIRECT-OPENVINO-2026-09-14.md)
+records direct CPU, iGPU, and NPU execution and accuracy.
 
 ## Setup
 
@@ -80,23 +60,27 @@ loads the new configuration; an inactive service remains inactive. The runtime
 and model flows can also be opened directly:
 
 ```bash
-omaspeak setup runtime   # choose a compiled runtime, then a compatible device
+omaspeak setup runtime   # choose a runtime/device and optionally point at its native bundle
+omaspeak setup runtime --dir /opt/omaspeak-runtime  # scan a flat bundle or SDK root
 omaspeak setup model     # browse catalog metadata and install/activate a model
 ```
 
-The model picker marks the active model, models already installed, and models
-available to download. It includes download sizes, model families, backend
-names, language information, and Intel NPU validation. Unavailable runtimes
-remain visible with their build requirement, and an exact OpenVINO NPU setup
-only offers catalog models validated for that device.
+The model picker marks the active model, models already installed, models that
+need license acceptance, and models that must be supplied by the user. It includes
+download sizes, model families, backend names, license status, language
+information, and Intel NPU validation. OpenVINO and CUDA remain
+selectable even before their external native stack is configured, with setup
+guidance for supplying it. An exact OpenVINO NPU setup only offers catalog
+models validated for that device.
 
 For scripts or redirected input/output, setup remains noninteractive. This
-one-command network install downloads and activates the default
-`en_US-lessac-medium` model, writes the config, installs the desktop launcher
-and then runs the checks. It does not install or start a service:
+one-command network install explicitly accepts the default Supertonic 3
+model's OpenRAIL-M terms, downloads and activates the model, writes the config,
+installs the desktop launcher, and then runs the checks. It does not install or
+start a service:
 
 ```bash
-omaspeak setup all
+omaspeak setup all --accept-license OpenRAIL-M
 ```
 
 If the daemon is already active, `setup all` safely restarts it after the model
@@ -105,30 +89,71 @@ and configuration changes succeed. It never starts an inactive service.
 Useful setup subcommands:
 
 ```bash
-omaspeak setup model --list                 # list catalog models and install status
-omaspeak setup model --download en_US-lessac-medium   # download, verify, and install a model
-omaspeak setup model --download supertonic-3-int8     # multilingual int8 evaluation model
-omaspeak setup model --download supertonic-3-npu      # validated Intel NPU model mix
-omaspeak setup model --verify en_US-lessac-medium     # re-verify an installed model
-omaspeak setup model --download en_US-lessac-medium --archive /path/to/vits-piper-en_US-lessac-medium.tar.bz2
+omaspeak setup model --list                 # catalog models, license status, and install status
+omaspeak setup model --download supertonic-3-int8 --accept-license OpenRAIL-M
+omaspeak setup model --download supertonic-3-npu --accept-license OpenRAIL-M
+omaspeak setup model --verify supertonic-3-int8       # re-verify an installed model
 omaspeak setup check                        # verify config, backend, model, engine, audio, launcher; report optional service
 omaspeak setup systemd                      # explicitly install, enable, and start the systemd user service
-omaspeak setup runtime --json               # machine-readable runtimes, devices, capabilities, and models
+omaspeak setup runtime --json               # runtime paths/loadability, devices, capabilities, and models
+omaspeak setup runtime --dir /path/to/sdk   # configure exact libraries from a flat directory or SDK root
 omaspeak setup systemd --status             # show systemd user service status
 omaspeak setup systemd --uninstall          # remove the systemd user service
 omaspeak setup menu --status                # show desktop launcher status
 omaspeak setup menu --uninstall             # remove the desktop launcher
 ```
 
-`--archive` installs from an already-downloaded pinned archive instead of fetching it; it is still size and SHA256 verified before extraction. A model can also declare checksum-pinned supplemental assets; these are downloaded even with `--archive` unless they are already in Omaspeak's verified download cache. Downloaded archives, supplements, and installed model assets are size + SHA256 verified against the pinned catalog. Installs are atomic: extraction and supplements are prepared in a staging directory, then renamed into place, with the previous model restored on failure.
+`--archive` installs from an already-downloaded pinned archive instead of
+fetching it; it is still size and SHA256 verified before extraction. Supertonic
+catalog installs require `--accept-license OpenRAIL-M`, including installs from
+a local archive, and the guided TUI presents a separate acceptance step before
+any download. The exact pinned license is written as `MODEL-LICENSE` beside the
+weights. `.omaspeak-model.json` records the immutable source revision, archive
+and supplement hashes, whether the source was a catalog download or
+user-supplied archive, and the acceptance time. A model can also declare
+checksum-pinned supplemental assets; these are downloaded even with `--archive`
+unless they are already in Omaspeak's verified download cache. Downloaded
+archives, supplements, and installed model assets are size + SHA256 verified
+against the pinned catalog. Installs are atomic: extraction and supplements are
+prepared in a staging directory, then renamed into place, with the previous
+model restored on failure.
 
-Piper remains the default CPU model. The catalog also pins the official
-Supertonic 3 int8 archive and verifies each of its four ONNX graphs, TTS
+Native libraries can be supplied with the TOML path list
+`backend.library_dirs` or the colon-separated `OMASPEAK_LIBRARY_PATH` overlay.
+For deterministic selection, set `backend.onnxruntime_library` and, for CUDA,
+`backend.provider_library`. Their environment equivalents are
+`OMASPEAK_ONNXRUNTIME_LIBRARY` and `OMASPEAK_PROVIDER_LIBRARY`. Configured exact
+paths take precedence over exact
+environment paths. Directory search order is configured directories, the
+`OMASPEAK_LIBRARY_PATH` overlay, package directories, the ambient loader path,
+then system libraries. This makes the bundled CPU stack the automatic default
+while a configured external CUDA stack wins deterministically. Direct OpenVINO
+libraries use their separately configured paths.
+Relative TOML paths resolve beside the config file; environment overrides must
+be absolute. Omaspeak checks `lib/` beside the executable, the executable's
+directory, and `../lib/omaspeak` for package libraries. Before
+an engine-loading command on Linux, it validates the selected files and their
+dependencies and re-executes once with effective directories prepended to
+`LD_LIBRARY_PATH`. Config and setup discovery commands do not re-exec.
+
+`setup runtime --dir` recognizes libraries directly in the chosen directory
+and common SDK layouts under `lib`, `lib64`, `runtime/lib/intel64`, and
+`runtime/lib/intel64/Release`. It records each directory that contains a
+selected library or sibling shared-library dependencies.
+
+`omaspeak setup runtime --json` reports configured, environment, package, and
+effective paths separately, as well as missing paths and loadability for each
+runtime. An explicit `omaspeak setup systemd` writes only that
+app-owned effective path into the unit; it never copies the caller's ambient
+`LD_LIBRARY_PATH`.
+
+Supertonic 3 int8 is the default model. The catalog pins its official archive
+and verifies each of its four ONNX graphs, TTS
 metadata, Unicode indexer, and voice-style bundle. Installing it activates all
 required filenames automatically:
 
 ```bash
-omaspeak setup model --download supertonic-3-int8
+omaspeak setup model --download supertonic-3-int8 --accept-license OpenRAIL-M
 omaspeak config set model.language en
 omaspeak config set model.steps 5
 ```
@@ -145,23 +170,36 @@ revision, and removes the superseded INT8 vector graph before activating the
 model.
 
 ```bash
-omaspeak setup model --download supertonic-3-npu
+omaspeak setup model --download supertonic-3-npu --accept-license OpenRAIL-M
 omaspeak config set backend.runtime openvino
 omaspeak config set backend.device npu
 ```
 
-For this catalog entry, the generated NPU provider config submits all four
-Supertonic components to OpenVINO. An explicit
-`backend.options.SherpaOnnx.SupertonicComponents` value still overrides that
-default. On OpenVINO NPU, the original `supertonic-3-int8` catalog entry and
-custom Supertonic models retain the validated mixed component placement
-described below.
+The direct OpenVINO backend submits all four Supertonic graphs to the selected
+device. Use the `supertonic-3-npu` catalog entry on NPU; its FP32 vector
+estimator avoids the accuracy failure seen with the fully INT8 model.
 
 Supertonic supports `en`, `ko`, `ja`, `ar`, `bg`, `cs`, `da`, `de`, `el`,
 `es`, `et`, `fi`, `fr`, `hi`, `hr`, `hu`, `id`, `it`, `lt`, `lv`, `nl`,
 `pl`, `pt`, `ro`, `ru`, `sk`, `sl`, `sv`, `tr`, `uk`, and `vi`. The configured
-voice remains the speaker index from `voice.bin`; `model.steps` controls its
-denoising iterations.
+voice is the speaker index from `voice.bin`; `model.steps` controls its denoising
+iterations. The bundled style file exposes `M1` through `M5` as IDs `0` through
+`4`, followed by `F1` through `F5` as IDs `5` through `9`.
+
+List every voice exposed by the active model and mark the configured default:
+
+```bash
+omaspeak voices
+omaspeak voices --json
+```
+
+Guided model setup asks for a default voice after the model choice. It can also
+be changed directly, while `say --voice` overrides it for one request:
+
+```bash
+omaspeak config set model.voice 7
+omaspeak say --voice 2 "Testing another speaker" --no-play --out voice-2.wav
+```
 
 ## Synthesis
 
@@ -178,6 +216,10 @@ warmup and measured synthesis without playback:
 ```bash
 omaspeak benchmark --text "Hello Omarchy" --out-dir benchmark \
   --warmup 2 --iterations 10 > benchmark.json
+
+# Benchmark a specific speaker without changing the configured default.
+omaspeak benchmark --text "Hello Omarchy" --voice 4 --out-dir voice-4 \
+  --warmup 2 --iterations 10 > voice-4.json
 ```
 
 The JSON includes model load time, every output path and synthesis/wall timing,
@@ -196,72 +238,69 @@ omaspeak stop
 
 ## Backends
 
-Omaspeak uses the same runtime/device matrix as Omawake: `default` with `auto|cpu`, `cuda` with `auto|gpu`, and OpenVINO with individual `cpu|gpu|npu` or `AUTO`, `HETERO`, and `MULTI` device lists. Builds fail closed for unavailable providers unless `fallback = "cpu"`; a fallback is warned and reported. Release binaries expose CPU, OpenVINO, and CUDA from one executable and select the configured provider when the model loads.
+Omaspeak uses the same runtime/device matrix as Omawake: `default` with
+`auto|cpu`, `cuda` with `auto|gpu`, and OpenVINO with `auto|cpu|gpu|npu`.
+Runtime validation fails closed for missing or incompatible external libraries
+unless `fallback = "cpu"`; a fallback is warned and reported. Every release
+binary exposes CPU, OpenVINO, and CUDA from the same link-free executable.
 
-With `runtime = "cuda"`, Omaspeak writes a private provider configuration below
-`$XDG_STATE_HOME/omaspeak/cache/cuda/device-<id>/`. `backend.device_id` selects
-the NVIDIA device. String-valued `[backend.options]` entries are forwarded to
-ONNX Runtime's CUDA EP V2 option map, which supports settings such as
+With `runtime = "cuda"`, `backend.device_id` selects the NVIDIA device.
+String-valued `[backend.options]` entries are forwarded to ONNX Runtime's CUDA
+execution-provider option map, which supports settings such as
 `cudnn_conv_algo_search`, `gpu_mem_limit`, `arena_extend_strategy`, and
 `do_copy_in_default_stream`. Omaspeak defaults the cuDNN search to `HEURISTIC`
 to avoid ONNX Runtime's expensive exhaustive search during cold loads.
 `backend.options.device_id` is reserved; use the
-typed `backend.device_id` setting instead. An explicit `backend.provider_config`
-path bypasses generation for advanced cases. Relative paths resolve beside the
-Omaspeak config file. Supertonic submits all four component graphs to CUDA by
-default; `SherpaOnnx.SupertonicComponents` can restrict acceleration to a
-comma-separated component list.
+typed `backend.device_id` setting instead. Relative paths resolve beside the
+Omaspeak config file. Supertonic submits all four component graphs to CUDA.
 
 Provider and model option maps can also be managed without editing TOML:
 
 ```bash
 omaspeak config set backend.options.gpu_mem_limit 4294967296
-omaspeak config set backend.options.ProfilingFilePrefix /tmp/omaspeak-profile
-omaspeak config unset backend.options.ProfilingFilePrefix
+omaspeak config set backend.options.cudnn_conv_algo_search HEURISTIC
+omaspeak config unset backend.options.gpu_mem_limit
 ```
 
-With `runtime = "openvino"`, Omaspeak passes sherpa an absolute
-`openvino:/.../provider.config` provider string. If `provider_config` is set,
-the path must name an existing regular file; relative paths resolve beside the
-Omaspeak config file, and the file contents are used unchanged. Otherwise
-Omaspeak atomically writes a mode-0600 config below
-`$XDG_STATE_HOME/omaspeak/cache/openvino/<device>/`, with uppercase
-`device_type`, an isolated compiled-model `cache_dir`, and
-`enable_qdq_optimizer=True` for `NPU`. String-valued `[backend.options]` entries
-override generated defaults after syntax validation. `device_type` must match
-the selected device and `cache_dir` remains application-managed. Session-level
-keys such as `ProfilingFilePrefix` pass through. Omaspeak defaults
-`disable_dynamic_shapes=True` on NPU because the official Supertonic int8
-graphs require concrete input shapes; `[backend.options]` can override it.
-Host-specific OpenVINO hardware properties belong in ONNX Runtime's inline
-`load_config` JSON; Omaspeak does not guess or generate them. For example:
+With `runtime = "openvino"`, Omaspeak loads `libopenvino_c.so` at runtime and
+runs Supertonic's four public ONNX graphs through OpenVINO directly. Set exact
+runtime files in the config when automatic directory discovery is unsuitable:
+
+```toml
+[backend]
+openvino_library = "/opt/intel/openvino/runtime/lib/intel64/libopenvino_c.so"
+openvino_plugins = "/opt/intel/openvino/runtime/lib/intel64/plugins.xml"
+```
+
+`omaspeak setup runtime --dir` accepts an OpenVINO installation root and scans
+its common `runtime/lib/intel64[/Release]` layouts for the C API library and
+plugin catalog. The backend verifies that the selected physical device is
+available, specializes each graph to the request's concrete tensor shapes, and
+checks `EXECUTION_DEVICES` after compilation. OpenVINO's compiled-model cache
+lives below `$XDG_STATE_HOME/omaspeak/cache/openvino/<device>/`.
+
+Entries in `[backend.options]` are passed through as OpenVINO properties for
+the selected device. `CACHE_DIR` and `INFERENCE_NUM_THREADS` are managed by
+Omaspeak; set `backend.threads` for the CPU thread count. For example:
 
 ```toml
 [backend.options]
-load_config = '{"NPU":{"NPU_PLATFORM":"5010"}}'
+PERFORMANCE_HINT = "LATENCY"
+NPU_PLATFORM = "5010"
 ```
 
-The fully INT8 `supertonic-3-int8` vector estimator does not pass NPU
-speech-accuracy validation. On exact `NPU`, that entry and custom Supertonic
-models therefore default to the largest validated mixed placement:
-`duration_predictor,text_encoder,vocoder` on OpenVINO NPU and
-`vector_estimator` on ORT CPU. The NPU-specific `supertonic-3-npu` catalog entry
-uses the official FP32 vector estimator and submits all four components to
-OpenVINO; it is marked `npu_capable=true`. The reserved
-`SherpaOnnx.SupertonicComponents` backend option can override either default.
-Hardware evaluation must include output-accuracy checks in addition to
-successful execution and device activity.
-On exact `GPU`, the validated default places only `vector_estimator` on the
-OpenVINO GPU and runs the other components on ORT CPU; it also sets `FP32`,
-disables the QDQ optimizer, and disables dynamic shapes. Other GPU component
-sets either failed compatibility checks or produced inaccurate audio on the
-tested Intel stack. On exact `CPU`, all four components use OpenVINO and dynamic
-shapes are disabled. All generated defaults remain overridable through
-`[backend.options]` for controlled experiments.
-
-The feature and provider config make OpenVINO available to the runtime; they do
-not prove that a model was placed on a particular device. Status continues to
-report accelerated placement as unverified until independent provider or
-device evidence is collected.
+The fully INT8 `supertonic-3-int8` vector estimator did not pass NPU speech
+accuracy validation. The NPU-specific `supertonic-3-npu` catalog entry uses the
+official FP32 vector estimator and is the validated NPU choice. The Dell XPS
+validation checks both output accuracy and physical device use: CPU and NPU
+each achieved 0% WER over the same 25-word suite, while OpenVINO placement and
+the NPU busy counter independently confirmed NPU execution.
 
 See [DEMO.md](DEMO.md) for cold, hot, concurrent, and fallback results.
+
+## License
+
+Omaspeak source is licensed under the [MIT License](LICENSE). Bundled runtime
+components and downloaded models remain under their own licenses; see
+[third-party notices](THIRD_PARTY_NOTICES.md). Model terms are shown before
+download and are not covered by Omaspeak's MIT license.

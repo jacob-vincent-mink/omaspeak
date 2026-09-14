@@ -1,0 +1,38 @@
+{
+  "applied": false,
+  "candidate": {
+    "device": "gpu",
+    "device_id": 0,
+    "fallback": "error",
+    "kind": "supertonic",
+    "library_dirs": [
+      "/tmp/oma-native-cuda/runtime/lib",
+      "/usr/local/cuda-13.0/targets/sbsa-linux/lib",
+      "/tmp/omawake-cudnn/sdk/lib64"
+    ],
+    "onnxruntime_library": "/tmp/oma-native-cuda/runtime/lib/libonnxruntime.so.1.29.0",
+    "openvino_library": null,
+    "openvino_plugins": null,
+    "options": {},
+    "provider_config": "",
+    "provider_library": "/tmp/oma-native-cuda/runtime/lib/libonnxruntime_providers_cuda.so",
+    "runtime": "cuda",
+    "threads": 2
+  },
+  "probe": {
+    "device_accessible": true,
+    "errors": [],
+    "evidence": {
+      "available_devices": [
+        "CUDA hardware 11794 (GPU)"
+      ],
+      "provider_registration": true,
+      "selected_device": "CUDA hardware 11794 (GPU)",
+      "versions": [
+        "ONNX Runtime 1.29.0"
+      ]
+    },
+    "loadable": true,
+    "ready": true
+  }
+}

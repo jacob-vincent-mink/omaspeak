@@ -1,0 +1,12 @@
+<!-- Frame adapted from Omarchy, Copyright (c) David Heinemeier Hansson, MIT. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 300" role="img" aria-labelledby="title desc">
+  <title id="title">Omaspeak</title>
+  <desc id="desc">A speaker and sound waves inside the square Omarchy mark</desc>
+  <g fill="#9ece6a">
+    <path d="M0 0h300v20H0zM0 20h20v260H0zM280 20h20v260h-20zM0 280h160v20H0zM180 280h120v20H180zM140 20h20v20h-20zM40 40h120v20H40zM40 60h20v80H40zM20 140h40v20H20zM40 160h20v80H40zM40 240h220v20H40zM140 260h20v20h-20zM220 40h40v20h-40zM240 60h20v180h-20z"/>
+    <path d="M78 138h34l42-34v92l-42-34H78z"/>
+  </g>
+  <g fill="none" stroke="#9ece6a" stroke-linecap="round">
+    <path d="M177 126c13 13 13 35 0 48M201 107c27 28 27 58 0 86" stroke-width="12"/>
+  </g>
+</svg>
