@@ -219,6 +219,14 @@ fn runtime_commands_report_expected_failures_without_a_model_or_daemon() {
     assert!(run(&root, &["voices", "--json"]).status.success());
     assert!(!run(&root, &["say", ""]).status.success());
     assert!(!run(&root, &["say", "hello", "--no-play"]).status.success());
+    assert!(
+        !run(
+            &root,
+            &["benchmark", "--text", "hello", "--out-dir", "benchmark",],
+        )
+        .status
+        .success()
+    );
     assert!(!run(&root, &["stop"]).status.success());
     assert!(run(&root, &["status"]).status.success());
     assert!(run(&root, &["status", "--json"]).status.success());

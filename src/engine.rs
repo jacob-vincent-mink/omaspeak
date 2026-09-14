@@ -1,8 +1,18 @@
+use std::collections::BTreeMap;
+use std::fs::{self, OpenOptions};
+use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
+#[cfg(unix)]
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+
 use anyhow::{Context, Result, bail};
-use sherpa_onnx::{OfflineTtsConfig, OfflineTtsModelConfig, OfflineTtsVitsModelConfig};
+use sherpa_onnx::{
+    OfflineTtsConfig, OfflineTtsModelConfig, OfflineTtsSupertonicModelConfig,
+    OfflineTtsVitsModelConfig,
+};
 
 use crate::backend::{Fallback, Runtime, compiled_capabilities};
 use crate::config::Config;
@@ -32,14 +42,22 @@ pub struct Synthesis {
     pub synthesis_time: Duration,
 }
 
+#[derive(Clone, Debug, Default)]
+pub(crate) struct SherpaGenerationSettings {
+    pub language: Option<String>,
+    pub num_steps: Option<i32>,
+}
+
 impl Engine {
     pub fn load(config: &Config, paths: &AppPaths) -> Result<Self> {
         Self::load_with(config, paths, |config, paths, runtime| {
             let backend: Box<dyn TtsBackend> = match config.backend.kind.as_str() {
                 "sherpa-onnx" => {
                     let native_config = build_sherpa_config(config, paths, runtime)?;
+                    let generation = sherpa_generation_settings(config)?;
                     Box::new(crate::native::sherpa::SherpaOnnxBackend::create(
                         &native_config,
+                        generation,
                     )?)
                 }
                 kind => bail!(
@@ -131,44 +149,239 @@ fn build_sherpa_config(
     paths: &AppPaths,
     runtime: Runtime,
 ) -> Result<OfflineTtsConfig> {
-    if config.model.family != "piper" && config.model.family != "vits" {
-        bail!(
-            "sherpa-onnx TTS model family {} is not implemented",
-            config.model.family
-        );
-    }
+    sherpa_generation_settings(config)?;
     let directory = config.model_directory(paths);
-    let required = |name: &str| -> Result<String> {
+    let required_file = |name: &str| -> Result<String> {
+        if name.trim().is_empty() {
+            bail!("required model asset path is not configured");
+        }
         let path = directory.join(name);
-        if !path.exists() {
+        if !path.is_file() {
             bail!("required model asset is missing: {}", path.display());
+        }
+        Ok(path.to_string_lossy().into_owned())
+    };
+    let required_directory = |name: &str| -> Result<String> {
+        if name.trim().is_empty() {
+            bail!("required model asset directory is not configured");
+        }
+        let path = directory.join(name);
+        if !path.is_dir() {
+            bail!(
+                "required model asset directory is missing: {}",
+                path.display()
+            );
         }
         Ok(path.to_string_lossy().into_owned())
     };
     let provider = match runtime {
         Runtime::Default => "cpu".to_owned(),
         Runtime::Cuda => "cuda".to_owned(),
-        Runtime::Openvino => {
-            bail!("OpenVINO provider file generation is unavailable in this build")
-        }
+        Runtime::Openvino => openvino_provider(config, paths)?,
     };
-    Ok(OfflineTtsConfig {
-        model: OfflineTtsModelConfig {
-            vits: OfflineTtsVitsModelConfig {
-                model: Some(required(&config.model.model_file)?),
-                tokens: Some(required(&config.model.tokens_file)?),
-                data_dir: Some(required(&config.model.data_directory)?),
+    let mut model = OfflineTtsModelConfig {
+        num_threads: config.backend.threads.into(),
+        provider: Some(provider),
+        ..Default::default()
+    };
+    match config.model.family.as_str() {
+        "piper" | "vits" => {
+            model.vits = OfflineTtsVitsModelConfig {
+                model: Some(required_file(&config.model.model_file)?),
+                tokens: Some(required_file(&config.model.tokens_file)?),
+                data_dir: Some(required_directory(&config.model.data_directory)?),
                 noise_scale: config.model.noise_scale,
                 noise_scale_w: config.model.noise_scale_w,
                 length_scale: config.model.length_scale,
                 ..Default::default()
-            },
-            num_threads: config.backend.threads.into(),
-            provider: Some(provider),
-            ..Default::default()
-        },
+            };
+        }
+        "supertonic" => {
+            model.supertonic = OfflineTtsSupertonicModelConfig {
+                duration_predictor: Some(required_file(&config.model.duration_predictor)?),
+                text_encoder: Some(required_file(&config.model.text_encoder)?),
+                vector_estimator: Some(required_file(&config.model.vector_estimator)?),
+                vocoder: Some(required_file(&config.model.vocoder)?),
+                tts_json: Some(required_file(&config.model.tts_json)?),
+                unicode_indexer: Some(required_file(&config.model.unicode_indexer)?),
+                voice_style: Some(required_file(&config.model.voice_style)?),
+            };
+        }
+        _ => unreachable!("model family was validated above"),
+    }
+    Ok(OfflineTtsConfig {
+        model,
         ..Default::default()
     })
+}
+
+fn sherpa_generation_settings(config: &Config) -> Result<SherpaGenerationSettings> {
+    const SUPERTONIC_LANGUAGES: &[&str] = &[
+        "en", "ko", "ja", "ar", "bg", "cs", "da", "de", "el", "es", "et", "fi", "fr", "hi", "hr",
+        "hu", "id", "it", "lt", "lv", "nl", "pl", "pt", "ro", "ru", "sk", "sl", "sv", "tr", "uk",
+        "vi",
+    ];
+    match config.model.family.as_str() {
+        "piper" | "vits" => Ok(SherpaGenerationSettings::default()),
+        "supertonic" => {
+            if !SUPERTONIC_LANGUAGES.contains(&config.model.language.as_str()) {
+                bail!(
+                    "Supertonic language {:?} is unsupported; use one of {}",
+                    config.model.language,
+                    SUPERTONIC_LANGUAGES.join(", ")
+                );
+            }
+            if config.model.steps <= 0 {
+                bail!("Supertonic generation steps must be greater than zero");
+            }
+            Ok(SherpaGenerationSettings {
+                language: Some(config.model.language.clone()),
+                num_steps: Some(config.model.steps),
+            })
+        }
+        family => bail!("sherpa-onnx TTS model family {family} is not implemented"),
+    }
+}
+
+fn openvino_provider(config: &Config, paths: &AppPaths) -> Result<String> {
+    config.backend.validate_shape()?;
+    let supplied = config.backend.provider_config.trim();
+    let provider_config = if supplied.is_empty() {
+        generate_openvino_provider_config(config, paths)?
+    } else {
+        let supplied = PathBuf::from(supplied);
+        let supplied = if supplied.is_absolute() {
+            supplied
+        } else {
+            paths
+                .config_file
+                .parent()
+                .unwrap_or_else(|| Path::new("."))
+                .join(supplied)
+        };
+        if !supplied.is_file() {
+            bail!(
+                "OpenVINO provider config is not an existing file: {}",
+                supplied.display()
+            );
+        }
+        supplied
+            .canonicalize()
+            .with_context(|| format!("resolve OpenVINO provider config {}", supplied.display()))?
+    };
+    Ok(format!("openvino:{}", provider_config.display()))
+}
+
+fn generate_openvino_provider_config(config: &Config, paths: &AppPaths) -> Result<PathBuf> {
+    let device = config.backend.canonical_device()?.to_ascii_uppercase();
+    let slug: String = device
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() {
+                character.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    let directory = paths.state_dir.join("cache").join("openvino").join(slug);
+    create_private_directory(&directory)?;
+    let directory = directory
+        .canonicalize()
+        .with_context(|| format!("resolve OpenVINO cache directory {}", directory.display()))?;
+    let compiled_cache = directory.join("compiled");
+    create_private_directory(&compiled_cache)?;
+
+    let mut options = BTreeMap::from([
+        ("cache_dir".to_owned(), compiled_cache.display().to_string()),
+        ("device_type".to_owned(), device.clone()),
+    ]);
+    if device == "NPU" {
+        options.insert("enable_qdq_optimizer".to_owned(), "True".to_owned());
+        options.insert("disable_dynamic_shapes".to_owned(), "True".to_owned());
+        if config.model.family == "supertonic" {
+            options.insert(
+                "SherpaOnnx.SupertonicComponents".to_owned(),
+                "duration_predictor,text_encoder,vocoder".to_owned(),
+            );
+        }
+    } else if config.model.family == "supertonic" && device == "GPU" {
+        options.insert("disable_dynamic_shapes".to_owned(), "True".to_owned());
+        options.insert("enable_qdq_optimizer".to_owned(), "False".to_owned());
+        options.insert("precision".to_owned(), "FP32".to_owned());
+        options.insert(
+            "SherpaOnnx.SupertonicComponents".to_owned(),
+            "vector_estimator".to_owned(),
+        );
+    } else if config.model.family == "supertonic" && device == "CPU" {
+        options.insert("disable_dynamic_shapes".to_owned(), "True".to_owned());
+    }
+    for (key, value) in &config.backend.options {
+        match key.as_str() {
+            "device_type" if value != &device => {
+                bail!("backend.options.device_type must match canonical device {device:?}")
+            }
+            "cache_dir" => {
+                bail!("backend.options.cache_dir is managed by Omaspeak for each OpenVINO device")
+            }
+            _ => {
+                options.insert(key.clone(), value.clone());
+            }
+        }
+    }
+
+    let mut contents = String::new();
+    for (key, value) in options {
+        contents.push_str(&key);
+        contents.push('=');
+        contents.push_str(&value);
+        contents.push('\n');
+    }
+    let provider_config = directory.join("provider.config");
+    write_private_atomic(&provider_config, contents.as_bytes())?;
+    Ok(provider_config)
+}
+
+fn create_private_directory(path: &Path) -> Result<()> {
+    fs::create_dir_all(path)
+        .with_context(|| format!("create private OpenVINO directory {}", path.display()))?;
+    #[cfg(unix)]
+    fs::set_permissions(path, fs::Permissions::from_mode(0o700))
+        .with_context(|| format!("protect OpenVINO directory {}", path.display()))?;
+    Ok(())
+}
+
+fn write_private_atomic(path: &Path, contents: &[u8]) -> Result<()> {
+    static TEMPORARY_ID: AtomicU64 = AtomicU64::new(0);
+    let parent = path
+        .parent()
+        .context("OpenVINO provider config has no parent directory")?;
+    let unique = TEMPORARY_ID.fetch_add(1, Ordering::Relaxed);
+    let temporary = parent.join(format!(
+        ".provider.config.{}.{}.tmp",
+        std::process::id(),
+        unique
+    ));
+    let result = (|| -> Result<()> {
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        options.mode(0o600);
+        let mut file = options
+            .open(&temporary)
+            .with_context(|| format!("create temporary provider config {}", temporary.display()))?;
+        file.write_all(contents)
+            .with_context(|| format!("write temporary provider config {}", temporary.display()))?;
+        file.sync_all()
+            .with_context(|| format!("sync temporary provider config {}", temporary.display()))?;
+        fs::rename(&temporary, path)
+            .with_context(|| format!("install OpenVINO provider config {}", path.display()))?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    result
 }
 
 fn save_wav(path: &Path, sample_rate: i32, samples: &[f32]) -> Result<()> {

@@ -14,5 +14,6 @@ jobs:
           components: clippy,llvm-tools-preview,rustfmt
       - uses: taiki-e/install-action@cargo-llvm-cov
       - run: cargo fmt --check
-      - run: cargo clippy --all-targets --all-features -- -D warnings
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: DOCS_RS=1 cargo clippy --all-targets --features openvino -- -D warnings
       - run: cargo llvm-cov --all-targets --locked --ignore-filename-regex 'src/native/sherpa\.rs$' --fail-under-lines 90.01

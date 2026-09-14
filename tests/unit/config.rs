@@ -17,6 +17,9 @@ fn partial_config_uses_defaults() {
     .unwrap();
     assert_eq!(cfg.model.voice, 2);
     assert_eq!(cfg.model.family, "piper");
+    assert_eq!(cfg.model.language, "en");
+    assert_eq!(cfg.model.steps, 5);
+    assert!(cfg.model.duration_predictor.is_empty());
     assert_eq!(cfg.backend.threads, 2);
 }
 

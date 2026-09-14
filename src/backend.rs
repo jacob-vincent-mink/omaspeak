@@ -66,6 +66,14 @@ pub enum BackendError {
     InvalidDevice { runtime: Runtime, device: String },
     #[error("backend device_id is only valid with runtime cuda")]
     InvalidDeviceId,
+    #[error("backend option key {key:?} is invalid")]
+    InvalidOptionKey { key: String },
+    #[error("backend option {key:?} contains a newline or NUL byte")]
+    InvalidOptionValue { key: String },
+    #[error(
+        "backend option SherpaOnnx.SupertonicComponents must be empty, all, or a comma-separated allowlist of duration_predictor, text_encoder, vector_estimator, and vocoder"
+    )]
+    InvalidSupertonicComponents,
     #[error("backend runtime {runtime:?} is unavailable in this build (requires {capability})")]
     CapabilityUnavailable {
         runtime: Runtime,
@@ -85,6 +93,17 @@ impl BackendConfig {
         if self.runtime != Runtime::Cuda && self.device_id != 0 {
             return Err(BackendError::InvalidDeviceId);
         }
+        for (key, value) in &self.options {
+            if !valid_option_key(key) {
+                return Err(BackendError::InvalidOptionKey { key: key.clone() });
+            }
+            if value.contains(['\r', '\n', '\0']) {
+                return Err(BackendError::InvalidOptionValue { key: key.clone() });
+            }
+            if key == "SherpaOnnx.SupertonicComponents" && !valid_supertonic_components(value) {
+                return Err(BackendError::InvalidSupertonicComponents);
+            }
+        }
         self.canonical_device()?;
         Ok(())
     }
@@ -103,9 +122,41 @@ impl BackendConfig {
     }
 }
 
+fn valid_supertonic_components(value: &str) -> bool {
+    const COMPONENTS: &[&str] = &[
+        "duration_predictor",
+        "text_encoder",
+        "vector_estimator",
+        "vocoder",
+    ];
+    if value.is_empty() || value == "all" {
+        return true;
+    }
+    let selected: Vec<_> = value.split(',').collect();
+    !selected.is_empty()
+        && selected.len() <= COMPONENTS.len()
+        && selected.iter().enumerate().all(|(index, component)| {
+            COMPONENTS.contains(component) && !selected[..index].contains(component)
+        })
+}
+
 pub const fn compiled_capabilities() -> &'static [&'static str] {
-    const CPU_ONLY: &[&str] = &["cpu"];
-    CPU_ONLY
+    #[cfg(feature = "openvino")]
+    {
+        &["cpu", "openvino"]
+    }
+    #[cfg(not(feature = "openvino"))]
+    {
+        &["cpu"]
+    }
+}
+
+fn valid_option_key(key: &str) -> bool {
+    let mut characters = key.chars();
+    matches!(characters.next(), Some(first) if first.is_ascii_alphanumeric())
+        && characters.all(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '_' | '.' | '-')
+        })
 }
 
 pub fn canonical_device(runtime: Runtime, raw: &str) -> Result<String, BackendError> {

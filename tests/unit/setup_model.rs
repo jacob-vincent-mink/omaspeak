@@ -84,6 +84,16 @@ fn spec(archive_bytes: &[u8], url: &str) -> &'static ModelSpec {
         model_file: "model.bin",
         tokens_file: "model.bin",
         data_directory: "model.bin",
+        duration_predictor: "",
+        text_encoder: "",
+        vector_estimator: "",
+        vocoder: "",
+        tts_json: "",
+        unicode_indexer: "",
+        voice_style: "",
+        language: "en",
+        steps: 5,
+        npu_capable: false,
         required_files: required,
     }))
 }

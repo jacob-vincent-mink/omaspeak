@@ -381,6 +381,18 @@ fn config_helpers_cover_supported_values_defaults_and_schema() {
         ("model.family", "vits"),
         ("model.name", "custom-model"),
         ("model.directory", "/models/custom"),
+        ("model.model_file", "model.onnx"),
+        ("model.tokens_file", "tokens.txt"),
+        ("model.data_directory", "data"),
+        ("model.duration_predictor", "duration.onnx"),
+        ("model.text_encoder", "text.onnx"),
+        ("model.vector_estimator", "vector.onnx"),
+        ("model.vocoder", "vocoder.onnx"),
+        ("model.tts_json", "tts.json"),
+        ("model.unicode_indexer", "unicode.bin"),
+        ("model.voice_style", "voice.bin"),
+        ("model.language", "fr"),
+        ("model.steps", "8"),
         ("model.voice", "3"),
         ("audio.device", "speakers"),
         ("audio.volume", "0.5"),
@@ -392,6 +404,8 @@ fn config_helpers_cover_supported_values_defaults_and_schema() {
     assert_eq!(config.backend.fallback, Fallback::Cpu);
     assert_eq!(config.backend.threads, 7);
     assert_eq!(config.model.voice, 3);
+    assert_eq!(config.model.language, "fr");
+    assert_eq!(config.model.steps, 8);
     assert_eq!(config.audio.volume, 0.5);
     assert!(set_config(&mut config, "unknown", "x").is_err());
     assert!(set_config(&mut config, "backend.threads", "many").is_err());
@@ -403,6 +417,13 @@ fn config_helpers_cover_supported_values_defaults_and_schema() {
     let description = schema(&paths.config_file, &paths).unwrap();
     assert_eq!(description["app"], "omaspeak");
     assert_eq!(description["schema_version"], 1);
+    assert!(
+        description["keys"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|key| key["key"] == "model.duration_predictor")
+    );
 
     for (key, _) in assignments {
         unset_config(&mut config, key).unwrap();
@@ -436,6 +457,18 @@ fn cli_parser_and_catalog_helpers_cover_command_surface() {
             "--out",
             "a.wav",
             "--no-play",
+        ],
+        vec![
+            "omaspeak",
+            "benchmark",
+            "--text",
+            "hello",
+            "--out-dir",
+            "benchmark",
+            "--warmup",
+            "2",
+            "--iterations",
+            "4",
         ],
         vec!["omaspeak", "stop"],
         vec!["omaspeak", "voices", "--json"],
@@ -472,6 +505,20 @@ fn cli_parser_and_catalog_helpers_cover_command_surface() {
         assert!(Cli::try_parse_from(args).is_ok());
     }
     assert!(Cli::try_parse_from(["omaspeak", "unknown"]).is_err());
+    assert!(Cli::try_parse_from(["omaspeak", "benchmark", "--text", "hello"]).is_err());
+    assert!(
+        Cli::try_parse_from([
+            "omaspeak",
+            "benchmark",
+            "--text",
+            "hello",
+            "--out-dir",
+            "out",
+            "--iterations",
+            "0",
+        ])
+        .is_err()
+    );
     assert!(model_spec("en_US-lessac-medium").is_ok());
     assert!(
         model_spec("missing")
@@ -483,6 +530,154 @@ fn cli_parser_and_catalog_helpers_cover_command_surface() {
     let second = request_id();
     assert!(first.starts_with(&format!("{}-", std::process::id())));
     assert_ne!(first, second);
+}
+
+#[test]
+fn benchmark_writes_deterministic_outputs_and_reports_timings() {
+    let root = sandbox();
+    let output = root.join("benchmark");
+    let base = Instant::now();
+    let mut clock = [
+        base,
+        base + Duration::from_millis(5),
+        base + Duration::from_millis(5),
+        base + Duration::from_millis(20),
+        base + Duration::from_millis(20),
+        base + Duration::from_millis(45),
+    ]
+    .into_iter();
+    let mut outputs = Vec::new();
+    let iterations = benchmark_syntheses(
+        "hello",
+        &output,
+        2,
+        3,
+        |path| {
+            outputs.push(path.to_owned());
+            let synthesis_time = match path.file_stem().unwrap().to_str().unwrap() {
+                "iteration-0001" => Duration::from_millis(10),
+                "iteration-0002" => Duration::from_millis(20),
+                "iteration-0003" => Duration::from_millis(30),
+                _ => Duration::from_millis(1),
+            };
+            Ok(Synthesis {
+                output: path.to_owned(),
+                sample_rate: 1_000,
+                samples: 500,
+                synthesis_time,
+            })
+        },
+        || clock.next().unwrap(),
+    )
+    .unwrap();
+
+    assert_eq!(outputs.len(), 5);
+    assert!(outputs[0].ends_with("benchmark/warmup-0001.wav"));
+    assert!(outputs[1].ends_with("benchmark/warmup-0002.wav"));
+    assert!(outputs[4].ends_with("benchmark/iteration-0003.wav"));
+    assert_eq!(iterations[0].iteration, 1);
+    assert_eq!(iterations[0].elapsed_milliseconds, 5.0);
+    assert_eq!(iterations[1].elapsed_milliseconds, 15.0);
+    assert_eq!(iterations[2].elapsed_milliseconds, 25.0);
+    assert_eq!(iterations[0].synthesis_milliseconds, 10.0);
+    assert_eq!(iterations[0].audio_duration_milliseconds, 500.0);
+    assert!((iterations[0].real_time_factor - 0.02).abs() < f64::EPSILON);
+
+    let summary = benchmark_summary(&iterations);
+    assert_eq!(summary.samples, 3);
+    assert_eq!(summary.p50_elapsed_milliseconds, Some(15.0));
+    assert_eq!(summary.p95_elapsed_milliseconds, Some(25.0));
+    assert_eq!(summary.p50_synthesis_milliseconds, Some(20.0));
+    assert_eq!(summary.p95_synthesis_milliseconds, Some(30.0));
+    assert!((summary.p50_real_time_factor.unwrap() - 0.04).abs() < f64::EPSILON);
+    assert!((summary.p95_real_time_factor.unwrap() - 0.06).abs() < f64::EPSILON);
+
+    let args = BenchmarkArgs {
+        text: "hello".into(),
+        out_dir: output,
+        warmup: 2,
+        iterations: 3,
+    };
+    let engine = FakeEngine {
+        fail: false,
+        runtime: Runtime::Cuda,
+    };
+    let report = benchmark_report(&Config::default(), &engine, &args, iterations).unwrap();
+    assert_eq!(report["schema_version"], 1);
+    assert_eq!(report["benchmark"], "omaspeak-file-synthesis");
+    assert_eq!(report["model_load_milliseconds"], 5);
+    assert_eq!(report["backend"]["kind"], "fake");
+    assert_eq!(report["backend"]["effective_runtime"], "cuda");
+    assert_eq!(report["backend"]["placement_verified"], false);
+    assert_eq!(
+        report["iterations"][2]["output"],
+        outputs[4].to_string_lossy().as_ref()
+    );
+    assert_eq!(report["summary"]["p50_synthesis_milliseconds"], 20.0);
+}
+
+#[test]
+fn benchmark_rejects_invalid_text_iterations_and_synthesis_metadata() {
+    fn synthesis(path: &Path) -> Result<Synthesis> {
+        Ok(Synthesis {
+            output: path.to_owned(),
+            sample_rate: 1_000,
+            samples: 500,
+            synthesis_time: Duration::from_millis(1),
+        })
+    }
+    assert!(validate_benchmark_text(" ", 100).is_err());
+    assert!(validate_benchmark_text("long", 3).is_err());
+    assert!(validate_benchmark_text("okay", 4).is_ok());
+    assert!(benchmark_syntheses(" ", Path::new("out"), 0, 1, synthesis, Instant::now).is_err());
+    assert!(benchmark_syntheses("x", Path::new("out"), 0, 0, synthesis, Instant::now).is_err());
+    assert!(
+        benchmark_syntheses(
+            "x",
+            Path::new("out"),
+            1,
+            1,
+            |_| bail!("warmup failed"),
+            Instant::now,
+        )
+        .is_err()
+    );
+    assert!(
+        benchmark_syntheses(
+            "x",
+            Path::new("out"),
+            0,
+            1,
+            |_| bail!("synthesis failed"),
+            Instant::now,
+        )
+        .is_err()
+    );
+    for (sample_rate, samples) in [(0, 1), (1_000, 0)] {
+        let base = Instant::now();
+        let mut clock = [base, base].into_iter();
+        assert!(
+            benchmark_syntheses(
+                "x",
+                Path::new("out"),
+                0,
+                1,
+                |path| {
+                    Ok(Synthesis {
+                        output: path.to_owned(),
+                        sample_rate,
+                        samples,
+                        synthesis_time: Duration::from_millis(1),
+                    })
+                },
+                || clock.next().unwrap(),
+            )
+            .is_err()
+        );
+    }
+    assert_eq!(benchmark_summary(&[]).p50_elapsed_milliseconds, None);
+    assert_eq!(percentile(&[30.0, 10.0, 20.0], 0.5), Some(20.0));
+    assert_eq!(milliseconds(Duration::from_micros(1_500)), 1.5);
 }
 
 #[test]
@@ -615,6 +810,19 @@ fn production_engine_adapter_exposes_loaded_backend_metadata() {
         .synthesize("hello", 1.0, 0, &root.join("adapter.wav"))
         .unwrap();
     assert_eq!(result.samples, 1);
+}
+
+#[test]
+fn config_override_becomes_the_effective_app_paths_config_file() {
+    let root = sandbox();
+    let mut paths = paths(&root);
+    let discovered = paths.config_file.clone();
+    assert_eq!(select_config_path(None, &mut paths), discovered);
+    assert_eq!(paths.config_file, discovered);
+
+    let custom = root.join("custom/config.toml");
+    assert_eq!(select_config_path(Some(custom.clone()), &mut paths), custom);
+    assert_eq!(paths.config_file, custom);
 }
 
 #[test]

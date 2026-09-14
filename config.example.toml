@@ -8,6 +8,10 @@ device_id = 0
 provider_config = ""
 
 [backend.options]
+# ProfilingFilePrefix = "/tmp/omaspeak-openvino"
+# disable_dynamic_shapes = "False" # overrides the generated NPU default of True
+# load_config = '{"NPU":{"NPU_PLATFORM":"5010"}}' # host-specific ORT device properties
+# SherpaOnnx.SupertonicComponents = "all" # experimental mixed-placement override
 
 [model]
 family = "piper"
@@ -16,6 +20,15 @@ directory = ""
 model_file = "en_US-lessac-medium.onnx"
 tokens_file = "tokens.txt"
 data_directory = "espeak-ng-data"
+duration_predictor = ""
+text_encoder = ""
+vector_estimator = ""
+vocoder = ""
+tts_json = ""
+unicode_indexer = ""
+voice_style = ""
+language = "en"
+steps = 5
 voice = 0
 noise_scale = 0.667
 noise_scale_w = 0.8

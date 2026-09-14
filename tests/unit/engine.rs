@@ -55,6 +55,42 @@ fn paths(root: &Path) -> AppPaths {
     }
 }
 
+fn install_model_assets(config: &Config, paths: &AppPaths) -> PathBuf {
+    let directory = config.model_directory(paths);
+    fs::create_dir_all(directory.join(&config.model.data_directory)).unwrap();
+    fs::write(directory.join(&config.model.model_file), b"fixture").unwrap();
+    fs::write(directory.join(&config.model.tokens_file), b"fixture").unwrap();
+    directory
+}
+
+fn configure_supertonic(config: &mut Config, paths: &AppPaths) -> PathBuf {
+    config.model.family = "supertonic".into();
+    config.model.name = "supertonic-fixture".into();
+    config.model.duration_predictor = "duration_predictor.int8.onnx".into();
+    config.model.text_encoder = "text_encoder.int8.onnx".into();
+    config.model.vector_estimator = "vector_estimator.int8.onnx".into();
+    config.model.vocoder = "vocoder.int8.onnx".into();
+    config.model.tts_json = "tts.json".into();
+    config.model.unicode_indexer = "unicode_indexer.bin".into();
+    config.model.voice_style = "voice.bin".into();
+    config.model.language = "fr".into();
+    config.model.steps = 8;
+    let directory = config.model_directory(paths);
+    fs::create_dir_all(&directory).unwrap();
+    for asset in [
+        &config.model.duration_predictor,
+        &config.model.text_encoder,
+        &config.model.vector_estimator,
+        &config.model.vocoder,
+        &config.model.tts_json,
+        &config.model.unicode_indexer,
+        &config.model.voice_style,
+    ] {
+        fs::write(directory.join(asset), b"fixture").unwrap();
+    }
+    directory
+}
+
 #[test]
 fn fake_backend_synthesizes_a_valid_clamped_wav() {
     let root = temp("success");
@@ -121,7 +157,8 @@ fn engine_load_reports_shape_capability_backend_and_model_errors() {
     assert!(Engine::load(&config, &paths).is_err());
     config.model.family = "piper".into();
     assert!(Engine::load(&config, &paths).is_err());
-    assert!(build_sherpa_config(&config, &paths, Runtime::Openvino).is_err());
+    install_model_assets(&config, &paths);
+    assert!(build_sherpa_config(&config, &paths, Runtime::Openvino).is_ok());
 }
 
 #[test]
@@ -129,10 +166,7 @@ fn sherpa_config_is_built_without_loading_untrusted_native_models() {
     let root = temp("sherpa-config");
     let paths = paths(&root);
     let mut config = Config::default();
-    let directory = config.model_directory(&paths);
-    fs::create_dir_all(directory.join("espeak-ng-data")).unwrap();
-    fs::write(directory.join(&config.model.model_file), b"fixture").unwrap();
-    fs::write(directory.join(&config.model.tokens_file), b"fixture").unwrap();
+    let directory = install_model_assets(&config, &paths);
 
     let cpu = build_sherpa_config(&config, &paths, Runtime::Default).unwrap();
     assert_eq!(cpu.model.provider.as_deref(), Some("cpu"));
@@ -150,6 +184,267 @@ fn sherpa_config_is_built_without_loading_untrusted_native_models() {
     config.model.family = "piper".into();
     fs::remove_file(directory.join(&config.model.model_file)).unwrap();
     assert!(build_sherpa_config(&config, &paths, Runtime::Default).is_err());
+    assert!(build_sherpa_config(&config, &paths, Runtime::Openvino).is_err());
+}
+
+#[test]
+fn supertonic_config_maps_all_assets_and_generation_settings() {
+    let root = temp("supertonic-config");
+    let paths = paths(&root);
+    let mut config = Config::default();
+    let directory = configure_supertonic(&mut config, &paths);
+
+    let native = build_sherpa_config(&config, &paths, Runtime::Default).unwrap();
+    let supertonic = native.model.supertonic;
+    assert_eq!(
+        supertonic.duration_predictor.as_deref(),
+        directory.join("duration_predictor.int8.onnx").to_str()
+    );
+    assert_eq!(
+        supertonic.text_encoder.as_deref(),
+        directory.join("text_encoder.int8.onnx").to_str()
+    );
+    assert_eq!(
+        supertonic.vector_estimator.as_deref(),
+        directory.join("vector_estimator.int8.onnx").to_str()
+    );
+    assert_eq!(
+        supertonic.vocoder.as_deref(),
+        directory.join("vocoder.int8.onnx").to_str()
+    );
+    assert_eq!(
+        supertonic.tts_json.as_deref(),
+        directory.join("tts.json").to_str()
+    );
+    assert_eq!(
+        supertonic.unicode_indexer.as_deref(),
+        directory.join("unicode_indexer.bin").to_str()
+    );
+    assert_eq!(
+        supertonic.voice_style.as_deref(),
+        directory.join("voice.bin").to_str()
+    );
+    assert!(native.model.vits.model.is_none());
+
+    let generation = sherpa_generation_settings(&config).unwrap();
+    assert_eq!(generation.language.as_deref(), Some("fr"));
+    assert_eq!(generation.num_steps, Some(8));
+
+    config.model.language = "xx".into();
+    assert!(build_sherpa_config(&config, &paths, Runtime::Default).is_err());
+    config.model.language = "en".into();
+    config.model.steps = 0;
+    assert!(build_sherpa_config(&config, &paths, Runtime::Default).is_err());
+    config.model.steps = 5;
+    fs::remove_file(directory.join("vocoder.int8.onnx")).unwrap();
+    assert!(build_sherpa_config(&config, &paths, Runtime::Default).is_err());
+}
+
+#[test]
+fn supertonic_npu_defaults_to_the_validated_mixed_component_allowlist() {
+    let root = temp("supertonic-npu-components");
+    let paths = paths(&root);
+    let mut config = Config::default();
+    configure_supertonic(&mut config, &paths);
+    config.backend.runtime = Runtime::Openvino;
+    config.backend.device = "npu".into();
+
+    let native = build_sherpa_config(&config, &paths, Runtime::Openvino).unwrap();
+    let provider = native.model.provider.unwrap();
+    let provider_path = PathBuf::from(provider.strip_prefix("openvino:").unwrap());
+    let contents = fs::read_to_string(&provider_path).unwrap();
+    assert!(
+        contents
+            .contains("SherpaOnnx.SupertonicComponents=duration_predictor,text_encoder,vocoder\n")
+    );
+
+    config.backend.options.insert(
+        "SherpaOnnx.SupertonicComponents".into(),
+        "duration_predictor".into(),
+    );
+    build_sherpa_config(&config, &paths, Runtime::Openvino).unwrap();
+    let contents = fs::read_to_string(provider_path).unwrap();
+    assert!(contents.contains("SherpaOnnx.SupertonicComponents=duration_predictor\n"));
+}
+
+#[test]
+fn supertonic_gpu_defaults_to_the_validated_vector_estimator_placement() {
+    let root = temp("supertonic-gpu-components");
+    let paths = paths(&root);
+    let mut config = Config::default();
+    configure_supertonic(&mut config, &paths);
+    config.backend.runtime = Runtime::Openvino;
+    config.backend.device = "gpu".into();
+    let native = build_sherpa_config(&config, &paths, Runtime::Openvino).unwrap();
+    let provider = native.model.provider.unwrap();
+    let provider_path = PathBuf::from(provider.strip_prefix("openvino:").unwrap());
+    let contents = fs::read_to_string(provider_path).unwrap();
+    assert!(contents.contains("SherpaOnnx.SupertonicComponents=vector_estimator\n"));
+    assert!(contents.contains("disable_dynamic_shapes=True\n"));
+    assert!(contents.contains("enable_qdq_optimizer=False\n"));
+    assert!(contents.contains("precision=FP32\n"));
+}
+
+#[test]
+fn generates_a_private_openvino_provider_config_with_npu_defaults_and_options() {
+    let root = temp("openvino-generated");
+    let paths = paths(&root);
+    let mut config = Config::default();
+    config.backend.runtime = Runtime::Openvino;
+    config.backend.device = "nPu".into();
+    config.backend.options.insert(
+        "ProfilingFilePrefix".into(),
+        root.join("profile").display().to_string(),
+    );
+    config.backend.options.insert(
+        "load_config".into(),
+        r#"{"NPU":{"NPU_PLATFORM":"5010"}}"#.into(),
+    );
+    config
+        .backend
+        .options
+        .insert("device_type".into(), "NPU".into());
+    install_model_assets(&config, &paths);
+
+    let native = build_sherpa_config(&config, &paths, Runtime::Openvino).unwrap();
+    let provider = native.model.provider.unwrap();
+    let provider_path = PathBuf::from(provider.strip_prefix("openvino:").unwrap());
+    assert!(provider_path.is_absolute());
+    assert_eq!(
+        provider_path,
+        paths.state_dir.join("cache/openvino/npu/provider.config")
+    );
+    let contents = fs::read_to_string(&provider_path).unwrap();
+    assert!(contents.contains("device_type=NPU\n"));
+    assert!(contents.contains("enable_qdq_optimizer=True\n"));
+    assert!(contents.contains("disable_dynamic_shapes=True\n"));
+    assert!(contents.contains(&format!(
+        "cache_dir={}\n",
+        paths.state_dir.join("cache/openvino/npu/compiled").display()
+    )));
+    assert!(contents.contains(&format!(
+        "ProfilingFilePrefix={}\n",
+        root.join("profile").display()
+    )));
+    assert!(contents.contains("load_config={\"NPU\":{\"NPU_PLATFORM\":\"5010\"}}\n"));
+    assert!(paths.state_dir.join("cache/openvino/npu/compiled").is_dir());
+    assert_eq!(
+        fs::read_dir(provider_path.parent().unwrap())
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_name().to_string_lossy().ends_with(".tmp"))
+            .count(),
+        0
+    );
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(
+            fs::metadata(&provider_path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        assert_eq!(
+            fs::metadata(provider_path.parent().unwrap())
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o700
+        );
+    }
+
+    config
+        .backend
+        .options
+        .insert("disable_dynamic_shapes".into(), "False".into());
+    let overridden = build_sherpa_config(&config, &paths, Runtime::Openvino)
+        .unwrap()
+        .model
+        .provider
+        .unwrap();
+    assert!(
+        fs::read_to_string(overridden.strip_prefix("openvino:").unwrap())
+            .unwrap()
+            .contains("disable_dynamic_shapes=False\n")
+    );
+}
+
+#[test]
+fn separates_openvino_device_caches_and_only_enables_qdq_for_npu() {
+    let root = temp("openvino-gpu");
+    let paths = paths(&root);
+    let mut config = Config::default();
+    config.backend.runtime = Runtime::Openvino;
+    config.backend.device = "auto:GPU, CPU".into();
+    install_model_assets(&config, &paths);
+
+    let provider = build_sherpa_config(&config, &paths, Runtime::Openvino)
+        .unwrap()
+        .model
+        .provider
+        .unwrap();
+    assert!(provider.ends_with("/cache/openvino/auto-gpu-cpu/provider.config"));
+    let contents = fs::read_to_string(provider.strip_prefix("openvino:").unwrap()).unwrap();
+    assert!(contents.contains("device_type=AUTO:GPU,CPU\n"));
+    assert!(contents.contains("/cache/openvino/auto-gpu-cpu/compiled\n"));
+    assert!(!contents.contains("enable_qdq_optimizer"));
+}
+
+#[test]
+fn honors_an_existing_relative_provider_config_without_rewriting_it() {
+    let root = temp("openvino-supplied");
+    let paths = paths(&root);
+    let mut config = Config::default();
+    let supplied = root.join("custom.config");
+    fs::write(&supplied, "device_type=GPU\n").unwrap();
+    config.backend.provider_config = "custom.config".into();
+    install_model_assets(&config, &paths);
+
+    let provider = build_sherpa_config(&config, &paths, Runtime::Openvino)
+        .unwrap()
+        .model
+        .provider
+        .unwrap();
+    assert_eq!(provider, format!("openvino:{}", supplied.display()));
+    assert_eq!(fs::read_to_string(&supplied).unwrap(), "device_type=GPU\n");
+    assert!(!paths.state_dir.exists());
+
+    config.backend.provider_config = "missing.config".into();
+    assert!(build_sherpa_config(&config, &paths, Runtime::Openvino).is_err());
+}
+
+#[test]
+fn rejects_unsafe_or_conflicting_generated_provider_options() {
+    let root = temp("openvino-invalid-options");
+    let paths = paths(&root);
+    let mut config = Config::default();
+    config.backend.runtime = Runtime::Openvino;
+    config.backend.device = "npu".into();
+    install_model_assets(&config, &paths);
+
+    config
+        .backend
+        .options
+        .insert("bad key".into(), "value".into());
+    assert!(build_sherpa_config(&config, &paths, Runtime::Openvino).is_err());
+    config.backend.options.clear();
+    config
+        .backend
+        .options
+        .insert("ProfilingFilePrefix".into(), "one\ntwo".into());
+    assert!(build_sherpa_config(&config, &paths, Runtime::Openvino).is_err());
+    config.backend.options.clear();
+    config
+        .backend
+        .options
+        .insert("device_type".into(), "GPU".into());
+    assert!(build_sherpa_config(&config, &paths, Runtime::Openvino).is_err());
+    config.backend.options.clear();
+    config
+        .backend
+        .options
+        .insert("cache_dir".into(), "/tmp/shared".into());
     assert!(build_sherpa_config(&config, &paths, Runtime::Openvino).is_err());
 }
 

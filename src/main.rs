@@ -4,7 +4,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::process::{Command as ProcessCommand, ExitCode};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, anyhow, bail};
 use clap::{Args, Parser, Subcommand};
@@ -15,6 +15,7 @@ use omaspeak::paths::AppPaths;
 use omaspeak::protocol::{Command, Request, Response, ResultPayload};
 use omaspeak::setup as app_setup;
 use omaspeak::setup::model::ProgressFormat;
+use serde::Serialize;
 use serde_json::{Value, json};
 
 #[derive(Parser)]
@@ -38,6 +39,8 @@ enum TopCommand {
         json: bool,
     },
     Say(SayArgs),
+    /// Benchmark one loaded TTS engine, write WAVs, and print JSON.
+    Benchmark(BenchmarkArgs),
     Stop,
     Voices {
         #[arg(long)]
@@ -64,6 +67,18 @@ struct SayArgs {
     out: Option<PathBuf>,
     #[arg(long)]
     no_play: bool,
+}
+
+#[derive(Args)]
+struct BenchmarkArgs {
+    #[arg(long)]
+    text: String,
+    #[arg(long)]
+    out_dir: PathBuf,
+    #[arg(long, default_value_t = 1)]
+    warmup: u32,
+    #[arg(long, default_value_t = 5, value_parser = clap::value_parser!(u32).range(1..))]
+    iterations: u32,
 }
 
 #[derive(Subcommand)]
@@ -190,17 +205,24 @@ fn main() -> ExitCode {
 }
 
 fn run(cli: Cli) -> Result<()> {
-    let paths = AppPaths::discover();
-    let config_path = cli.config.unwrap_or_else(|| paths.config_file.clone());
+    let mut paths = AppPaths::discover();
+    let config_path = select_config_path(cli.config, &mut paths);
     match cli.command {
         TopCommand::Daemon => run_daemon(&config_path, &paths),
         TopCommand::Status { json } => print_status(&config_path, &paths, json),
         TopCommand::Say(args) => say(&config_path, &paths, args),
+        TopCommand::Benchmark(args) => benchmark(&config_path, &paths, args),
         TopCommand::Stop => stop(&paths),
         TopCommand::Voices { json } => voices(&config_path, json),
         TopCommand::Config { command } => config_command(command, &config_path, &paths),
         TopCommand::Setup { command } => setup(command, &config_path, &paths),
     }
+}
+
+fn select_config_path(config: Option<PathBuf>, paths: &mut AppPaths) -> PathBuf {
+    let config_path = config.unwrap_or_else(|| paths.config_file.clone());
+    paths.config_file = config_path.clone();
+    config_path
 }
 
 fn say(config_path: &Path, paths: &AppPaths, args: SayArgs) -> Result<()> {
@@ -240,6 +262,178 @@ fn say(config_path: &Path, paths: &AppPaths, args: SayArgs) -> Result<()> {
         handle_request(&engine, &config, paths, request)
     };
     print_response(response)
+}
+
+#[derive(Debug, Serialize)]
+struct BenchmarkIteration {
+    iteration: u32,
+    output: PathBuf,
+    elapsed_milliseconds: f64,
+    synthesis_milliseconds: f64,
+    sample_rate: i32,
+    samples: usize,
+    audio_duration_milliseconds: f64,
+    real_time_factor: f64,
+}
+
+#[derive(Debug, Serialize)]
+struct BenchmarkSummary {
+    samples: usize,
+    p50_elapsed_milliseconds: Option<f64>,
+    p95_elapsed_milliseconds: Option<f64>,
+    p50_synthesis_milliseconds: Option<f64>,
+    p95_synthesis_milliseconds: Option<f64>,
+    p50_real_time_factor: Option<f64>,
+    p95_real_time_factor: Option<f64>,
+}
+
+fn benchmark(config_path: &Path, paths: &AppPaths, args: BenchmarkArgs) -> Result<()> {
+    let config = Config::load(config_path)?;
+    validate_benchmark_text(&args.text, config.daemon.max_text_bytes)?;
+    let engine = Engine::load(&config, paths)?;
+    let iterations = benchmark_syntheses(
+        &args.text,
+        &args.out_dir,
+        args.warmup,
+        args.iterations,
+        |output| engine.synthesize(&args.text, 1.0, config.model.voice, output),
+        Instant::now,
+    )?;
+    let report = benchmark_report(&config, &engine, &args, iterations)?;
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    Ok(())
+}
+
+fn validate_benchmark_text(text: &str, max_bytes: usize) -> Result<()> {
+    if text.trim().is_empty() {
+        bail!("text must not be empty");
+    }
+    if text.len() > max_bytes {
+        bail!("text exceeds {max_bytes} bytes");
+    }
+    Ok(())
+}
+
+fn benchmark_syntheses<S, N>(
+    text: &str,
+    out_dir: &Path,
+    warmup: u32,
+    iterations: u32,
+    mut synthesize: S,
+    mut now: N,
+) -> Result<Vec<BenchmarkIteration>>
+where
+    S: FnMut(&Path) -> Result<Synthesis>,
+    N: FnMut() -> Instant,
+{
+    if text.trim().is_empty() {
+        bail!("benchmark text must not be empty");
+    }
+    if iterations == 0 {
+        bail!("benchmark iterations must be at least one");
+    }
+    for iteration in 1..=warmup {
+        let output = out_dir.join(format!("warmup-{iteration:04}.wav"));
+        synthesize(&output).with_context(|| format!("warm up synthesis {}", output.display()))?;
+    }
+
+    (1..=iterations)
+        .map(|iteration| {
+            let output = out_dir.join(format!("iteration-{iteration:04}.wav"));
+            let started = now();
+            let synthesis = synthesize(&output)
+                .with_context(|| format!("benchmark synthesis {}", output.display()))?;
+            let elapsed = now().saturating_duration_since(started);
+            if synthesis.sample_rate <= 0 {
+                bail!("synthesis sample rate must be positive");
+            }
+            let audio_duration =
+                Duration::from_secs_f64(synthesis.samples as f64 / synthesis.sample_rate as f64);
+            if audio_duration == Duration::ZERO {
+                bail!("synthesis produced zero-duration audio");
+            }
+            Ok(BenchmarkIteration {
+                iteration,
+                output: synthesis.output,
+                elapsed_milliseconds: milliseconds(elapsed),
+                synthesis_milliseconds: milliseconds(synthesis.synthesis_time),
+                sample_rate: synthesis.sample_rate,
+                samples: synthesis.samples,
+                audio_duration_milliseconds: milliseconds(audio_duration),
+                real_time_factor: synthesis.synthesis_time.as_secs_f64()
+                    / audio_duration.as_secs_f64(),
+            })
+        })
+        .collect()
+}
+
+fn benchmark_report(
+    config: &Config,
+    engine: &impl SpeechEngine,
+    args: &BenchmarkArgs,
+    iterations: Vec<BenchmarkIteration>,
+) -> Result<Value> {
+    let summary = benchmark_summary(&iterations);
+    Ok(json!({
+        "schema_version": 1,
+        "benchmark": "omaspeak-file-synthesis",
+        "text": args.text,
+        "out_dir": args.out_dir,
+        "model_load_milliseconds": engine.load_milliseconds(),
+        "warmup_iterations": args.warmup,
+        "measured_iterations": args.iterations,
+        "backend": {
+            "kind": engine.backend_kind(),
+            "model": engine.model_name(),
+            "requested_runtime": config.backend.runtime,
+            "requested_device": config.backend.canonical_device()?,
+            "effective_runtime": engine.effective_runtime(),
+            "fallback_used": engine.fallback_used(),
+            "placement_verified": false,
+        },
+        "iterations": iterations,
+        "summary": summary,
+    }))
+}
+
+fn benchmark_summary(iterations: &[BenchmarkIteration]) -> BenchmarkSummary {
+    let elapsed = iterations
+        .iter()
+        .map(|iteration| iteration.elapsed_milliseconds)
+        .collect::<Vec<_>>();
+    let synthesis = iterations
+        .iter()
+        .map(|iteration| iteration.synthesis_milliseconds)
+        .collect::<Vec<_>>();
+    let real_time_factors = iterations
+        .iter()
+        .map(|iteration| iteration.real_time_factor)
+        .collect::<Vec<_>>();
+    BenchmarkSummary {
+        samples: iterations.len(),
+        p50_elapsed_milliseconds: percentile(&elapsed, 0.50),
+        p95_elapsed_milliseconds: percentile(&elapsed, 0.95),
+        p50_synthesis_milliseconds: percentile(&synthesis, 0.50),
+        p95_synthesis_milliseconds: percentile(&synthesis, 0.95),
+        p50_real_time_factor: percentile(&real_time_factors, 0.50),
+        p95_real_time_factor: percentile(&real_time_factors, 0.95),
+    }
+}
+
+fn percentile(values: &[f64], percentile: f64) -> Option<f64> {
+    if values.is_empty() {
+        return None;
+    }
+    let mut sorted = values.to_vec();
+    sorted.sort_by(f64::total_cmp);
+    let rank = ((sorted.len() as f64 * percentile).ceil() as usize)
+        .saturating_sub(1)
+        .min(sorted.len() - 1);
+    Some(sorted[rank])
+}
+
+fn milliseconds(duration: Duration) -> f64 {
+    duration.as_secs_f64() * 1_000.0
 }
 
 fn run_daemon(config_path: &Path, paths: &AppPaths) -> Result<()> {
@@ -543,7 +737,7 @@ fn config_command(command: ConfigCommand, path: &Path, paths: &AppPaths) -> Resu
                 println!("{}", serde_json::to_string_pretty(&value)?);
             } else {
                 println!(
-                    "backend.runtime\tdefault|openvino|cuda\nbackend.device\truntime-dependent\nmodel.family\tpiper|vits"
+                    "backend.runtime\tdefault|openvino|cuda\nbackend.device\truntime-dependent\nmodel.family\tpiper|vits|supertonic"
                 );
             }
         }
@@ -586,6 +780,18 @@ fn set_config(config: &mut Config, key: &str, value: &str) -> Result<()> {
         "model.family" => config.model.family = value.into(),
         "model.name" => config.model.name = value.into(),
         "model.directory" => config.model.directory = value.into(),
+        "model.model_file" => config.model.model_file = value.into(),
+        "model.tokens_file" => config.model.tokens_file = value.into(),
+        "model.data_directory" => config.model.data_directory = value.into(),
+        "model.duration_predictor" => config.model.duration_predictor = value.into(),
+        "model.text_encoder" => config.model.text_encoder = value.into(),
+        "model.vector_estimator" => config.model.vector_estimator = value.into(),
+        "model.vocoder" => config.model.vocoder = value.into(),
+        "model.tts_json" => config.model.tts_json = value.into(),
+        "model.unicode_indexer" => config.model.unicode_indexer = value.into(),
+        "model.voice_style" => config.model.voice_style = value.into(),
+        "model.language" => config.model.language = value.into(),
+        "model.steps" => config.model.steps = value.parse()?,
         "model.voice" => config.model.voice = value.parse()?,
         "audio.device" => config.audio.device = value.into(),
         "audio.volume" => config.audio.volume = value.parse()?,
@@ -609,6 +815,20 @@ fn unset_config(config: &mut Config, key: &str) -> Result<()> {
         "model.family" => config.model.family = defaults.model.family,
         "model.name" => config.model.name = defaults.model.name,
         "model.directory" => config.model.directory = defaults.model.directory,
+        "model.model_file" => config.model.model_file = defaults.model.model_file,
+        "model.tokens_file" => config.model.tokens_file = defaults.model.tokens_file,
+        "model.data_directory" => config.model.data_directory = defaults.model.data_directory,
+        "model.duration_predictor" => {
+            config.model.duration_predictor = defaults.model.duration_predictor
+        }
+        "model.text_encoder" => config.model.text_encoder = defaults.model.text_encoder,
+        "model.vector_estimator" => config.model.vector_estimator = defaults.model.vector_estimator,
+        "model.vocoder" => config.model.vocoder = defaults.model.vocoder,
+        "model.tts_json" => config.model.tts_json = defaults.model.tts_json,
+        "model.unicode_indexer" => config.model.unicode_indexer = defaults.model.unicode_indexer,
+        "model.voice_style" => config.model.voice_style = defaults.model.voice_style,
+        "model.language" => config.model.language = defaults.model.language,
+        "model.steps" => config.model.steps = defaults.model.steps,
         "model.voice" => config.model.voice = defaults.model.voice,
         "audio.device" => config.audio.device = defaults.audio.device,
         "audio.volume" => config.audio.volume = defaults.audio.volume,
@@ -658,8 +878,17 @@ fn schema(path: &Path, paths: &AppPaths) -> Result<Value> {
             {"key":"backend.runtime","type":"enum","section":"Backend","label":"Runtime","description":"ONNX Runtime provider","value":config.backend.runtime,"file_value":null,"compiled":true,"restart_required":true,"choices":[{"value":"default","available":true,"capability":"cpu"},{"value":"openvino","available":compiled_capabilities().contains(&"openvino"),"capability":"openvino"},{"value":"cuda","available":compiled_capabilities().contains(&"cuda"),"capability":"cuda"}]},
             {"key":"backend.device","type":"string","section":"Backend","label":"Device","description":"Runtime-specific device","value":config.backend.device,"file_value":null,"compiled":true,"restart_required":true},
             {"key":"backend.threads","type":"integer","section":"Backend","label":"Threads","description":"Inference threads","value":config.backend.threads,"file_value":null,"compiled":true,"restart_required":true,"min":1,"max":64},
-            {"key":"model.family","type":"enum","section":"Model","label":"Family","description":"sherpa TTS model family","value":config.model.family,"file_value":null,"compiled":true,"restart_required":true,"choices":["piper","vits"]},
-            {"key":"model.directory","type":"path","section":"Model","label":"Directory","description":"Model asset directory","value":config.model_directory(paths),"file_value":config.model.directory,"compiled":true,"restart_required":true}],
+            {"key":"model.family","type":"enum","section":"Model","label":"Family","description":"sherpa TTS model family","value":config.model.family,"file_value":null,"compiled":true,"restart_required":true,"choices":["piper","vits","supertonic"]},
+            {"key":"model.directory","type":"path","section":"Model","label":"Directory","description":"Model asset directory","value":config.model_directory(paths),"file_value":config.model.directory,"compiled":true,"restart_required":true},
+            {"key":"model.duration_predictor","type":"string","section":"Model","label":"Duration predictor","description":"Supertonic duration predictor filename","value":config.model.duration_predictor,"file_value":null,"compiled":true,"restart_required":true},
+            {"key":"model.text_encoder","type":"string","section":"Model","label":"Text encoder","description":"Supertonic text encoder filename","value":config.model.text_encoder,"file_value":null,"compiled":true,"restart_required":true},
+            {"key":"model.vector_estimator","type":"string","section":"Model","label":"Vector estimator","description":"Supertonic vector estimator filename","value":config.model.vector_estimator,"file_value":null,"compiled":true,"restart_required":true},
+            {"key":"model.vocoder","type":"string","section":"Model","label":"Vocoder","description":"Supertonic vocoder filename","value":config.model.vocoder,"file_value":null,"compiled":true,"restart_required":true},
+            {"key":"model.tts_json","type":"string","section":"Model","label":"TTS metadata","description":"Supertonic tts.json filename","value":config.model.tts_json,"file_value":null,"compiled":true,"restart_required":true},
+            {"key":"model.unicode_indexer","type":"string","section":"Model","label":"Unicode indexer","description":"Supertonic unicode indexer filename","value":config.model.unicode_indexer,"file_value":null,"compiled":true,"restart_required":true},
+            {"key":"model.voice_style","type":"string","section":"Model","label":"Voice styles","description":"Supertonic voice style filename","value":config.model.voice_style,"file_value":null,"compiled":true,"restart_required":true},
+            {"key":"model.language","type":"enum","section":"Model","label":"Language","description":"Supertonic generation language","value":config.model.language,"file_value":null,"compiled":true,"restart_required":true,"choices":["en","ko","ja","ar","bg","cs","da","de","el","es","et","fi","fr","hi","hr","hu","id","it","lt","lv","nl","pl","pt","ro","ru","sk","sl","sv","tr","uk","vi"]},
+            {"key":"model.steps","type":"integer","section":"Model","label":"Generation steps","description":"Supertonic denoising steps","value":config.model.steps,"file_value":null,"compiled":true,"restart_required":true,"min":1}],
         "collections":[],"constraints":[{"kind":"matrix","keys":["backend.runtime","backend.device"],"rows":[{"backend.runtime":"default","backend.device":["auto","cpu"]},{"backend.runtime":"cuda","backend.device":["auto","gpu"]},{"backend.runtime":"openvino","backend.device":["auto","npu","gpu","cpu","auto:<devices>","hetero:<2+ devices>","multi:<2+ devices>"]}]}]}),
     )
 }

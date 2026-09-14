@@ -10,6 +10,11 @@ fn defaults_to_cpu_runtime() {
             .validate_capabilities(compiled_capabilities())
             .is_ok()
     );
+    if cfg!(feature = "openvino") {
+        assert_eq!(compiled_capabilities(), &["cpu", "openvino"]);
+    } else {
+        assert_eq!(compiled_capabilities(), &["cpu"]);
+    }
 }
 
 #[test]
@@ -68,4 +73,66 @@ fn acceleration_requires_a_compiled_capability() {
         Err(BackendError::CapabilityUnavailable { .. })
     ));
     assert!(config.validate_capabilities(&["cpu", "openvino"]).is_ok());
+}
+
+#[test]
+fn validates_provider_option_file_syntax() {
+    let mut config = BackendConfig::default();
+    config
+        .options
+        .insert("SessionConfig.mlas.disable_kleidiai".into(), "1".into());
+    config
+        .options
+        .insert("ProfilingFilePrefix".into(), "/tmp/omaspeak profile".into());
+    assert!(config.validate_shape().is_ok());
+
+    config.options.insert("bad key".into(), "value".into());
+    assert!(matches!(
+        config.validate_shape(),
+        Err(BackendError::InvalidOptionKey { .. })
+    ));
+    config.options.remove("bad key");
+    config.options.insert("also=bad".into(), "value".into());
+    assert!(matches!(
+        config.validate_shape(),
+        Err(BackendError::InvalidOptionKey { .. })
+    ));
+    config.options.remove("also=bad");
+    config
+        .options
+        .insert("device_type".into(), "NPU\ncache_dir=/tmp".into());
+    assert!(matches!(
+        config.validate_shape(),
+        Err(BackendError::InvalidOptionValue { .. })
+    ));
+}
+
+#[test]
+fn validates_supertonic_component_allowlists() {
+    let mut config = BackendConfig::default();
+    for value in [
+        "",
+        "all",
+        "duration_predictor",
+        "duration_predictor,text_encoder,vocoder",
+    ] {
+        config
+            .options
+            .insert("SherpaOnnx.SupertonicComponents".into(), value.into());
+        config.validate_shape().unwrap();
+    }
+    for value in [
+        "duration_predictor,unknown",
+        "duration_predictor, duration_predictor",
+        "duration_predictor,duration_predictor",
+        "all,vocoder",
+    ] {
+        config
+            .options
+            .insert("SherpaOnnx.SupertonicComponents".into(), value.into());
+        assert_eq!(
+            config.validate_shape(),
+            Err(BackendError::InvalidSupertonicComponents)
+        );
+    }
 }

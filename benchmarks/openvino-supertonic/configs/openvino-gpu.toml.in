@@ -1,0 +1,43 @@
+[backend]
+kind = "sherpa-onnx"
+runtime = "openvino"
+device = "gpu"
+threads = 2
+fallback = "error"
+device_id = 0
+provider_config = ""
+
+[backend.options]
+ProfilingFilePrefix = "@PROFILE_PREFIX@"
+disable_dynamic_shapes = "True"
+
+[model]
+family = "supertonic"
+name = "supertonic-3-int8"
+directory = "@MODEL_DIR@"
+model_file = ""
+tokens_file = ""
+data_directory = ""
+duration_predictor = "duration_predictor.int8.onnx"
+text_encoder = "text_encoder.int8.onnx"
+vector_estimator = "vector_estimator.int8.onnx"
+vocoder = "vocoder.int8.onnx"
+tts_json = "tts.json"
+unicode_indexer = "unicode_indexer.bin"
+voice_style = "voice.bin"
+language = "en"
+steps = 5
+voice = 0
+noise_scale = 0.667
+noise_scale_w = 0.8
+length_scale = 1.0
+
+[model.options]
+
+[audio]
+device = "default"
+volume = 1.0
+
+[daemon]
+queue_capacity = 8
+max_text_bytes = 65536
