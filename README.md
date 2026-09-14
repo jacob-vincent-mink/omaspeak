@@ -311,6 +311,8 @@ See [DEMO.md](DEMO.md) for a current usage walkthrough. Current performance,
 placement, and accuracy evidence is in the
 [GB10 CUDA report](benchmarks/cuda-gb10-2026-09-14.md) and
 [Dell XPS direct OpenVINO report](benchmarks/openvino-supertonic/DELL-XPS-DIRECT-OPENVINO-2026-09-14.md).
+The final cleanup head also has a focused
+[OpenVINO NPU setup smoke](benchmarks/openvino-supertonic/FINAL-HEAD-NPU-SMOKE-2026-09-14.md).
 The [2026-09-13 predecessor demo](benchmarks/historical/2026-09-13-piper.md)
 is retained only as historical evidence.
 

@@ -1,0 +1,638 @@
+{
+  "backends": [
+    {
+      "description": "Local Supertonic synthesis through runtime-loaded inference engines",
+      "kind": "supertonic",
+      "name": "Supertonic"
+    }
+  ],
+  "inventory": [
+    {
+      "configured": false,
+      "device": "auto",
+      "device_accessible": true,
+      "discovered": true,
+      "errors": [],
+      "evidence": {
+        "available_devices": [
+          "cpu"
+        ],
+        "provider_registration": false,
+        "selected_device": "cpu",
+        "versions": [
+          "ONNX Runtime 1.29.0"
+        ]
+      },
+      "loadable": true,
+      "paths": {
+        "device": "auto",
+        "device_id": 0,
+        "fallback": "error",
+        "kind": "supertonic",
+        "library_dirs": [
+          "/usr/lib",
+          "/usr/lib/openvino",
+          "/home/jacob/src/github.com/jacob-vincent-mink/omaspeak/target/release"
+        ],
+        "onnxruntime_library": "/home/jacob/src/github.com/jacob-vincent-mink/omaspeak/target/release/libonnxruntime.so",
+        "openvino_library": null,
+        "openvino_plugins": null,
+        "options": {},
+        "provider_library": null,
+        "runtime": "default",
+        "threads": 2
+      },
+      "ready": true,
+      "remediation": [
+        "Supply ONNX Runtime 1.29.0 libonnxruntime.so; preview with `omaspeak setup runtime --runtime default --device auto --dir /absolute/runtime`, then add --apply to save after a successful probe."
+      ],
+      "runtime": "default",
+      "source": "package",
+      "supported": true
+    },
+    {
+      "configured": false,
+      "device": "cpu",
+      "device_accessible": true,
+      "discovered": true,
+      "errors": [],
+      "evidence": {
+        "available_devices": [
+          "cpu"
+        ],
+        "provider_registration": false,
+        "selected_device": "cpu",
+        "versions": [
+          "ONNX Runtime 1.29.0"
+        ]
+      },
+      "loadable": true,
+      "paths": {
+        "device": "cpu",
+        "device_id": 0,
+        "fallback": "error",
+        "kind": "supertonic",
+        "library_dirs": [
+          "/usr/lib",
+          "/usr/lib/openvino",
+          "/home/jacob/src/github.com/jacob-vincent-mink/omaspeak/target/release"
+        ],
+        "onnxruntime_library": "/home/jacob/src/github.com/jacob-vincent-mink/omaspeak/target/release/libonnxruntime.so",
+        "openvino_library": null,
+        "openvino_plugins": null,
+        "options": {},
+        "provider_library": null,
+        "runtime": "default",
+        "threads": 2
+      },
+      "ready": true,
+      "remediation": [
+        "Supply ONNX Runtime 1.29.0 libonnxruntime.so; preview with `omaspeak setup runtime --runtime default --device cpu --dir /absolute/runtime`, then add --apply to save after a successful probe."
+      ],
+      "runtime": "default",
+      "source": "package",
+      "supported": true
+    },
+    {
+      "configured": false,
+      "device": "auto",
+      "device_accessible": true,
+      "discovered": true,
+      "errors": [],
+      "evidence": {
+        "available_devices": [
+          "CPU",
+          "GPU",
+          "NPU"
+        ],
+        "provider_registration": true,
+        "selected_device": null,
+        "versions": [
+          "OpenVINO 2026.3.1-22476-759c5a6ab8c-makepkg (OpenVINO Runtime)"
+        ]
+      },
+      "loadable": true,
+      "paths": {
+        "device": "auto",
+        "device_id": 0,
+        "fallback": "error",
+        "kind": "supertonic",
+        "library_dirs": [
+          "/usr/lib",
+          "/usr/lib/openvino"
+        ],
+        "onnxruntime_library": null,
+        "openvino_library": "/usr/lib/libopenvino_c.so.2026.3.1",
+        "openvino_plugins": "/usr/lib/openvino/plugins.xml",
+        "options": {},
+        "provider_library": null,
+        "runtime": "openvino",
+        "threads": 2
+      },
+      "ready": true,
+      "remediation": [
+        "Supply Intel OpenVINO libopenvino_c.so, plugins.xml and device plugins; preview with `omaspeak setup runtime --runtime openvino --device auto --dir /absolute/runtime`, then add --apply to save after a successful probe."
+      ],
+      "runtime": "openvino",
+      "source": "configured",
+      "supported": true
+    },
+    {
+      "configured": false,
+      "device": "cpu",
+      "device_accessible": true,
+      "discovered": true,
+      "errors": [],
+      "evidence": {
+        "available_devices": [
+          "CPU",
+          "GPU",
+          "NPU"
+        ],
+        "provider_registration": true,
+        "selected_device": "CPU",
+        "versions": [
+          "OpenVINO 2026.3.1-22476-759c5a6ab8c-makepkg (OpenVINO Runtime)"
+        ]
+      },
+      "loadable": true,
+      "paths": {
+        "device": "cpu",
+        "device_id": 0,
+        "fallback": "error",
+        "kind": "supertonic",
+        "library_dirs": [
+          "/usr/lib",
+          "/usr/lib/openvino"
+        ],
+        "onnxruntime_library": null,
+        "openvino_library": "/usr/lib/libopenvino_c.so.2026.3.1",
+        "openvino_plugins": "/usr/lib/openvino/plugins.xml",
+        "options": {},
+        "provider_library": null,
+        "runtime": "openvino",
+        "threads": 2
+      },
+      "ready": true,
+      "remediation": [
+        "Supply Intel OpenVINO libopenvino_c.so, plugins.xml and device plugins; preview with `omaspeak setup runtime --runtime openvino --device cpu --dir /absolute/runtime`, then add --apply to save after a successful probe."
+      ],
+      "runtime": "openvino",
+      "source": "configured",
+      "supported": true
+    },
+    {
+      "configured": false,
+      "device": "gpu",
+      "device_accessible": true,
+      "discovered": true,
+      "errors": [],
+      "evidence": {
+        "available_devices": [
+          "CPU",
+          "GPU",
+          "NPU"
+        ],
+        "provider_registration": true,
+        "selected_device": "GPU",
+        "versions": [
+          "OpenVINO 2026.3.1-22476-759c5a6ab8c-makepkg (OpenVINO Runtime)"
+        ]
+      },
+      "loadable": true,
+      "paths": {
+        "device": "gpu",
+        "device_id": 0,
+        "fallback": "error",
+        "kind": "supertonic",
+        "library_dirs": [
+          "/usr/lib",
+          "/usr/lib/openvino"
+        ],
+        "onnxruntime_library": null,
+        "openvino_library": "/usr/lib/libopenvino_c.so.2026.3.1",
+        "openvino_plugins": "/usr/lib/openvino/plugins.xml",
+        "options": {},
+        "provider_library": null,
+        "runtime": "openvino",
+        "threads": 2
+      },
+      "ready": true,
+      "remediation": [
+        "Supply Intel OpenVINO libopenvino_c.so, plugins.xml and device plugins; preview with `omaspeak setup runtime --runtime openvino --device gpu --dir /absolute/runtime`, then add --apply to save after a successful probe."
+      ],
+      "runtime": "openvino",
+      "source": "configured",
+      "supported": true
+    },
+    {
+      "configured": true,
+      "device": "npu",
+      "device_accessible": true,
+      "discovered": true,
+      "errors": [],
+      "evidence": {
+        "available_devices": [
+          "CPU",
+          "GPU",
+          "NPU"
+        ],
+        "provider_registration": true,
+        "selected_device": "NPU",
+        "versions": [
+          "OpenVINO 2026.3.1-22476-759c5a6ab8c-makepkg (OpenVINO Runtime)"
+        ]
+      },
+      "loadable": true,
+      "paths": {
+        "device": "npu",
+        "device_id": 0,
+        "fallback": "error",
+        "kind": "supertonic",
+        "library_dirs": [
+          "/usr/lib",
+          "/usr/lib/openvino"
+        ],
+        "onnxruntime_library": null,
+        "openvino_library": "/usr/lib/libopenvino_c.so.2026.3.1",
+        "openvino_plugins": "/usr/lib/openvino/plugins.xml",
+        "options": {},
+        "provider_library": null,
+        "runtime": "openvino",
+        "threads": 2
+      },
+      "ready": true,
+      "remediation": [
+        "Supply Intel OpenVINO libopenvino_c.so, plugins.xml and device plugins; preview with `omaspeak setup runtime --runtime openvino --device npu --dir /absolute/runtime`, then add --apply to save after a successful probe."
+      ],
+      "runtime": "openvino",
+      "source": "configured",
+      "supported": true
+    },
+    {
+      "configured": false,
+      "device": "auto",
+      "device_accessible": false,
+      "discovered": false,
+      "errors": [
+        "required cuda library or plugins.xml missing; inspect paths and supply --dir /absolute/runtime"
+      ],
+      "evidence": {
+        "available_devices": [],
+        "provider_registration": false,
+        "selected_device": null,
+        "versions": []
+      },
+      "loadable": false,
+      "paths": {
+        "device": "auto",
+        "device_id": 0,
+        "fallback": "error",
+        "kind": "supertonic",
+        "library_dirs": [
+          "/usr/lib",
+          "/usr/lib/openvino",
+          "/home/jacob/src/github.com/jacob-vincent-mink/omaspeak/target/release"
+        ],
+        "onnxruntime_library": "/home/jacob/src/github.com/jacob-vincent-mink/omaspeak/target/release/libonnxruntime.so",
+        "openvino_library": null,
+        "openvino_plugins": null,
+        "options": {},
+        "provider_library": null,
+        "runtime": "cuda",
+        "threads": 2
+      },
+      "ready": false,
+      "remediation": [
+        "Supply ONNX Runtime 1.29.0 core, libonnxruntime_providers_cuda.so and NVIDIA vendor libraries; preview with `omaspeak setup runtime --runtime cuda --device auto --dir /absolute/runtime`, then add --apply to save after a successful probe."
+      ],
+      "runtime": "cuda",
+      "source": "candidate",
+      "supported": true
+    },
+    {
+      "configured": false,
+      "device": "gpu",
+      "device_accessible": false,
+      "discovered": false,
+      "errors": [
+        "required cuda library or plugins.xml missing; inspect paths and supply --dir /absolute/runtime"
+      ],
+      "evidence": {
+        "available_devices": [],
+        "provider_registration": false,
+        "selected_device": null,
+        "versions": []
+      },
+      "loadable": false,
+      "paths": {
+        "device": "gpu",
+        "device_id": 0,
+        "fallback": "error",
+        "kind": "supertonic",
+        "library_dirs": [
+          "/usr/lib",
+          "/usr/lib/openvino",
+          "/home/jacob/src/github.com/jacob-vincent-mink/omaspeak/target/release"
+        ],
+        "onnxruntime_library": "/home/jacob/src/github.com/jacob-vincent-mink/omaspeak/target/release/libonnxruntime.so",
+        "openvino_library": null,
+        "openvino_plugins": null,
+        "options": {},
+        "provider_library": null,
+        "runtime": "cuda",
+        "threads": 2
+      },
+      "ready": false,
+      "remediation": [
+        "Supply ONNX Runtime 1.29.0 core, libonnxruntime_providers_cuda.so and NVIDIA vendor libraries; preview with `omaspeak setup runtime --runtime cuda --device gpu --dir /absolute/runtime`, then add --apply to save after a successful probe."
+      ],
+      "runtime": "cuda",
+      "source": "candidate",
+      "supported": true
+    }
+  ],
+  "libraries": {
+    "configured_library_dirs": [
+      "/usr/lib",
+      "/usr/lib/openvino"
+    ],
+    "device_probe_errors": {},
+    "effective_library_dirs": [
+      "/usr/lib",
+      "/usr/lib/openvino",
+      "/home/jacob/src/github.com/jacob-vincent-mink/omaspeak/target/release"
+    ],
+    "environment_library_dirs": [],
+    "missing_library_dirs": [],
+    "onnxruntime_library": "/home/jacob/src/github.com/jacob-vincent-mink/omaspeak/target/release/libonnxruntime.so",
+    "openvino_library": "/usr/lib/libopenvino_c.so.2026.3.1",
+    "openvino_plugins": "/usr/lib/openvino/plugins.xml",
+    "package_library_dirs": [
+      "/home/jacob/src/github.com/jacob-vincent-mink/omaspeak/target/release"
+    ],
+    "provider_library": null,
+    "remediation": [
+      "set backend.library_dirs or OMASPEAK_LIBRARY_PATH to directories containing the cuda provider and its vendor runtime libraries"
+    ],
+    "runtime_device_accessible": {},
+    "runtime_loadable": {
+      "cuda": false,
+      "default": true,
+      "openvino": true
+    },
+    "runtime_probe_errors": {}
+  },
+  "loader_environment": null,
+  "models": [
+    {
+      "archive_root": "sherpa-onnx-supertonic-3-tts-int8-2026-05-11",
+      "archive_sha256": "82fa96f91c4ef8abaae3a14a3f4153facf88bed821d1f7331cec2700f432c427",
+      "archive_size": 128774318,
+      "archive_url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/sherpa-onnx-supertonic-3-tts-int8-2026-05-11.tar.bz2",
+      "backend": "supertonic",
+      "description": "Supertonic 3 multilingual int8 (31 languages; OpenVINO evaluation model)",
+      "downloadable": true,
+      "duration_predictor": "duration_predictor.int8.onnx",
+      "family": "supertonic",
+      "id": "supertonic-3-int8",
+      "language": "en",
+      "license": "OpenRAIL-M",
+      "license_file": "MODEL-LICENSE",
+      "license_sha256": "0d944a9110fed9a9602d60e0423a272903e7bd21ab060490774efc77c2275e9f",
+      "license_status": "verified",
+      "license_url": "https://huggingface.co/Supertone/supertonic-3/blob/724fb5abbf5502583fb520898d45929e62f02c0b/LICENSE",
+      "name": "supertonic-3-int8",
+      "npu_capable": false,
+      "openvino_capable": true,
+      "required_files": [
+        {
+          "path": "duration_predictor.int8.onnx",
+          "sha256": "c3eb91414d5ff8a7a239b7fe9e34e7e2bf8a8140d8375ffb14718b1c639325db",
+          "size": 3700147
+        },
+        {
+          "path": "text_encoder.int8.onnx",
+          "sha256": "c7befd5ea8c3119769e8a6c1486c4edc6a3bc8365c67621c881bbb774b9902ff",
+          "size": 36416150
+        },
+        {
+          "path": "vector_estimator.int8.onnx",
+          "sha256": "20cd86fa5c6effedfda0e7cffe5b0569ca401c440a0c3a1d72bf39286c0db3fd",
+          "size": 78400833
+        },
+        {
+          "path": "vocoder.int8.onnx",
+          "sha256": "e923d60f53f95eb1ce235f1dc33ec56d9c057823c96fa6f8acf98f32b0da6152",
+          "size": 25991073
+        },
+        {
+          "path": "tts.json",
+          "sha256": "42078d3aef1cd43ab43021f3c54f47d2d75ceb4e75f627f118890128b06a0d09",
+          "size": 8253
+        },
+        {
+          "path": "unicode_indexer.bin",
+          "sha256": "8402ca48e5189a8950138580b0fff64db6f072f24ac07cd54ba8b2fbb9883b30",
+          "size": 262144
+        },
+        {
+          "path": "voice.bin",
+          "sha256": "67d5209b0ee8ce6c74105ffbe12fe6a7628aea3b4ba2fcb308a4a67938a93ce8",
+          "size": 517168
+        }
+      ],
+      "requires_acceptance": true,
+      "source_revision": "724fb5abbf5502583fb520898d45929e62f02c0b",
+      "steps": 5,
+      "supplemental_files": [],
+      "text_encoder": "text_encoder.int8.onnx",
+      "tts_json": "tts.json",
+      "unicode_indexer": "unicode_indexer.bin",
+      "vector_estimator": "vector_estimator.int8.onnx",
+      "vocoder": "vocoder.int8.onnx",
+      "voice_style": "voice.bin",
+      "voices": [
+        {
+          "id": 0,
+          "name": "M1"
+        },
+        {
+          "id": 1,
+          "name": "M2"
+        },
+        {
+          "id": 2,
+          "name": "M3"
+        },
+        {
+          "id": 3,
+          "name": "M4"
+        },
+        {
+          "id": 4,
+          "name": "M5"
+        },
+        {
+          "id": 5,
+          "name": "F1"
+        },
+        {
+          "id": 6,
+          "name": "F2"
+        },
+        {
+          "id": 7,
+          "name": "F3"
+        },
+        {
+          "id": 8,
+          "name": "F4"
+        },
+        {
+          "id": 9,
+          "name": "F5"
+        }
+      ]
+    },
+    {
+      "archive_root": "sherpa-onnx-supertonic-3-tts-int8-2026-05-11",
+      "archive_sha256": "82fa96f91c4ef8abaae3a14a3f4153facf88bed821d1f7331cec2700f432c427",
+      "archive_size": 128774318,
+      "archive_url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/sherpa-onnx-supertonic-3-tts-int8-2026-05-11.tar.bz2",
+      "backend": "supertonic",
+      "description": "Supertonic 3 for Intel NPU (FP32 vector estimator; 31 languages)",
+      "downloadable": true,
+      "duration_predictor": "duration_predictor.int8.onnx",
+      "family": "supertonic",
+      "id": "supertonic-3-npu",
+      "language": "en",
+      "license": "OpenRAIL-M",
+      "license_file": "MODEL-LICENSE",
+      "license_sha256": "0d944a9110fed9a9602d60e0423a272903e7bd21ab060490774efc77c2275e9f",
+      "license_status": "verified-modified",
+      "license_url": "https://huggingface.co/Supertone/supertonic-3/blob/724fb5abbf5502583fb520898d45929e62f02c0b/LICENSE",
+      "name": "supertonic-3-npu",
+      "npu_capable": true,
+      "openvino_capable": true,
+      "required_files": [
+        {
+          "path": "duration_predictor.int8.onnx",
+          "sha256": "c3eb91414d5ff8a7a239b7fe9e34e7e2bf8a8140d8375ffb14718b1c639325db",
+          "size": 3700147
+        },
+        {
+          "path": "text_encoder.int8.onnx",
+          "sha256": "c7befd5ea8c3119769e8a6c1486c4edc6a3bc8365c67621c881bbb774b9902ff",
+          "size": 36416150
+        },
+        {
+          "path": "vector_estimator.onnx",
+          "sha256": "883ac868ea0275ef0e991524dc64f16b3c0376efd7c320af6b53f5b780d7c61c",
+          "size": 256534781
+        },
+        {
+          "path": "vocoder.int8.onnx",
+          "sha256": "e923d60f53f95eb1ce235f1dc33ec56d9c057823c96fa6f8acf98f32b0da6152",
+          "size": 25991073
+        },
+        {
+          "path": "tts.json",
+          "sha256": "42078d3aef1cd43ab43021f3c54f47d2d75ceb4e75f627f118890128b06a0d09",
+          "size": 8253
+        },
+        {
+          "path": "unicode_indexer.bin",
+          "sha256": "8402ca48e5189a8950138580b0fff64db6f072f24ac07cd54ba8b2fbb9883b30",
+          "size": 262144
+        },
+        {
+          "path": "voice.bin",
+          "sha256": "67d5209b0ee8ce6c74105ffbe12fe6a7628aea3b4ba2fcb308a4a67938a93ce8",
+          "size": 517168
+        }
+      ],
+      "requires_acceptance": true,
+      "source_revision": "724fb5abbf5502583fb520898d45929e62f02c0b",
+      "steps": 5,
+      "supplemental_files": [
+        {
+          "path": "vector_estimator.onnx",
+          "sha256": "883ac868ea0275ef0e991524dc64f16b3c0376efd7c320af6b53f5b780d7c61c",
+          "size": 256534781,
+          "supersedes": "vector_estimator.int8.onnx",
+          "url": "https://huggingface.co/Supertone/supertonic-3/resolve/724fb5abbf5502583fb520898d45929e62f02c0b/onnx/vector_estimator.onnx?download=true"
+        }
+      ],
+      "text_encoder": "text_encoder.int8.onnx",
+      "tts_json": "tts.json",
+      "unicode_indexer": "unicode_indexer.bin",
+      "vector_estimator": "vector_estimator.onnx",
+      "vocoder": "vocoder.int8.onnx",
+      "voice_style": "voice.bin",
+      "voices": [
+        {
+          "id": 0,
+          "name": "M1"
+        },
+        {
+          "id": 1,
+          "name": "M2"
+        },
+        {
+          "id": 2,
+          "name": "M3"
+        },
+        {
+          "id": 3,
+          "name": "M4"
+        },
+        {
+          "id": 4,
+          "name": "M5"
+        },
+        {
+          "id": 5,
+          "name": "F1"
+        },
+        {
+          "id": 6,
+          "name": "F2"
+        },
+        {
+          "id": 7,
+          "name": "F3"
+        },
+        {
+          "id": 8,
+          "name": "F4"
+        },
+        {
+          "id": 9,
+          "name": "F5"
+        }
+      ]
+    }
+  ],
+  "runtime_device_matrix": {
+    "cuda": [
+      "auto",
+      "gpu"
+    ],
+    "default": [
+      "auto",
+      "cpu"
+    ],
+    "openvino": [
+      "auto",
+      "cpu",
+      "gpu",
+      "npu"
+    ]
+  },
+  "supported_capabilities": [
+    "cpu",
+    "openvino",
+    "cuda"
+  ]
+}

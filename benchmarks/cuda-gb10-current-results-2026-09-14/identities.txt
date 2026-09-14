@@ -1,0 +1,5 @@
+306123d74f85acb298b3f3d0b2654f2807746ee6c309863d0fdfc06c02ab1a4c  /tmp/omaspeak-61ac634-proof/target/release/omaspeak
+cbeb3c5cf2de5a47f986c12b1e8901404880ab6abb27299ffdef2040125f984f  /tmp/oma-native-cuda/runtime/lib/libonnxruntime.so.1.29.0
+d7aaeea019ba6d4e3a9c03f0a6a863bf39c87d4c79a6d31466c646abe2b40f07  /tmp/oma-native-cuda/runtime/lib/libonnxruntime_providers_cuda.so
+7bdba2b5b08cbdc85203c41cc94598adedb1bcfea7cb574ca693ac73599e4e63  /usr/local/cuda-13.0/targets/sbsa-linux/lib/libcudart.so.13
+5137181028cb155b13c5cff9f18e7faeacb2a457b0b75c42545fd5e5e3fb2b54  /tmp/omawake-cudnn/sdk/lib64/libcudnn.so.9

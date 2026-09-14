@@ -1,0 +1,2 @@
+/tmp/omaspeak-61ac634-proof/audio/iteration-0001.wav: RIFF (little-endian) data, WAVE audio, Microsoft PCM, 16 bit, mono 44100 Hz
+/tmp/omaspeak-61ac634-proof/audio/warmup-0001.wav:    RIFF (little-endian) data, WAVE audio, Microsoft PCM, 16 bit, mono 44100 Hz
