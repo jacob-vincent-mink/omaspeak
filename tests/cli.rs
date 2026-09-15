@@ -418,6 +418,59 @@ fn run_with_input(root: &Path, args: &[&str], input: &str) -> Output {
 
 #[cfg(unix)]
 #[test]
+fn no_text_on_a_terminal_fails_immediately_while_piped_text_remains_supported() {
+    assert!(
+        Command::new("script").arg("--version").output().is_ok(),
+        "the real-PTY stdin regression test requires util-linux script(1)"
+    );
+    let root = sandbox();
+    let mut child = Command::new("script")
+        .args([
+            "-qefc",
+            "\"$OMASPEAK_TEST_BINARY\" say --no-play",
+            "/dev/null",
+        ])
+        .env("OMASPEAK_TEST_BINARY", env!("CARGO_BIN_EXE_omaspeak"))
+        .env("HOME", &root)
+        .env("XDG_CONFIG_HOME", root.join("config"))
+        .env("XDG_DATA_HOME", root.join("data"))
+        .env("XDG_STATE_HOME", root.join("state"))
+        .env("XDG_RUNTIME_DIR", root.join("run"))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let held_input = child.stdin.take().unwrap();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while child.try_wait().unwrap().is_none() {
+        if Instant::now() >= deadline {
+            child.kill().unwrap();
+            panic!("omaspeak say blocked while reading interactive stdin");
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    drop(held_input);
+    let output = child.wait_with_output().unwrap();
+    assert!(!output.status.success());
+    let diagnostic = format!("{}{}", stdout(&output), stderr(&output));
+    assert!(
+        diagnostic.contains("provide text as an argument or pipe text to stdin"),
+        "{diagnostic}"
+    );
+
+    let server = serve_once(&root, ResultPayload::Shutdown).unwrap();
+    let piped = run_with_input(&root, &["say", "--no-play"], "still piped\n");
+    assert!(piped.status.success(), "{}", stderr(&piped));
+    let request = server.join().unwrap();
+    assert_eq!(
+        serde_json::to_value(request).unwrap()["text"],
+        "still piped\n"
+    );
+}
+
+#[cfg(unix)]
+#[test]
 fn guided_setup_accepts_arrow_keys_and_enter_in_a_real_pty() {
     assert!(
         Command::new("script").arg("--version").output().is_ok(),

@@ -1,6 +1,6 @@
-# Omaspeak 0.0.1-rc.3
+# Omaspeak 0.0.1
 
-This candidate introduces the greenfield native-provider architecture:
+This release introduces the greenfield native-provider architecture:
 
 - audio.cpp GGUF synthesis is the default and ships as a small CPU provider;
 - complete external audio.cpp builds support CPU, CUDA, Vulkan, and HIP/ROCm;

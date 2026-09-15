@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 0.0.1 - 2026-09-15
+
+- Promoted the validated rc.3 native-provider architecture to the first stable
+  release.
+- Kept runtime transitions provider-specific: the packaged CPU provider is
+  reused when leaving OpenVINO, while accelerator selections still require a
+  matching complete external provider.
+
 ## 0.0.1-rc.3 - 2026-09-15
 
 - Made audio.cpp with Supertonic 3 GGUF the default inference provider.

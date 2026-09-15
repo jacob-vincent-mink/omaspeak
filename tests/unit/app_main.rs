@@ -1317,7 +1317,7 @@ fn say_request_supports_explicit_text_and_piped_stdin_defaults() {
     config = Config::default();
     config.model.voice = 2;
     let expected_output = root.join("spoken.wav");
-    let received = build_say_request(
+    let received = build_say_request_with_terminal(
         &config,
         &paths,
         SayArgs {
@@ -1328,6 +1328,7 @@ fn say_request_supports_explicit_text_and_piped_stdin_defaults() {
             no_play: true,
         },
         std::io::empty(),
+        false,
     )
     .unwrap();
     assert_eq!(received.protocol, 1);
@@ -1351,7 +1352,7 @@ fn say_request_supports_explicit_text_and_piped_stdin_defaults() {
         command => panic!("unexpected command: {command:?}"),
     }
 
-    let received = build_say_request(
+    let received = build_say_request_with_terminal(
         &config,
         &paths,
         SayArgs {
@@ -1362,6 +1363,7 @@ fn say_request_supports_explicit_text_and_piped_stdin_defaults() {
             no_play: false,
         },
         std::io::Cursor::new("piped text\n"),
+        false,
     )
     .unwrap();
     match received.command {
@@ -1385,7 +1387,7 @@ fn say_request_supports_explicit_text_and_piped_stdin_defaults() {
     }
 
     assert!(
-        build_say_request(
+        build_say_request_with_terminal(
             &config,
             &paths,
             SayArgs {
@@ -1396,8 +1398,35 @@ fn say_request_supports_explicit_text_and_piped_stdin_defaults() {
                 no_play: true,
             },
             std::io::empty(),
+            false,
         )
         .is_err()
+    );
+
+    struct UnreadableTerminal;
+    impl Read for UnreadableTerminal {
+        fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
+            panic!("interactive stdin must not be read")
+        }
+    }
+    let error = build_say_request_with_terminal(
+        &config,
+        &paths,
+        SayArgs {
+            text: None,
+            voice: None,
+            speed: None,
+            out: None,
+            no_play: true,
+        },
+        UnreadableTerminal,
+        true,
+    )
+    .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("provide text as an argument or pipe text to stdin")
     );
 }
 
@@ -4016,6 +4045,94 @@ fn runtime_picker_handles_explicit_directories_and_cancelled_input_without_probi
     assert_eq!(choice.device_id, Some(0));
     assert_eq!(choice.directory.as_deref(), Some(directory.as_path()));
     assert_eq!(selected.input_calls, 1);
+}
+
+#[test]
+fn runtime_picker_uses_packaged_cpu_after_openvino_without_reusing_its_directory() {
+    struct InputSelector {
+        choices: VecDeque<Option<usize>>,
+        inputs: VecDeque<Option<String>>,
+        input_calls: usize,
+    }
+    impl SetupSelector for InputSelector {
+        fn select(&mut self, _: &str, _: &str, _: &[MenuItem], _: usize) -> Result<Option<usize>> {
+            Ok(self.choices.pop_front().flatten())
+        }
+        fn input(&mut self, _: &str, _: &str) -> Result<Option<String>> {
+            self.input_calls += 1;
+            Ok(self.inputs.pop_front().flatten())
+        }
+    }
+
+    let root = sandbox();
+    let app_paths = paths(&root);
+    let openvino = root.join("openvino");
+    fs::create_dir_all(&openvino).unwrap();
+    fs::write(openvino.join("libopenvino_c.so"), b"openvino").unwrap();
+    fs::write(openvino.join("plugins.xml"), b"<ie/>").unwrap();
+    let packaged = root.join("package/lib/libaudiocpp.so");
+    fs::create_dir_all(packaged.parent().unwrap()).unwrap();
+    fs::write(&packaged, b"packaged audio.cpp").unwrap();
+
+    let mut config = Config::default();
+    config.backend.kind = "supertonic".into();
+    config.backend.runtime = Runtime::Openvino;
+    config.backend.device = "npu".into();
+    config.backend.library_dirs = vec![openvino.clone()];
+    config.backend.openvino_library = Some(openvino.join("libopenvino_c.so"));
+    config.backend.openvino_plugins = Some(openvino.join("plugins.xml"));
+    config.save(&app_paths.config_file).unwrap();
+    let locations = omaspeak::runtime::inspect(&config.backend, &app_paths.config_file);
+
+    let mut cpu = InputSelector {
+        choices: [Some(0), Some(1)].into(),
+        inputs: [].into(),
+        input_calls: 0,
+    };
+    let choice = choose_runtime_with_discovery(
+        config.clone(),
+        locations.clone(),
+        Some(packaged.clone()),
+        Some(packaged.clone()),
+        &mut cpu,
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(choice.runtime, Runtime::Default);
+    assert_eq!(choice.device, "cpu");
+    assert!(choice.directory.is_none());
+    assert_eq!(cpu.input_calls, 0);
+
+    let candidate = runtime_configuration_candidate(
+        &app_paths.config_file,
+        choice.runtime,
+        &choice.device,
+        choice.device_id,
+        choice.directory.as_deref(),
+    )
+    .unwrap();
+    assert!(candidate.backend.library_dirs.is_empty());
+    assert!(candidate.backend.openvino_library.is_none());
+    assert!(candidate.backend.openvino_plugins.is_none());
+
+    let accelerator = root.join("audiocpp-cuda");
+    let mut cuda = InputSelector {
+        choices: [Some(2), Some(1)].into(),
+        inputs: [Some("0".into()), Some(accelerator.display().to_string())].into(),
+        input_calls: 0,
+    };
+    let choice = choose_runtime_with_discovery(
+        config,
+        locations,
+        Some(packaged.clone()),
+        Some(packaged),
+        &mut cuda,
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(choice.runtime, Runtime::Cuda);
+    assert_eq!(choice.directory.as_deref(), Some(accelerator.as_path()));
+    assert_eq!(cuda.input_calls, 2);
 }
 
 #[test]

@@ -511,7 +511,9 @@ fn select_config_path(config: Option<PathBuf>, paths: &mut AppPaths) -> PathBuf 
 
 fn say(config_path: &Path, paths: &AppPaths, args: SayArgs) -> Result<()> {
     let config = Config::load(config_path)?;
-    let request = build_say_request(&config, paths, args, std::io::stdin())?;
+    let stdin = std::io::stdin();
+    let input_is_terminal = stdin.is_terminal();
+    let request = build_say_request_with_terminal(&config, paths, args, stdin, input_is_terminal)?;
     let response = send_or_handle_locally(&paths.socket(), request, |request| {
         let engine = Engine::load(&config, paths)?;
         Ok(handle_request(&engine, &config, paths, request))
@@ -583,15 +585,19 @@ fn resolve_voice(config: &Config, requested: Option<&str>) -> Result<i32> {
     Ok(voice)
 }
 
-fn build_say_request(
+fn build_say_request_with_terminal(
     config: &Config,
     paths: &AppPaths,
     args: SayArgs,
     mut input: impl Read,
+    input_is_terminal: bool,
 ) -> Result<Request> {
     let text = match args.text {
         Some(text) => text,
         None => {
+            if input_is_terminal {
+                bail!("provide text as an argument or pipe text to stdin");
+            }
             let mut text = String::new();
             input.read_to_string(&mut text).context("read stdin")?;
             text
@@ -2285,6 +2291,26 @@ fn choose_runtime(
     // not prevent the user from opening the picker to replace it.
     let audio_cpp_library =
         omaspeak::audio_cpp::discover_provider_library(&config, config_path).unwrap_or(None);
+    let packaged_audio_cpp_library = omaspeak::runtime::find_versioned_library(
+        &locations.package_library_dirs,
+        "libaudiocpp.so",
+    );
+    choose_runtime_with_discovery(
+        config,
+        locations,
+        audio_cpp_library,
+        packaged_audio_cpp_library,
+        selector,
+    )
+}
+
+fn choose_runtime_with_discovery(
+    config: Config,
+    locations: omaspeak::runtime::LibraryPathReport,
+    audio_cpp_library: Option<PathBuf>,
+    packaged_audio_cpp_library: Option<PathBuf>,
+    selector: &mut impl SetupSelector,
+) -> Result<Option<RuntimeSelection>> {
     let runtimes = [
         (
             Runtime::Default,
@@ -2405,7 +2431,8 @@ fn choose_runtime(
     let loadable = match runtime {
         Runtime::Openvino => locations.runtime_loadable.get("openvino") == Some(&true),
         Runtime::Default => {
-            config.backend.runtime == Runtime::Default && audio_cpp_library.is_some()
+            packaged_audio_cpp_library.is_some()
+                || (config.backend.runtime == Runtime::Default && audio_cpp_library.is_some())
         }
         Runtime::Cuda | Runtime::Vulkan | Runtime::Hip => {
             config.backend.runtime == runtime
