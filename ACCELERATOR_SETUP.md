@@ -109,6 +109,12 @@ or no longer matches the model/runtime identity. Accelerator validation is
 machine-specific; `omaspeak setup runtime --json`, `omaspeak setup check`, and
 `omaspeak benchmark` provide the evidence to retain for a proof run.
 
+Intel's NPU compiler may persist only part of the static plan while another
+application holds an NPU inference session. Omaspeak keeps the incomplete cache
+out of the active location and retries five times. If setup still reports fewer
+than ten blobs, close other NPU applications and rerun
+`omaspeak setup cache --prepare`; setup never stops them on your behalf.
+
 Keep validation file-only:
 
 ```bash

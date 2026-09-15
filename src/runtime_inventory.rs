@@ -431,7 +431,7 @@ fn prepare_npu_cache_with(
             }
             if attempt == 5 {
                 bail!(
-                    "OpenVINO persisted {count} of {} required NPU cache blobs after 5 complete static-plan passes",
+                    "OpenVINO persisted {count} of {} required NPU cache blobs after 5 complete static-plan passes; close other applications using the NPU, then retry `omaspeak setup cache --prepare`",
                     crate::supertonic::NPU_COMPILED_MODELS
                 );
             }

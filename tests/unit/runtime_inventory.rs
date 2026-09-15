@@ -650,6 +650,7 @@ fn npu_cache_transaction_rejects_bad_reports_and_exhausted_persistence() {
     .unwrap_err();
     assert_eq!(calls.get(), 5);
     assert!(format!("{error:#}").contains("after 5 complete static-plan passes"));
+    assert!(format!("{error:#}").contains("close other applications using the NPU"));
 }
 
 #[test]

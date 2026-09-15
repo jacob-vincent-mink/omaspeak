@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.0.1-rc.3 - 2026-09-15
+
 - Made audio.cpp with Supertonic 3 GGUF the default inference provider.
 - Added runtime-loaded complete audio.cpp providers for CPU, CUDA, Vulkan, and
   HIP/ROCm.

@@ -1,4 +1,4 @@
-# Omaspeak 0.0.1 release candidate
+# Omaspeak 0.0.1-rc.3
 
 This candidate introduces the greenfield native-provider architecture:
 
