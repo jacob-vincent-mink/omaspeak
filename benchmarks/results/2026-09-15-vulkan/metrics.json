@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "audio_cpp_revision": "e9ff20042ec85af960a720368c6927cda19ad65f",
+  "provider_sha256": "2ebb97d4cf2d0251d88b8f4b1eaee9544607b6562c2722d3979bc85cba179468",
+  "reports": {
+    "speak-cpu-benchmark.json": {
+      "sha256": "cade7e530d8081dee2e42a5dd5007c62802e13b7fb0c4adf2097f67ea3ebb993",
+      "backend": {
+        "effective_runtime": "default",
+        "fallback_used": false,
+        "kind": "audiocpp",
+        "model": "supertonic-3-gguf",
+        "placement_evidence": "audio.cpp CPU backend initialized in a supervised worker",
+        "placement_verified": true,
+        "requested_device": "cpu",
+        "requested_runtime": "default"
+      },
+      "model_load_milliseconds": 1474,
+      "summary": {
+        "p50_elapsed_milliseconds": 1946.0758870000002,
+        "p50_real_time_factor": 0.5312726753708001,
+        "p50_synthesis_milliseconds": 1945.481987,
+        "p95_elapsed_milliseconds": 1947.766967,
+        "p95_real_time_factor": 0.5317425631632627,
+        "p95_synthesis_milliseconds": 1947.2026819999999,
+        "samples": 5
+      }
+    },
+    "speak-vulkan-benchmark.json": {
+      "sha256": "f5bf26d413d2ea26348c48cd34a7b6de384d63db55b60c34662251f7a71749cb",
+      "backend": {
+        "effective_runtime": "vulkan",
+        "fallback_used": false,
+        "kind": "audiocpp",
+        "model": "supertonic-3-gguf",
+        "placement_evidence": "audio.cpp accepted the requested backend while creating the model session",
+        "placement_verified": true,
+        "requested_device": "gpu",
+        "requested_runtime": "vulkan"
+      },
+      "model_load_milliseconds": 1699,
+      "summary": {
+        "p50_elapsed_milliseconds": 164.889531,
+        "p50_real_time_factor": 0.04458372904551203,
+        "p50_synthesis_milliseconds": 163.15420699999999,
+        "p95_elapsed_milliseconds": 168.038476,
+        "p95_real_time_factor": 0.04540362085320234,
+        "p95_synthesis_milliseconds": 166.154602,
+        "samples": 5
+      }
+    }
+  },
+  "source_revision": "376fc5b90582668d4213a6a08982670b9a124e80",
+  "binary_sha256": "9f1a60ef94917544d4584924b54261c4f8fce79a81b3e4d610ab9f6f01466eb4",
+  "release": "v0.0.1-rc.3"
+}

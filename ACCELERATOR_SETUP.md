@@ -45,6 +45,10 @@ cmake -S /tmp/audio.cpp -B /tmp/audio.cpp-build \
 cmake --build /tmp/audio.cpp-build --parallel --target audiocpp
 ```
 
+For one provider shared with Omawake, use
+`-DAUDIOCPP_MODELS=moonshine_asr,supertonic`. The pinned audio.cpp C API
+also includes Silero VAD automatically.
+
 For a local CUDA build, add `-DCMAKE_CUDA_ARCHITECTURES=native` to reduce build
 time. Omit it when building a provider for other GPU generations. audio.cpp's
 [Linux build guide](https://github.com/0xShug0/audio.cpp/blob/e9ff20042ec85af960a720368c6927cda19ad65f/docs/build/linux.md)
