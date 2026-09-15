@@ -1,3 +1,4 @@
+pub mod audio_cpp;
 pub mod backend;
 pub mod catalog;
 pub mod config;

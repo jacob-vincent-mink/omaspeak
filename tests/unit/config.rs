@@ -20,7 +20,9 @@ fn partial_config_uses_defaults() {
     assert_eq!(cfg.model.language, "en");
     assert_eq!(cfg.model.steps, 5);
     assert_eq!(cfg.model.duration_predictor, "duration_predictor.int8.onnx");
+    assert!(cfg.model.file.is_empty());
     assert_eq!(cfg.backend.threads, 2);
+    assert!(cfg.backend.library.is_none());
 }
 
 #[test]

@@ -55,6 +55,9 @@ pub struct ModelConfig {
     pub family: String,
     pub name: String,
     pub directory: String,
+    /// Single-file model used by native providers such as audio.cpp.
+    /// Relative paths resolve inside `directory`.
+    pub file: String,
     pub duration_predictor: String,
     pub text_encoder: String,
     pub vector_estimator: String,
@@ -74,6 +77,7 @@ impl Default for ModelConfig {
             family: "supertonic".into(),
             name: "supertonic-3-int8".into(),
             directory: String::new(),
+            file: String::new(),
             duration_predictor: "duration_predictor.int8.onnx".into(),
             text_encoder: "text_encoder.int8.onnx".into(),
             vector_estimator: "vector_estimator.int8.onnx".into(),

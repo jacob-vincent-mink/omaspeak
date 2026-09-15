@@ -17,6 +17,40 @@ use std::os::unix::fs::PermissionsExt;
 static NEXT: AtomicUsize = AtomicUsize::new(0);
 
 #[test]
+fn audiocpp_worker_reports_a_clean_loader_error_without_a_core_dump() {
+    let library = [
+        "/usr/lib/libm.so.6",
+        "/usr/lib64/libm.so.6",
+        "/lib/x86_64-linux-gnu/libm.so.6",
+    ]
+    .into_iter()
+    .map(PathBuf::from)
+    .find(|path| path.is_file());
+    let Some(library) = library else {
+        return;
+    };
+    let root = sandbox();
+    let model = root.join("model.gguf");
+    fs::write(&model, b"model is never reached").unwrap();
+    let config_path = root.join("config/omaspeak/config.toml");
+    let mut config = Config::default();
+    config.backend.kind = "audiocpp".into();
+    config.backend.library = Some(library);
+    config.model.file = model.display().to_string();
+    config.save(&config_path).unwrap();
+
+    let output = run(&root, &["say", "loader check", "--no-play"]);
+    assert_eq!(output.status.code(), Some(1), "{}", stderr(&output));
+    let error = stderr(&output);
+    assert!(
+        error.contains("audio.cpp worker initialization failed"),
+        "{error}"
+    );
+    assert!(error.contains("audiocpp_abi_version"), "{error}");
+    assert!(!root.join("core").exists());
+}
+
+#[test]
 fn runtime_apply_rejects_bad_abi_and_native_process_exit_without_writes() {
     let root = sandbox();
     let directory = root.join("native");

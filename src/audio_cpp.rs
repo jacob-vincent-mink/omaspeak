@@ -1,0 +1,889 @@
+//! Supervised audio.cpp provider.
+//!
+//! The application process never loads optional native inference code. A
+//! private worker dynamically loads one complete audio.cpp installation and
+//! keeps its model and session alive across synthesis requests.
+
+use std::ffi::{CStr, CString, c_char, c_int, c_void};
+use std::io::{Read, Write};
+use std::os::fd::{FromRawFd, OwnedFd};
+use std::os::unix::net::UnixStream;
+use std::path::{Path, PathBuf};
+use std::process::{Child, Command, Stdio};
+use std::sync::Mutex;
+use std::time::Duration;
+
+use anyhow::{Context, Result, anyhow, bail};
+use libloading::Library;
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
+
+use crate::backend::Runtime;
+use crate::config::Config;
+use crate::engine::TtsBackend;
+use crate::paths::AppPaths;
+
+const WORKER_FD: c_int = libc::STDIN_FILENO;
+const AUDIOCPP_ABI_MAJOR: u32 = 0;
+const AUDIOCPP_ABI_MIN_MINOR: u32 = 1;
+const SUPERTONIC_SAMPLE_RATE: i32 = 44_100;
+const SUPERTONIC_VOICES: i32 = 10;
+const MAX_CONTROL_FRAME: usize = 1024 * 1024;
+const MAX_PCM_SAMPLES: usize = 64 * 1024 * 1024;
+const WORKER_TIMEOUT: Duration = Duration::from_secs(300);
+
+type Status = c_int;
+type Handle = *mut c_void;
+
+#[repr(C)]
+struct ModelConfig {
+    family_hint: *const c_char,
+    config_id: *const c_char,
+    weight_id: *const c_char,
+    model_spec_override: *const c_char,
+}
+
+#[repr(C)]
+struct NativeBackendConfig {
+    backend: *const c_char,
+    device: c_int,
+    threads: c_int,
+}
+
+type LastError = unsafe extern "C" fn() -> *const c_char;
+type AbiVersion = unsafe extern "C" fn() -> u32;
+type RegistryCreate = unsafe extern "C" fn(*const c_char, *mut Handle) -> Status;
+type RegistryFree = unsafe extern "C" fn(Handle);
+type ModelLoad =
+    unsafe extern "C" fn(Handle, *const c_char, *const ModelConfig, Handle, *mut Handle) -> Status;
+type ModelFree = unsafe extern "C" fn(Handle);
+type ModelSupports = unsafe extern "C" fn(Handle, *const c_char, *const c_char) -> c_int;
+type SessionCreate = unsafe extern "C" fn(
+    Handle,
+    *const c_char,
+    *const c_char,
+    *const NativeBackendConfig,
+    Handle,
+    *mut Handle,
+) -> Status;
+type SessionFree = unsafe extern "C" fn(Handle);
+type SessionRun = unsafe extern "C" fn(Handle, Handle, *mut Handle) -> Status;
+type RequestCreate = unsafe extern "C" fn() -> Handle;
+type RequestFree = unsafe extern "C" fn(Handle);
+type RequestSetText = unsafe extern "C" fn(Handle, *const c_char, *const c_char) -> Status;
+type RequestSetVoiceId = unsafe extern "C" fn(Handle, *const c_char) -> Status;
+type RequestSetSpeakingRate = unsafe extern "C" fn(Handle, f32) -> Status;
+type RequestSetOption = unsafe extern "C" fn(Handle, *const c_char, *const c_char) -> Status;
+type ResultAudio =
+    unsafe extern "C" fn(Handle, *mut *const f32, *mut usize, *mut c_int, *mut c_int) -> Status;
+type ResultFree = unsafe extern "C" fn(Handle);
+
+struct Api {
+    abi_version: AbiVersion,
+    last_error: LastError,
+    registry_create: RegistryCreate,
+    registry_free: RegistryFree,
+    model_load: ModelLoad,
+    model_free: ModelFree,
+    model_supports: ModelSupports,
+    session_create: SessionCreate,
+    session_free: SessionFree,
+    session_run: SessionRun,
+    request_create: RequestCreate,
+    request_free: RequestFree,
+    request_set_text: RequestSetText,
+    request_set_voice_id: RequestSetVoiceId,
+    request_set_speaking_rate: RequestSetSpeakingRate,
+    request_set_option: RequestSetOption,
+    result_audio: ResultAudio,
+    result_free: ResultFree,
+    // Keep the library loaded until every copied function pointer is dropped.
+    _library: Library,
+}
+
+impl Api {
+    fn load(path: &Path) -> Result<Self> {
+        // The library is loaded only in the disposable worker process. The
+        // parent validates the path and supervises worker failure.
+        let library = unsafe { Library::new(path) }
+            .with_context(|| format!("load audio.cpp provider {}", path.display()))?;
+        unsafe {
+            let api = Self {
+                abi_version: load_symbol(&library, b"audiocpp_abi_version\0")?,
+                last_error: load_symbol(&library, b"audiocpp_last_error\0")?,
+                registry_create: load_symbol(&library, b"audiocpp_registry_create\0")?,
+                registry_free: load_symbol(&library, b"audiocpp_registry_free\0")?,
+                model_load: load_symbol(&library, b"audiocpp_model_load\0")?,
+                model_free: load_symbol(&library, b"audiocpp_model_free\0")?,
+                model_supports: load_symbol(&library, b"audiocpp_model_supports\0")?,
+                session_create: load_symbol(&library, b"audiocpp_session_create\0")?,
+                session_free: load_symbol(&library, b"audiocpp_session_free\0")?,
+                session_run: load_symbol(&library, b"audiocpp_session_run\0")?,
+                request_create: load_symbol(&library, b"audiocpp_request_create\0")?,
+                request_free: load_symbol(&library, b"audiocpp_request_free\0")?,
+                request_set_text: load_symbol(&library, b"audiocpp_request_set_text\0")?,
+                request_set_voice_id: load_symbol(&library, b"audiocpp_request_set_voice_id\0")?,
+                request_set_speaking_rate: load_symbol(
+                    &library,
+                    b"audiocpp_request_set_speaking_rate\0",
+                )?,
+                request_set_option: load_symbol(&library, b"audiocpp_request_set_option\0")?,
+                result_audio: load_symbol(&library, b"audiocpp_result_audio\0")?,
+                result_free: load_symbol(&library, b"audiocpp_result_free\0")?,
+                _library: library,
+            };
+            validate_abi((api.abi_version)())?;
+            Ok(api)
+        }
+    }
+
+    fn check(&self, status: Status, operation: &str) -> Result<()> {
+        if status == 0 {
+            return Ok(());
+        }
+        let pointer = unsafe { (self.last_error)() };
+        let detail = if pointer.is_null() {
+            "provider returned no error detail".into()
+        } else {
+            // audio.cpp documents this pointer as thread-local and valid until
+            // the next ABI call. Copy it immediately.
+            unsafe { CStr::from_ptr(pointer) }
+                .to_string_lossy()
+                .into_owned()
+        };
+        bail!("audio.cpp {operation} failed ({status}): {detail}")
+    }
+}
+
+unsafe fn load_symbol<T: Copy>(library: &Library, name: &[u8]) -> Result<T> {
+    // Every symbol is copied while `library` remains owned by Api.
+    let symbol = unsafe { library.get::<T>(name) }.with_context(|| {
+        format!(
+            "resolve native symbol {}",
+            String::from_utf8_lossy(name).trim_end_matches('\0')
+        )
+    })?;
+    Ok(*symbol)
+}
+
+fn validate_abi(version: u32) -> Result<()> {
+    let major = version >> 16;
+    let minor = (version >> 8) & 0xff;
+    if major != AUDIOCPP_ABI_MAJOR || minor < AUDIOCPP_ABI_MIN_MINOR {
+        bail!(
+            "audio.cpp ABI {major}.{minor}.{} is incompatible; expected {}.{} or newer with the same major",
+            version & 0xff,
+            AUDIOCPP_ABI_MAJOR,
+            AUDIOCPP_ABI_MIN_MINOR
+        );
+    }
+    Ok(())
+}
+
+struct NativeEngine {
+    api: Api,
+    registry: Handle,
+    model: Handle,
+    session: Handle,
+    steps: i32,
+    language: CString,
+}
+
+impl NativeEngine {
+    fn load(spec: &WorkerSpec) -> Result<Self> {
+        let api = Api::load(&spec.library)?;
+        let family = CString::new("supertonic").expect("static string has no NUL");
+        let model_path = path_to_c_string(&spec.model, "model.file")?;
+        let task = CString::new("tts").expect("static string has no NUL");
+        let mode = CString::new("offline").expect("static string has no NUL");
+        let backend = CString::new(spec.backend.as_str()).context("backend contains a NUL byte")?;
+        let language =
+            CString::new(spec.language.as_str()).context("language contains a NUL byte")?;
+
+        let mut registry = std::ptr::null_mut();
+        api.check(
+            unsafe { (api.registry_create)(std::ptr::null(), &mut registry) },
+            "registry creation",
+        )?;
+        if registry.is_null() {
+            bail!("audio.cpp registry creation returned a null handle");
+        }
+
+        let model_config = ModelConfig {
+            family_hint: family.as_ptr(),
+            config_id: std::ptr::null(),
+            weight_id: std::ptr::null(),
+            model_spec_override: std::ptr::null(),
+        };
+        let mut model = std::ptr::null_mut();
+        if let Err(error) = api.check(
+            unsafe {
+                (api.model_load)(
+                    registry,
+                    model_path.as_ptr(),
+                    &model_config,
+                    std::ptr::null_mut(),
+                    &mut model,
+                )
+            },
+            "model load",
+        ) {
+            unsafe { (api.registry_free)(registry) };
+            return Err(error);
+        }
+        if model.is_null() {
+            unsafe { (api.registry_free)(registry) };
+            bail!("audio.cpp model load returned a null handle");
+        }
+        if unsafe { (api.model_supports)(model, task.as_ptr(), mode.as_ptr()) } != 1 {
+            unsafe {
+                (api.model_free)(model);
+                (api.registry_free)(registry);
+            }
+            bail!("model.file does not support offline TTS through audio.cpp");
+        }
+
+        let native_config = NativeBackendConfig {
+            backend: backend.as_ptr(),
+            device: spec.device,
+            threads: spec.threads,
+        };
+        let mut session = std::ptr::null_mut();
+        if let Err(error) = api.check(
+            unsafe {
+                (api.session_create)(
+                    model,
+                    task.as_ptr(),
+                    mode.as_ptr(),
+                    &native_config,
+                    std::ptr::null_mut(),
+                    &mut session,
+                )
+            },
+            "session creation",
+        ) {
+            unsafe {
+                (api.model_free)(model);
+                (api.registry_free)(registry);
+            }
+            return Err(error);
+        }
+        if session.is_null() {
+            unsafe {
+                (api.model_free)(model);
+                (api.registry_free)(registry);
+            }
+            bail!("audio.cpp session creation returned a null handle");
+        }
+
+        Ok(Self {
+            api,
+            registry,
+            model,
+            session,
+            steps: spec.steps,
+            language,
+        })
+    }
+
+    fn generate(&mut self, text: &str, speed: f32, voice: i32) -> Result<Audio> {
+        let text = CString::new(text).context("synthesis text contains a NUL byte")?;
+        let voice = CString::new(voice_name(voice)?).expect("voice name has no NUL");
+        let steps = CString::new(self.steps.to_string()).expect("integer has no NUL");
+        let steps_key = CString::new("num_inference_steps").expect("static string has no NUL");
+        let request = unsafe { (self.api.request_create)() };
+        if request.is_null() {
+            bail!("audio.cpp request creation returned a null handle");
+        }
+
+        let mut result = std::ptr::null_mut();
+        let operation = (|| {
+            self.api.check(
+                unsafe {
+                    (self.api.request_set_text)(request, text.as_ptr(), self.language.as_ptr())
+                },
+                "text configuration",
+            )?;
+            self.api.check(
+                unsafe { (self.api.request_set_voice_id)(request, voice.as_ptr()) },
+                "voice configuration",
+            )?;
+            self.api.check(
+                unsafe { (self.api.request_set_speaking_rate)(request, speed) },
+                "speaking-rate configuration",
+            )?;
+            self.api.check(
+                unsafe {
+                    (self.api.request_set_option)(request, steps_key.as_ptr(), steps.as_ptr())
+                },
+                "generation-step configuration",
+            )?;
+            self.api.check(
+                unsafe { (self.api.session_run)(self.session, request, &mut result) },
+                "synthesis",
+            )?;
+            if result.is_null() {
+                bail!("audio.cpp synthesis returned a null result handle");
+            }
+
+            let mut samples = std::ptr::null();
+            let mut frames = 0usize;
+            let mut sample_rate = 0;
+            let mut channels = 0;
+            self.api.check(
+                unsafe {
+                    (self.api.result_audio)(
+                        result,
+                        &mut samples,
+                        &mut frames,
+                        &mut sample_rate,
+                        &mut channels,
+                    )
+                },
+                "audio result",
+            )?;
+            let sample_count = validate_audio_shape(samples, frames, sample_rate, channels)?;
+            let pcm = unsafe { std::slice::from_raw_parts(samples, sample_count) }.to_vec();
+            if pcm.iter().any(|sample| !sample.is_finite()) {
+                bail!("audio.cpp returned non-finite PCM");
+            }
+            Ok(Audio { sample_rate, pcm })
+        })();
+
+        if !result.is_null() {
+            unsafe { (self.api.result_free)(result) };
+        }
+        unsafe { (self.api.request_free)(request) };
+        operation
+    }
+}
+
+impl Drop for NativeEngine {
+    fn drop(&mut self) {
+        unsafe {
+            (self.api.session_free)(self.session);
+            (self.api.model_free)(self.model);
+            (self.api.registry_free)(self.registry);
+        }
+    }
+}
+
+fn validate_audio_shape(
+    samples: *const f32,
+    frames: usize,
+    sample_rate: i32,
+    channels: i32,
+) -> Result<usize> {
+    if sample_rate != SUPERTONIC_SAMPLE_RATE {
+        bail!(
+            "audio.cpp returned sample rate {sample_rate}; expected {SUPERTONIC_SAMPLE_RATE} for Supertonic"
+        );
+    }
+    if channels != 1 {
+        bail!("audio.cpp returned {channels} channels; Omaspeak requires mono PCM");
+    }
+    let samples_len = frames
+        .checked_mul(channels as usize)
+        .context("audio.cpp PCM length overflow")?;
+    if samples_len == 0 {
+        bail!("audio.cpp returned empty PCM");
+    }
+    if samples_len > MAX_PCM_SAMPLES {
+        bail!("audio.cpp returned {samples_len} PCM samples; limit is {MAX_PCM_SAMPLES}");
+    }
+    if samples.is_null() {
+        bail!("audio.cpp returned a null PCM pointer");
+    }
+    Ok(samples_len)
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct WorkerSpec {
+    library: PathBuf,
+    library_dirs: Vec<PathBuf>,
+    model: PathBuf,
+    backend: String,
+    device: c_int,
+    threads: c_int,
+    language: String,
+    steps: i32,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+enum WorkerRequest {
+    Generate {
+        text: String,
+        speed: f32,
+        voice: i32,
+    },
+    Shutdown,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum WorkerResponse {
+    Ready { sample_rate: i32, voices: i32 },
+    Audio { sample_rate: i32, samples: usize },
+    Error { message: String },
+    Shutdown,
+}
+
+struct Audio {
+    sample_rate: i32,
+    pcm: Vec<f32>,
+}
+
+struct WorkerClient {
+    child: Child,
+    stream: UnixStream,
+    stopped: bool,
+}
+
+impl WorkerClient {
+    fn launch(spec: &WorkerSpec) -> Result<Self> {
+        let (stream, child_stream) = UnixStream::pair().context("create audio.cpp worker IPC")?;
+        stream.set_read_timeout(Some(WORKER_TIMEOUT))?;
+        stream.set_write_timeout(Some(WORKER_TIMEOUT))?;
+        let executable = std::env::current_exe().context("locate Omaspeak executable")?;
+        let encoded =
+            serde_json::to_string(spec).context("encode audio.cpp worker configuration")?;
+        let child_stream: OwnedFd = child_stream.into();
+        let mut command = Command::new(executable);
+        command
+            .arg("__audiocpp-worker")
+            .arg("--spec")
+            .arg(encoded)
+            // A Unix socket is full duplex. Passing the private child endpoint
+            // as stdin avoids pre-exec descriptor mutation and remains usable
+            // for both framed requests and responses.
+            .stdin(Stdio::from(child_stream))
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        let loader_path = std::env::join_paths(&spec.library_dirs)
+            .context("encode audio.cpp worker native library path")?;
+        command.env("LD_LIBRARY_PATH", loader_path);
+        let child = command
+            .spawn()
+            .context("start supervised audio.cpp worker")?;
+        let mut client = Self {
+            child,
+            stream,
+            stopped: false,
+        };
+        let ready: WorkerResponse = match read_json_frame(&mut client.stream) {
+            Ok(ready) => ready,
+            Err(error) => {
+                client.shutdown();
+                return Err(error).context("read audio.cpp worker startup response");
+            }
+        };
+        match ready {
+            WorkerResponse::Ready {
+                sample_rate: SUPERTONIC_SAMPLE_RATE,
+                voices: SUPERTONIC_VOICES,
+            } => Ok(client),
+            WorkerResponse::Error { message } => {
+                client.shutdown();
+                bail!("audio.cpp worker initialization failed: {message}")
+            }
+            other => {
+                client.shutdown();
+                bail!("audio.cpp worker returned invalid startup response {other:?}")
+            }
+        }
+    }
+
+    fn request(&mut self, request: &WorkerRequest) -> Result<std::result::Result<Audio, String>> {
+        write_json_frame(&mut self.stream, request)?;
+        let response: WorkerResponse = read_json_frame(&mut self.stream)?;
+        match response {
+            WorkerResponse::Audio {
+                sample_rate,
+                samples,
+            } => {
+                if sample_rate != SUPERTONIC_SAMPLE_RATE {
+                    bail!("audio.cpp worker returned unexpected sample rate {sample_rate}");
+                }
+                Ok(Ok(Audio {
+                    sample_rate,
+                    pcm: read_pcm(&mut self.stream, samples)?,
+                }))
+            }
+            WorkerResponse::Error { message } => Ok(Err(message)),
+            other => bail!("audio.cpp worker returned invalid synthesis response {other:?}"),
+        }
+    }
+
+    fn shutdown(&mut self) {
+        if self.stopped {
+            return;
+        }
+        self.stopped = true;
+        let _ = self.stream.set_read_timeout(Some(Duration::from_secs(1)));
+        let _ = self.stream.set_write_timeout(Some(Duration::from_secs(1)));
+        let _ = write_json_frame(&mut self.stream, &WorkerRequest::Shutdown);
+        let response = read_json_frame::<_, WorkerResponse>(&mut self.stream);
+        if !matches!(response, Ok(WorkerResponse::Shutdown)) {
+            let _ = self.child.kill();
+        }
+        let _ = self.child.wait();
+    }
+}
+
+impl Drop for WorkerClient {
+    fn drop(&mut self) {
+        self.shutdown();
+    }
+}
+
+/// A process-isolated audio.cpp backend. One worker, model, and session stay
+/// warm for the lifetime of this value.
+pub struct AudioCppBackend {
+    spec: WorkerSpec,
+    worker: Mutex<WorkerClient>,
+}
+
+impl AudioCppBackend {
+    pub fn create(config: &Config, paths: &AppPaths, runtime: Runtime) -> Result<Self> {
+        if config.model.family != "supertonic" {
+            bail!(
+                "the audio.cpp backend requires model.family=\"supertonic\"; got {:?}",
+                config.model.family
+            );
+        }
+        let backend = match runtime {
+            Runtime::Default => "cpu",
+            Runtime::Cuda => "cuda",
+            Runtime::Openvino => {
+                bail!("runtime=openvino uses Omaspeak's direct OpenVINO provider")
+            }
+        };
+        if config.model.steps <= 0 {
+            bail!("model.steps must be positive");
+        }
+        let library = resolve_provider_library(config, &paths.config_file)?;
+        let spec = WorkerSpec {
+            library_dirs: resolve_library_dirs(config, &paths.config_file, &library)?,
+            library,
+            model: resolve_model_file(config, paths)?,
+            backend: backend.into(),
+            device: config
+                .backend
+                .device_id
+                .try_into()
+                .context("device_id is too large")?,
+            threads: config.backend.threads.into(),
+            language: config.model.language.clone(),
+            steps: config.model.steps,
+        };
+        let worker = WorkerClient::launch(&spec)?;
+        Ok(Self {
+            spec,
+            worker: Mutex::new(worker),
+        })
+    }
+}
+
+impl TtsBackend for AudioCppBackend {
+    fn kind(&self) -> &'static str {
+        "audiocpp"
+    }
+
+    fn sample_rate(&self) -> i32 {
+        SUPERTONIC_SAMPLE_RATE
+    }
+
+    fn num_voices(&self) -> i32 {
+        SUPERTONIC_VOICES
+    }
+
+    fn generate(&self, text: &str, speed: f32, voice: i32) -> Result<Vec<f32>> {
+        let mut worker = self
+            .worker
+            .lock()
+            .map_err(|_| anyhow!("audio.cpp worker lock is poisoned"))?;
+        let request = WorkerRequest::Generate {
+            text: text.into(),
+            speed,
+            voice,
+        };
+        match worker.request(&request) {
+            Ok(Ok(audio)) => Ok(audio.pcm),
+            Ok(Err(message)) => bail!("audio.cpp synthesis failed: {message}"),
+            Err(first_error) => {
+                let replacement = WorkerClient::launch(&self.spec).with_context(|| {
+                    format!("restart audio.cpp worker after IPC failure: {first_error:#}")
+                })?;
+                *worker = replacement;
+                match worker.request(&request)? {
+                    Ok(audio) => Ok(audio.pcm),
+                    Err(message) => {
+                        bail!("audio.cpp synthesis failed after worker restart: {message}")
+                    }
+                }
+            }
+        }
+    }
+}
+
+pub fn run_worker(spec_json: &str) -> Result<()> {
+    let mut stream = unsafe { UnixStream::from_raw_fd(WORKER_FD) };
+    if let Err(error) = disable_core_dumps() {
+        let _ = write_json_frame(
+            &mut stream,
+            &WorkerResponse::Error {
+                message: format!("{error:#}"),
+            },
+        );
+        return Err(error);
+    }
+    let spec: WorkerSpec =
+        serde_json::from_str(spec_json).context("decode audio.cpp worker spec")?;
+    let mut engine = match NativeEngine::load(&spec) {
+        Ok(engine) => engine,
+        Err(error) => {
+            let _ = write_json_frame(
+                &mut stream,
+                &WorkerResponse::Error {
+                    message: format!("{error:#}"),
+                },
+            );
+            return Err(error);
+        }
+    };
+    write_json_frame(
+        &mut stream,
+        &WorkerResponse::Ready {
+            sample_rate: SUPERTONIC_SAMPLE_RATE,
+            voices: SUPERTONIC_VOICES,
+        },
+    )?;
+    loop {
+        let request: WorkerRequest = read_json_frame(&mut stream)?;
+        match request {
+            WorkerRequest::Generate { text, speed, voice } => {
+                match engine.generate(&text, speed, voice) {
+                    Ok(audio) => {
+                        write_json_frame(
+                            &mut stream,
+                            &WorkerResponse::Audio {
+                                sample_rate: audio.sample_rate,
+                                samples: audio.pcm.len(),
+                            },
+                        )?;
+                        write_pcm(&mut stream, &audio.pcm)?;
+                    }
+                    Err(error) => write_json_frame(
+                        &mut stream,
+                        &WorkerResponse::Error {
+                            message: format!("{error:#}"),
+                        },
+                    )?,
+                }
+            }
+            WorkerRequest::Shutdown => {
+                write_json_frame(&mut stream, &WorkerResponse::Shutdown)?;
+                return Ok(());
+            }
+        }
+    }
+}
+
+fn disable_core_dumps() -> Result<()> {
+    #[cfg(target_os = "linux")]
+    let dumpable_result = unsafe { libc::prctl(libc::PR_SET_DUMPABLE, 0) };
+    #[cfg(target_os = "linux")]
+    let dumpable_error = std::io::Error::last_os_error();
+
+    let limit = libc::rlimit {
+        rlim_cur: 0,
+        rlim_max: 0,
+    };
+    let rlimit_result = unsafe { libc::setrlimit(libc::RLIMIT_CORE, &limit) };
+    let rlimit_error = std::io::Error::last_os_error();
+    #[cfg(target_os = "linux")]
+    if dumpable_result == 0 || rlimit_result == 0 {
+        return Ok(());
+    }
+    #[cfg(target_os = "linux")]
+    bail!(
+        "disable audio.cpp worker core dumps: PR_SET_DUMPABLE failed: {dumpable_error}; RLIMIT_CORE failed: {rlimit_error}"
+    );
+    #[cfg(not(target_os = "linux"))]
+    if rlimit_result == 0 {
+        Ok(())
+    } else {
+        Err(rlimit_error).context("disable audio.cpp worker core dumps")
+    }
+}
+
+fn resolve_provider_library(config: &Config, config_file: &Path) -> Result<PathBuf> {
+    let configured = config
+        .backend
+        .library
+        .as_deref()
+        .context("backend.library must point to a complete audio.cpp provider library")?;
+    resolve_file_beneath(
+        configured,
+        config_file.parent().unwrap_or_else(|| Path::new(".")),
+        "backend.library",
+    )
+}
+
+fn resolve_library_dirs(
+    config: &Config,
+    config_file: &Path,
+    library: &Path,
+) -> Result<Vec<PathBuf>> {
+    let base = config_file.parent().unwrap_or_else(|| Path::new("."));
+    let canonical_base = base
+        .canonicalize()
+        .with_context(|| format!("resolve backend.library_dirs base {}", base.display()))?;
+    let mut directories = Vec::with_capacity(config.backend.library_dirs.len() + 1);
+    for configured in &config.backend.library_dirs {
+        let explicit_absolute = configured.is_absolute();
+        let candidate = if explicit_absolute {
+            configured.clone()
+        } else {
+            base.join(configured)
+        };
+        let resolved = candidate.canonicalize().with_context(|| {
+            format!("resolve backend.library_dirs entry {}", candidate.display())
+        })?;
+        if !resolved.is_dir() {
+            bail!(
+                "backend.library_dirs entry is not a directory: {}",
+                resolved.display()
+            );
+        }
+        if !explicit_absolute && !resolved.starts_with(&canonical_base) {
+            bail!(
+                "backend.library_dirs entry escapes the config directory {}",
+                canonical_base.display()
+            );
+        }
+        if !directories.contains(&resolved) {
+            directories.push(resolved);
+        }
+    }
+    let parent = library
+        .parent()
+        .context("backend.library has no parent directory")?
+        .to_path_buf();
+    if !directories.contains(&parent) {
+        directories.push(parent);
+    }
+    Ok(directories)
+}
+
+fn resolve_model_file(config: &Config, paths: &AppPaths) -> Result<PathBuf> {
+    if config.model.file.trim().is_empty() {
+        bail!("model.file must name the audio.cpp GGUF model")
+    }
+    resolve_file_beneath(
+        Path::new(&config.model.file),
+        &config.model_directory(paths),
+        "model.file",
+    )
+}
+
+fn resolve_file_beneath(path: &Path, base: &Path, label: &str) -> Result<PathBuf> {
+    let explicit_absolute = path.is_absolute();
+    let candidate = if explicit_absolute {
+        path.to_owned()
+    } else {
+        base.join(path)
+    };
+    let resolved = candidate
+        .canonicalize()
+        .with_context(|| format!("resolve {label} {}", candidate.display()))?;
+    if !resolved.is_file() {
+        bail!("{label} is not a regular file: {}", resolved.display());
+    }
+    if !explicit_absolute {
+        let base = base
+            .canonicalize()
+            .with_context(|| format!("resolve {label} base directory {}", base.display()))?;
+        if !resolved.starts_with(&base) {
+            bail!("{label} escapes its base directory {}", base.display());
+        }
+    }
+    Ok(resolved)
+}
+
+fn path_to_c_string(path: &Path, label: &str) -> Result<CString> {
+    use std::os::unix::ffi::OsStrExt as _;
+    CString::new(path.as_os_str().as_bytes())
+        .with_context(|| format!("{label} contains a NUL byte"))
+}
+
+pub fn voice_name(voice: i32) -> Result<&'static str> {
+    usize::try_from(voice)
+        .ok()
+        .and_then(|index| crate::voices::SUPERTONIC_PRESET_NAMES.get(index).copied())
+        .with_context(|| format!("voice {voice} is outside the Supertonic speaker range 0..9"))
+}
+
+fn write_json_frame(mut writer: impl Write, value: &impl Serialize) -> Result<()> {
+    let payload = serde_json::to_vec(value).context("encode audio.cpp worker frame")?;
+    if payload.len() > MAX_CONTROL_FRAME {
+        bail!("audio.cpp worker frame exceeds {MAX_CONTROL_FRAME} bytes");
+    }
+    writer.write_all(&(payload.len() as u32).to_le_bytes())?;
+    writer.write_all(&payload)?;
+    writer.flush()?;
+    Ok(())
+}
+
+fn read_json_frame<R: Read, T: DeserializeOwned>(mut reader: R) -> Result<T> {
+    let mut length = [0u8; 4];
+    reader.read_exact(&mut length)?;
+    let length = u32::from_le_bytes(length) as usize;
+    if length > MAX_CONTROL_FRAME {
+        bail!("audio.cpp worker frame declares {length} bytes; limit is {MAX_CONTROL_FRAME}");
+    }
+    let mut payload = vec![0u8; length];
+    reader.read_exact(&mut payload)?;
+    serde_json::from_slice(&payload).context("decode audio.cpp worker frame")
+}
+
+fn write_pcm(mut writer: impl Write, pcm: &[f32]) -> Result<()> {
+    if pcm.is_empty() || pcm.len() > MAX_PCM_SAMPLES || pcm.iter().any(|sample| !sample.is_finite())
+    {
+        bail!("refuse invalid audio.cpp PCM response");
+    }
+    let mut bytes = vec![0u8; pcm.len().min(4096) * size_of::<f32>()];
+    for chunk in pcm.chunks(4096) {
+        bytes.resize(std::mem::size_of_val(chunk), 0);
+        for (sample, output) in chunk.iter().zip(bytes.as_chunks_mut::<4>().0) {
+            output.copy_from_slice(&sample.to_le_bytes());
+        }
+        writer.write_all(&bytes)?;
+    }
+    writer.flush()?;
+    Ok(())
+}
+
+fn read_pcm(mut reader: impl Read, samples: usize) -> Result<Vec<f32>> {
+    if samples == 0 || samples > MAX_PCM_SAMPLES {
+        bail!("audio.cpp worker declared {samples} PCM samples; limit is {MAX_PCM_SAMPLES}");
+    }
+    let mut pcm = Vec::with_capacity(samples);
+    let mut bytes = vec![0u8; samples.min(4096) * size_of::<f32>()];
+    while pcm.len() < samples {
+        let count = (samples - pcm.len()).min(4096);
+        bytes.resize(count * size_of::<f32>(), 0);
+        reader.read_exact(&mut bytes)?;
+        for input in bytes.as_chunks::<4>().0 {
+            let sample = f32::from_le_bytes(*input);
+            if !sample.is_finite() {
+                bail!("audio.cpp worker returned non-finite PCM");
+            }
+            pcm.push(sample);
+        }
+    }
+    Ok(pcm)
+}
+
+#[cfg(test)]
+#[path = "../tests/unit/audio_cpp.rs"]
+mod tests;

@@ -41,6 +41,11 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum TopCommand {
+    #[command(name = "__audiocpp-worker", hide = true)]
+    AudioCppWorker {
+        #[arg(long)]
+        spec: String,
+    },
     #[command(name = "__inventory-probe", hide = true)]
     InventoryProbe {
         candidate: String,
@@ -356,6 +361,7 @@ fn run_with_paths_and_prepare(
     let config_path = select_config_path(cli.config, paths);
     prepare(&cli.command, &config_path)?;
     match cli.command {
+        TopCommand::AudioCppWorker { spec } => omaspeak::audio_cpp::run_worker(&spec),
         TopCommand::InventoryProbe { candidate } => {
             println!(
                 "{}",
@@ -394,6 +400,12 @@ fn prepare_native_library_path(command: &TopCommand, config_path: &Path) -> Resu
         return Ok(());
     }
     let config = Config::load(config_path)?;
+    // audio.cpp and its transitive libraries belong to the supervised worker.
+    // Keep optional native code out of the CLI/daemon process and scope its
+    // loader path to that worker's exec environment.
+    if config.backend.kind == "audiocpp" {
+        return Ok(());
+    }
     let report = omaspeak::runtime::discover(&config.backend, config_path);
     let Some(loader_path) = omaspeak::runtime::reexec_loader_path(&report)? else {
         return Ok(());
@@ -441,10 +453,26 @@ fn resolve_voice(config: &Config, requested: Option<&str>) -> Result<i32> {
                 .find(|voice| voice.name.eq_ignore_ascii_case(requested))
                 .map(|voice| voice.id)
         })
+        .or_else(|| {
+            (config.model.family == "supertonic")
+                .then_some(omaspeak::voices::SUPERTONIC_PRESET_NAMES)
+                .and_then(|names| {
+                    names
+                        .iter()
+                        .position(|name| name.eq_ignore_ascii_case(requested))
+                        .map(|id| id as i32)
+                })
+        })
     });
     let Some(voice) = voice else {
         let choices = spec.map_or_else(
-            || "a numeric ID".to_owned(),
+            || {
+                if config.model.family == "supertonic" {
+                    omaspeak::voices::SUPERTONIC_PRESET_NAMES.join(", ")
+                } else {
+                    "a numeric ID".to_owned()
+                }
+            },
             |model| {
                 model
                     .voices
@@ -650,6 +678,8 @@ fn benchmark_report(
             "placement_verified": engine.effective_runtime() == Runtime::Default || engine.backend_kind() == "openvino",
             "placement_evidence": if engine.backend_kind() == "openvino" {
                 "OpenVINO EXECUTION_DEVICES matched the requested device for every compiled graph"
+            } else if engine.backend_kind() == "audiocpp" && engine.effective_runtime() == Runtime::Default {
+                "audio.cpp CPU backend initialized in a supervised worker"
             } else if engine.effective_runtime() == Runtime::Default {
                 "runtime-loaded ONNX Runtime CPU engine initialized"
             } else {
@@ -1006,6 +1036,36 @@ fn synthesis_payload(engine: &impl SpeechEngine, synthesis: Synthesis) -> Result
 
 fn status_payload(engine: &impl SpeechEngine, config: &Config) -> ResultPayload {
     let effective_runtime = engine.effective_runtime();
+    let (effective_provider, placement_verified, evidence) = if engine.backend_kind() == "audiocpp"
+    {
+        (
+            if effective_runtime == Runtime::Default {
+                "audio.cpp/cpu"
+            } else {
+                "audio.cpp"
+            },
+            effective_runtime == Runtime::Default,
+            if effective_runtime == Runtime::Default {
+                vec!["audio.cpp CPU backend initialized in a supervised worker"]
+            } else {
+                Vec::new()
+            },
+        )
+    } else {
+        (
+            if effective_runtime == Runtime::Default {
+                "CPUExecutionProvider"
+            } else {
+                "unverified"
+            },
+            effective_runtime == Runtime::Default,
+            if effective_runtime == Runtime::Default {
+                vec!["runtime-loaded ONNX Runtime CPU engine initialized"]
+            } else {
+                Vec::new()
+            },
+        )
+    };
     ResultPayload::Status {
         running: true,
         pid: std::process::id(),
@@ -1014,12 +1074,12 @@ fn status_payload(engine: &impl SpeechEngine, config: &Config) -> ResultPayload 
         backend: json!({
             "kind": engine.backend_kind(),
             "requested": {"runtime": config.backend.runtime, "device": config.backend.canonical_device().unwrap_or_else(|_| config.backend.device.clone())},
-            "effective": {"runtime": effective_runtime, "device": if effective_runtime == Runtime::Default { "cpu" } else { config.backend.device.as_str() }, "provider": if effective_runtime == Runtime::Default { "CPUExecutionProvider" } else { "unverified" }},
+            "effective": {"runtime": effective_runtime, "device": if effective_runtime == Runtime::Default { "cpu" } else { config.backend.device.as_str() }, "provider": effective_provider},
             "supported_capabilities": supported_capabilities(),
             "fallback_policy": config.backend.fallback,
             "fallback_used": engine.fallback_used(),
-            "placement_verified": effective_runtime == Runtime::Default,
-            "evidence": if effective_runtime == Runtime::Default { vec!["runtime-loaded ONNX Runtime CPU engine initialized"] } else { Vec::<&str>::new() }
+            "placement_verified": placement_verified,
+            "evidence": evidence
         }),
     }
 }
@@ -1196,7 +1256,7 @@ fn config_command(command: ConfigCommand, path: &Path, paths: &AppPaths) -> Resu
                 println!("{}", serde_json::to_string_pretty(&value)?);
             } else {
                 println!(
-                    "backend.runtime\tdefault|openvino|cuda\nbackend.device\truntime-dependent\nbackend.library_dirs\tpath list for native runtime libraries\nbackend.onnxruntime_library\texact ONNX Runtime core library\nbackend.provider_library\texact CUDA provider library\nbackend.openvino_library\texact OpenVINO C API library\nbackend.openvino_plugins\texact OpenVINO plugins.xml\nbackend.options.<name>\truntime property\nmodel.family\tsupertonic\nmodel.options.<name>\tmodel-specific option"
+                    "backend.runtime\tdefault|openvino|cuda\nbackend.device\truntime-dependent\nbackend.library\texact complete native provider library\nbackend.library_dirs\tpath list for native runtime libraries\nbackend.onnxruntime_library\texact ONNX Runtime core library\nbackend.provider_library\texact CUDA provider library\nbackend.openvino_library\texact OpenVINO C API library\nbackend.openvino_plugins\texact OpenVINO plugins.xml\nbackend.options.<name>\truntime property\nmodel.family\tsupertonic\nmodel.file\tsingle-file native model\nmodel.options.<name>\tmodel-specific option"
                 );
             }
         }
@@ -1264,6 +1324,7 @@ fn set_config(config: &mut Config, key: &str, value: &str) -> Result<()> {
         "backend.library_dirs" => {
             config.backend.library_dirs = std::env::split_paths(value).collect()
         }
+        "backend.library" => config.backend.library = Some(PathBuf::from(value)),
         "backend.onnxruntime_library" => {
             config.backend.onnxruntime_library = Some(PathBuf::from(value))
         }
@@ -1273,6 +1334,7 @@ fn set_config(config: &mut Config, key: &str, value: &str) -> Result<()> {
         "model.family" => config.model.family = value.into(),
         "model.name" => config.model.name = value.into(),
         "model.directory" => config.model.directory = value.into(),
+        "model.file" => config.model.file = value.into(),
         "model.duration_predictor" => config.model.duration_predictor = value.into(),
         "model.text_encoder" => config.model.text_encoder = value.into(),
         "model.vector_estimator" => config.model.vector_estimator = value.into(),
@@ -1310,6 +1372,7 @@ fn unset_config(config: &mut Config, key: &str) -> Result<()> {
         "backend.fallback" => config.backend.fallback = defaults.backend.fallback,
         "backend.device_id" => config.backend.device_id = defaults.backend.device_id,
         "backend.library_dirs" => config.backend.library_dirs = defaults.backend.library_dirs,
+        "backend.library" => config.backend.library = defaults.backend.library,
         "backend.onnxruntime_library" => {
             config.backend.onnxruntime_library = defaults.backend.onnxruntime_library
         }
@@ -1325,6 +1388,7 @@ fn unset_config(config: &mut Config, key: &str) -> Result<()> {
         "model.family" => config.model.family = defaults.model.family,
         "model.name" => config.model.name = defaults.model.name,
         "model.directory" => config.model.directory = defaults.model.directory,
+        "model.file" => config.model.file = defaults.model.file,
         "model.duration_predictor" => {
             config.model.duration_predictor = defaults.model.duration_predictor
         }
@@ -1404,10 +1468,11 @@ fn schema(path: &Path, paths: &AppPaths) -> Result<Value> {
     Ok(
         json!({"schema_version":1,"app":"omaspeak","app_version":env!("CARGO_PKG_VERSION"),"daemon_version":env!("CARGO_PKG_VERSION"),"config_path":path,
         "keys":[
-            {"key":"backend.kind","type":"enum","section":"Backend","label":"Backend","description":"Inference engine","value":config.backend.kind,"file_value":null,"compiled":true,"restart_required":true,"choices":["supertonic"]},
+            {"key":"backend.kind","type":"enum","section":"Backend","label":"Backend","description":"Inference engine","value":config.backend.kind,"file_value":null,"compiled":true,"restart_required":true,"choices":["audiocpp","supertonic"]},
             {"key":"backend.runtime","type":"enum","section":"Backend","label":"Runtime","description":"Inference runtime","value":config.backend.runtime,"file_value":null,"compiled":true,"restart_required":true,"choices":[{"value":"default","available":true,"capability":"cpu"},{"value":"openvino","available":supported_capabilities().contains(&"openvino"),"capability":"openvino"},{"value":"cuda","available":supported_capabilities().contains(&"cuda"),"capability":"cuda"}]},
             {"key":"backend.device","type":"string","section":"Backend","label":"Device","description":"Runtime-specific device","value":config.backend.device,"file_value":null,"compiled":true,"restart_required":true},
             {"key":"backend.library_dirs","type":"path-list","section":"Backend","label":"Native library directories","description":"Application-owned provider/vendor runtime search path","value":config.backend.library_dirs,"file_value":null,"compiled":true,"restart_required":true},
+            {"key":"backend.library","type":"path","section":"Backend","label":"Provider library","description":"Exact complete native provider library","value":config.backend.library,"file_value":null,"compiled":true,"restart_required":true},
             {"key":"backend.onnxruntime_library","type":"path","section":"Backend","label":"ONNX Runtime library","description":"Exact external ONNX Runtime core library","value":config.backend.onnxruntime_library,"file_value":null,"compiled":true,"restart_required":true},
             {"key":"backend.provider_library","type":"path","section":"Backend","label":"Provider library","description":"Exact CUDA execution-provider library","value":config.backend.provider_library,"file_value":null,"compiled":true,"restart_required":true},
             {"key":"backend.openvino_library","type":"path","section":"Backend","label":"OpenVINO library","description":"Exact OpenVINO C API library","value":config.backend.openvino_library,"file_value":null,"compiled":true,"restart_required":true},
@@ -1415,6 +1480,7 @@ fn schema(path: &Path, paths: &AppPaths) -> Result<Value> {
             {"key":"backend.threads","type":"integer","section":"Backend","label":"Threads","description":"Inference threads","value":config.backend.threads,"file_value":null,"compiled":true,"restart_required":true,"min":1,"max":64},
             {"key":"model.family","type":"enum","section":"Model","label":"Family","description":"TTS model family","value":config.model.family,"file_value":null,"compiled":true,"restart_required":true,"choices":["supertonic"]},
             {"key":"model.directory","type":"path","section":"Model","label":"Directory","description":"Model asset directory","value":config.model_directory(paths),"file_value":config.model.directory,"compiled":true,"restart_required":true},
+            {"key":"model.file","type":"string","section":"Model","label":"Model file","description":"Single-file native model inside the model directory","value":config.model.file,"file_value":null,"compiled":true,"restart_required":true},
             {"key":"model.duration_predictor","type":"string","section":"Model","label":"Duration predictor","description":"Supertonic duration predictor filename","value":config.model.duration_predictor,"file_value":null,"compiled":true,"restart_required":true},
             {"key":"model.text_encoder","type":"string","section":"Model","label":"Text encoder","description":"Supertonic text encoder filename","value":config.model.text_encoder,"file_value":null,"compiled":true,"restart_required":true},
             {"key":"model.vector_estimator","type":"string","section":"Model","label":"Vector estimator","description":"Supertonic vector estimator filename","value":config.model.vector_estimator,"file_value":null,"compiled":true,"restart_required":true},

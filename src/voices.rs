@@ -8,6 +8,9 @@ use crate::catalog::ModelSpec;
 use crate::config::Config;
 use crate::paths::AppPaths;
 
+pub const SUPERTONIC_PRESET_NAMES: [&str; 10] =
+    ["M1", "M2", "M3", "M4", "M5", "F1", "F2", "F3", "F4", "F5"];
+
 /// One selectable voice exposed by the active model.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct Voice {
@@ -18,6 +21,7 @@ pub struct Voice {
 /// Inspect the installed active model and return its actual speaker inventory.
 pub fn installed(config: &Config, paths: &AppPaths) -> Result<Vec<Voice>> {
     match config.model.family.as_str() {
+        "supertonic" if config.backend.kind == "audiocpp" => Ok(supertonic_presets()),
         "supertonic" => supertonic_voices(config, paths),
         family => bail!("cannot enumerate voices for model family {family:?}"),
     }
@@ -25,6 +29,9 @@ pub fn installed(config: &Config, paths: &AppPaths) -> Result<Vec<Voice>> {
 
 /// Return installed metadata when present, otherwise the pinned catalog inventory.
 pub fn available(config: &Config, paths: &AppPaths) -> Result<Vec<Voice>> {
+    if config.model.family == "supertonic" && config.backend.kind == "audiocpp" {
+        return Ok(supertonic_presets());
+    }
     let directory = config.model_directory(paths);
     if directory.exists() {
         return installed(config, paths);
@@ -36,6 +43,17 @@ pub fn available(config: &Config, paths: &AppPaths) -> Result<Vec<Voice>> {
         )
     })?;
     Ok(from_catalog(spec))
+}
+
+pub fn supertonic_presets() -> Vec<Voice> {
+    SUPERTONIC_PRESET_NAMES
+        .iter()
+        .enumerate()
+        .map(|(id, name)| Voice {
+            id: id as i32,
+            name: (*name).into(),
+        })
+        .collect()
 }
 
 pub fn from_catalog(spec: &ModelSpec) -> Vec<Voice> {

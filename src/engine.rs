@@ -35,6 +35,9 @@ impl Engine {
     pub fn load(config: &Config, paths: &AppPaths) -> Result<Self> {
         Self::load_with(config, paths, |config, paths, runtime| {
             let backend: Box<dyn TtsBackend> = match config.backend.kind.as_str() {
+                "audiocpp" => Box::new(crate::audio_cpp::AudioCppBackend::create(
+                    config, paths, runtime,
+                )?),
                 "supertonic" => {
                     let locations = crate::runtime::inspect(&config.backend, &paths.config_file);
                     if runtime == Runtime::Openvino {

@@ -43,6 +43,9 @@ pub struct BackendConfig {
     /// Application-owned native library directories, searched before the
     /// process's ambient loader path.
     pub library_dirs: Vec<PathBuf>,
+    /// Exact complete native provider library. Relative paths resolve beside
+    /// config.toml and may not escape that directory.
+    pub library: Option<PathBuf>,
     /// Exact ONNX Runtime core library. Relative paths resolve from config.toml.
     pub onnxruntime_library: Option<PathBuf>,
     /// Exact external execution-provider library. Relative paths resolve from config.toml.
@@ -64,6 +67,7 @@ impl Default for BackendConfig {
             fallback: Fallback::Error,
             device_id: 0,
             library_dirs: Vec::new(),
+            library: None,
             onnxruntime_library: None,
             provider_library: None,
             openvino_library: None,

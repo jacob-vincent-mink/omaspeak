@@ -62,6 +62,18 @@ fn catalog_inventory_is_available_before_download() {
 }
 
 #[test]
+fn audiocpp_exposes_the_stable_supertonic_presets_without_sidecar_files() {
+    let (mut config, paths) = fixture("audiocpp");
+    config.backend.kind = "audiocpp".into();
+    config.model.name = "custom-gguf".into();
+    let voices = available(&config, &paths).unwrap();
+    assert_eq!(voices.len(), 10);
+    assert_eq!(voices.first().unwrap().name, "M1");
+    assert_eq!(voices.last().unwrap().name, "F5");
+    assert_eq!(installed(&config, &paths).unwrap(), voices);
+}
+
+#[test]
 fn installed_voice_metadata_rejects_unsupported_empty_and_corrupt_models() {
     let (mut config, paths) = fixture("invalid");
     config.model.family = "other".into();
