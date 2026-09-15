@@ -225,23 +225,48 @@ fn render_at_width(
 }
 
 fn wrap(text: &str, width: usize, indent: usize) -> String {
-    use unicode_width::UnicodeWidthChar;
+    use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+
     let limit = width.saturating_sub(indent + 1).max(1);
+    let text: String = text
+        .chars()
+        .filter(|character| *character == '\n' || !character.is_control())
+        .collect();
     let mut output = String::new();
-    let mut column = 0;
-    for character in text.chars().filter(|character| *character != '\r') {
-        let size = character.width().unwrap_or(0);
-        if character == '\n' || column + size > limit {
-            output.push_str("\r\n");
-            output.push_str(&" ".repeat(indent));
-            column = 0;
+    for (paragraph_index, paragraph) in text.split('\n').enumerate() {
+        if paragraph_index > 0 {
+            wrapped_newline(&mut output, indent);
         }
-        if character != '\n' && !character.is_control() {
-            output.push(character);
-            column += size;
+        let mut column = 0;
+        for word in paragraph.split_whitespace() {
+            let word_width = word.width();
+            if column > 0 && column + 1 + word_width <= limit {
+                output.push(' ');
+                output.push_str(word);
+                column += 1 + word_width;
+                continue;
+            }
+            if column > 0 {
+                wrapped_newline(&mut output, indent);
+                column = 0;
+            }
+            for character in word.chars() {
+                let character_width = character.width().unwrap_or(0);
+                if column > 0 && column + character_width > limit {
+                    wrapped_newline(&mut output, indent);
+                    column = 0;
+                }
+                output.push(character);
+                column += character_width;
+            }
         }
     }
     output
+}
+
+fn wrapped_newline(output: &mut String, indent: usize) {
+    output.push_str("\r\n");
+    output.push_str(&" ".repeat(indent));
 }
 
 #[cfg(test)]

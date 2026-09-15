@@ -30,6 +30,18 @@ fn rows_wrap_unicode_at_narrow_and_normal_widths() {
         assert!(!output.is_empty());
     }
     assert!(wrap("\x1bhello\tworld", 80, 0).contains("helloworld"));
+
+    let prose = wrap(
+        "This never installs or starts a service; an active daemon restarts after Apply.",
+        32,
+        6,
+    );
+    assert!(!prose.contains("\r\n      his"));
+    assert!(!prose.contains("\r\n      pply"));
+    assert_eq!(
+        prose.replace("\r\n      ", " "),
+        "This never installs or starts a service; an active daemon restarts after Apply."
+    );
 }
 use std::collections::VecDeque;
 
