@@ -4,6 +4,7 @@
 //! private worker dynamically loads one complete audio.cpp installation and
 //! keeps its model and session alive across synthesis requests.
 
+use std::collections::BTreeMap;
 use std::ffi::{CStr, CString, c_char, c_int, c_void};
 use std::io::{Read, Write};
 use std::os::fd::{FromRawFd, OwnedFd};
@@ -11,7 +12,7 @@ use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow, bail};
 use libloading::Library;
@@ -30,6 +31,8 @@ const SUPERTONIC_VOICES: i32 = 10;
 const MAX_CONTROL_FRAME: usize = 1024 * 1024;
 const MAX_PCM_SAMPLES: usize = 64 * 1024 * 1024;
 const WORKER_TIMEOUT: Duration = Duration::from_secs(300);
+const WORKER_STOP_TIMEOUT: Duration = Duration::from_secs(1);
+const PROVIDER_PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 
 type Status = c_int;
 type Handle = *mut c_void;
@@ -51,6 +54,9 @@ struct NativeBackendConfig {
 
 type LastError = unsafe extern "C" fn() -> *const c_char;
 type AbiVersion = unsafe extern "C" fn() -> u32;
+type OptionsCreate = unsafe extern "C" fn() -> Handle;
+type OptionsSet = unsafe extern "C" fn(Handle, *const c_char, *const c_char) -> Status;
+type OptionsFree = unsafe extern "C" fn(Handle);
 type RegistryCreate = unsafe extern "C" fn(*const c_char, *mut Handle) -> Status;
 type RegistryFree = unsafe extern "C" fn(Handle);
 type ModelLoad =
@@ -80,6 +86,9 @@ type ResultFree = unsafe extern "C" fn(Handle);
 struct Api {
     abi_version: AbiVersion,
     last_error: LastError,
+    options_create: OptionsCreate,
+    options_set: OptionsSet,
+    options_free: OptionsFree,
     registry_create: RegistryCreate,
     registry_free: RegistryFree,
     model_load: ModelLoad,
@@ -110,6 +119,9 @@ impl Api {
             let api = Self {
                 abi_version: load_symbol(&library, b"audiocpp_abi_version\0")?,
                 last_error: load_symbol(&library, b"audiocpp_last_error\0")?,
+                options_create: load_symbol(&library, b"audiocpp_options_create\0")?,
+                options_set: load_symbol(&library, b"audiocpp_options_set\0")?,
+                options_free: load_symbol(&library, b"audiocpp_options_free\0")?,
                 registry_create: load_symbol(&library, b"audiocpp_registry_create\0")?,
                 registry_free: load_symbol(&library, b"audiocpp_registry_free\0")?,
                 model_load: load_symbol(&library, b"audiocpp_model_load\0")?,
@@ -154,6 +166,72 @@ impl Api {
     }
 }
 
+fn create_option_map(api: &Api, entries: &BTreeMap<String, String>, scope: &str) -> Result<Handle> {
+    if entries.is_empty() {
+        return Ok(std::ptr::null_mut());
+    }
+    let entries = entries
+        .iter()
+        .map(|(key, value)| {
+            Ok((
+                CString::new(key.as_str()).context("audio.cpp option name contains a NUL byte")?,
+                CString::new(value.as_str())
+                    .context("audio.cpp option value contains a NUL byte")?,
+            ))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let options = unsafe { (api.options_create)() };
+    if options.is_null() {
+        bail!("audio.cpp {scope} option-map creation returned a null handle");
+    }
+    for (key, value) in entries {
+        if let Err(error) = api.check(
+            unsafe { (api.options_set)(options, key.as_ptr(), value.as_ptr()) },
+            &format!("{scope} option configuration"),
+        ) {
+            unsafe { (api.options_free)(options) };
+            return Err(error);
+        }
+    }
+    Ok(options)
+}
+
+#[derive(Default)]
+struct ScopedOptions {
+    load: BTreeMap<String, String>,
+    session: BTreeMap<String, String>,
+    request: BTreeMap<String, String>,
+}
+
+fn scoped_options(options: &BTreeMap<String, String>) -> Result<ScopedOptions> {
+    let mut scoped = ScopedOptions::default();
+    for (key, value) in options {
+        let (scope, name) = key.split_once('.').with_context(|| {
+            format!(
+                "audio.cpp backend option {key:?} has no scope; use load.NAME, session.NAME, or request.NAME"
+            )
+        })?;
+        if name.is_empty() {
+            bail!("audio.cpp backend option {key:?} has an empty option name");
+        }
+        let target = match scope {
+            "load" => &mut scoped.load,
+            "session" => &mut scoped.session,
+            "request" => &mut scoped.request,
+            _ => bail!(
+                "audio.cpp backend option {key:?} has unknown scope {scope:?}; use load, session, or request"
+            ),
+        };
+        if scope == "request" && matches!(name, "num_inference_steps" | "language") {
+            bail!(
+                "audio.cpp request option {name:?} is managed by model.steps/model.language and cannot be overridden through backend.options"
+            );
+        }
+        target.insert(name.to_owned(), value.to_owned());
+    }
+    Ok(scoped)
+}
+
 unsafe fn load_symbol<T: Copy>(library: &Library, name: &[u8]) -> Result<T> {
     // Every symbol is copied while `library` remains owned by Api.
     let symbol = unsafe { library.get::<T>(name) }.with_context(|| {
@@ -186,6 +264,7 @@ struct NativeEngine {
     session: Handle,
     steps: i32,
     language: CString,
+    request_options: Vec<(CString, CString)>,
 }
 
 impl NativeEngine {
@@ -198,6 +277,19 @@ impl NativeEngine {
         let backend = CString::new(spec.backend.as_str()).context("backend contains a NUL byte")?;
         let language =
             CString::new(spec.language.as_str()).context("language contains a NUL byte")?;
+
+        let request_options = spec
+            .request_options
+            .iter()
+            .map(|(key, value)| {
+                Ok((
+                    CString::new(key.as_str())
+                        .context("request option name contains a NUL byte")?,
+                    CString::new(value.as_str())
+                        .context("request option value contains a NUL byte")?,
+                ))
+            })
+            .collect::<Result<Vec<_>>>()?;
 
         let mut registry = std::ptr::null_mut();
         api.check(
@@ -214,19 +306,25 @@ impl NativeEngine {
             weight_id: std::ptr::null(),
             model_spec_override: std::ptr::null(),
         };
+        let load_options = match create_option_map(&api, &spec.load_options, "load") {
+            Ok(options) => options,
+            Err(error) => {
+                unsafe { (api.registry_free)(registry) };
+                return Err(error);
+            }
+        };
         let mut model = std::ptr::null_mut();
-        if let Err(error) = api.check(
-            unsafe {
-                (api.model_load)(
-                    registry,
-                    model_path.as_ptr(),
-                    &model_config,
-                    std::ptr::null_mut(),
-                    &mut model,
-                )
-            },
-            "model load",
-        ) {
+        let model_status = unsafe {
+            (api.model_load)(
+                registry,
+                model_path.as_ptr(),
+                &model_config,
+                load_options,
+                &mut model,
+            )
+        };
+        unsafe { (api.options_free)(load_options) };
+        if let Err(error) = api.check(model_status, "model load") {
             unsafe { (api.registry_free)(registry) };
             return Err(error);
         }
@@ -247,20 +345,29 @@ impl NativeEngine {
             device: spec.device,
             threads: spec.threads,
         };
+        let session_options = match create_option_map(&api, &spec.session_options, "session") {
+            Ok(options) => options,
+            Err(error) => {
+                unsafe {
+                    (api.model_free)(model);
+                    (api.registry_free)(registry);
+                }
+                return Err(error);
+            }
+        };
         let mut session = std::ptr::null_mut();
-        if let Err(error) = api.check(
-            unsafe {
-                (api.session_create)(
-                    model,
-                    task.as_ptr(),
-                    mode.as_ptr(),
-                    &native_config,
-                    std::ptr::null_mut(),
-                    &mut session,
-                )
-            },
-            "session creation",
-        ) {
+        let session_status = unsafe {
+            (api.session_create)(
+                model,
+                task.as_ptr(),
+                mode.as_ptr(),
+                &native_config,
+                session_options,
+                &mut session,
+            )
+        };
+        unsafe { (api.options_free)(session_options) };
+        if let Err(error) = api.check(session_status, "session creation") {
             unsafe {
                 (api.model_free)(model);
                 (api.registry_free)(registry);
@@ -282,6 +389,7 @@ impl NativeEngine {
             session,
             steps: spec.steps,
             language,
+            request_options,
         })
     }
 
@@ -317,6 +425,12 @@ impl NativeEngine {
                 },
                 "generation-step configuration",
             )?;
+            for (key, value) in &self.request_options {
+                self.api.check(
+                    unsafe { (self.api.request_set_option)(request, key.as_ptr(), value.as_ptr()) },
+                    "request option configuration",
+                )?;
+            }
             self.api.check(
                 unsafe { (self.api.session_run)(self.session, request, &mut result) },
                 "synthesis",
@@ -406,6 +520,15 @@ pub struct WorkerSpec {
     threads: c_int,
     language: String,
     steps: i32,
+    load_options: BTreeMap<String, String>,
+    session_options: BTreeMap<String, String>,
+    request_options: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct ProviderProbeSpec {
+    library: PathBuf,
+    library_dirs: Vec<PathBuf>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -472,7 +595,7 @@ impl WorkerClient {
         let ready: WorkerResponse = match read_json_frame(&mut client.stream) {
             Ok(ready) => ready,
             Err(error) => {
-                client.shutdown();
+                let _ = client.stop();
                 return Err(error).context("read audio.cpp worker startup response");
             }
         };
@@ -482,11 +605,11 @@ impl WorkerClient {
                 voices: SUPERTONIC_VOICES,
             } => Ok(client),
             WorkerResponse::Error { message } => {
-                client.shutdown();
+                let _ = client.stop();
                 bail!("audio.cpp worker initialization failed: {message}")
             }
             other => {
-                client.shutdown();
+                let _ = client.stop();
                 bail!("audio.cpp worker returned invalid startup response {other:?}")
             }
         }
@@ -513,25 +636,60 @@ impl WorkerClient {
         }
     }
 
-    fn shutdown(&mut self) {
+    fn stop(&mut self) -> Result<()> {
         if self.stopped {
-            return;
+            return Ok(());
         }
         self.stopped = true;
-        let _ = self.stream.set_read_timeout(Some(Duration::from_secs(1)));
-        let _ = self.stream.set_write_timeout(Some(Duration::from_secs(1)));
+        let _ = self.stream.set_read_timeout(Some(WORKER_STOP_TIMEOUT));
+        let _ = self.stream.set_write_timeout(Some(WORKER_STOP_TIMEOUT));
         let _ = write_json_frame(&mut self.stream, &WorkerRequest::Shutdown);
         let response = read_json_frame::<_, WorkerResponse>(&mut self.stream);
-        if !matches!(response, Ok(WorkerResponse::Shutdown)) {
-            let _ = self.child.kill();
+        if matches!(response, Ok(WorkerResponse::Shutdown))
+            && wait_for_exit(&mut self.child, WORKER_STOP_TIMEOUT)?
+        {
+            return Ok(());
         }
-        let _ = self.child.wait();
+        match self.child.kill() {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::InvalidInput => {}
+            Err(error) => return Err(error).context("terminate unresponsive audio.cpp worker"),
+        }
+        if !wait_for_exit(&mut self.child, WORKER_STOP_TIMEOUT)? {
+            let _ = self.child.kill();
+            bail!(
+                "audio.cpp worker did not exit after termination; refusing to start a replacement"
+            );
+        }
+        Ok(())
     }
 }
 
 impl Drop for WorkerClient {
     fn drop(&mut self) {
-        self.shutdown();
+        let _ = self.stop();
+    }
+}
+
+fn wait_for_exit(child: &mut Child, timeout: Duration) -> Result<bool> {
+    let deadline = Instant::now() + timeout;
+    poll_until(deadline, || {
+        child
+            .try_wait()
+            .map(|status| status.is_some())
+            .context("reap audio.cpp worker")
+    })
+}
+
+fn poll_until(deadline: Instant, mut poll: impl FnMut() -> Result<bool>) -> Result<bool> {
+    loop {
+        if poll()? {
+            return Ok(true);
+        }
+        if Instant::now() >= deadline {
+            return Ok(false);
+        }
+        std::thread::sleep(Duration::from_millis(10));
     }
 }
 
@@ -560,6 +718,7 @@ impl AudioCppBackend {
         if config.model.steps <= 0 {
             bail!("model.steps must be positive");
         }
+        let options = scoped_options(&config.backend.options)?;
         let library = resolve_provider_library(config, &paths.config_file)?;
         let spec = WorkerSpec {
             library_dirs: resolve_library_dirs(config, &paths.config_file, &library)?,
@@ -574,6 +733,9 @@ impl AudioCppBackend {
             threads: config.backend.threads.into(),
             language: config.model.language.clone(),
             steps: config.model.steps,
+            load_options: options.load,
+            session_options: options.session,
+            request_options: options.request,
         };
         let worker = WorkerClient::launch(&spec)?;
         Ok(Self {
@@ -610,6 +772,9 @@ impl TtsBackend for AudioCppBackend {
             Ok(Ok(audio)) => Ok(audio.pcm),
             Ok(Err(message)) => bail!("audio.cpp synthesis failed: {message}"),
             Err(first_error) => {
+                worker.stop().with_context(|| {
+                    format!("stop failed audio.cpp worker before restart: {first_error:#}")
+                })?;
                 let replacement = WorkerClient::launch(&self.spec).with_context(|| {
                     format!("restart audio.cpp worker after IPC failure: {first_error:#}")
                 })?;
@@ -688,6 +853,73 @@ pub fn run_worker(spec_json: &str) -> Result<()> {
     }
 }
 
+/// Validate the configured provider ABI in a short-lived hardened process.
+/// This does not need a model, so runtime-only setup can stage the provider
+/// before model setup without loading optional native code into the caller.
+pub fn probe_provider(config: &Config, config_file: &Path) -> Result<PathBuf> {
+    let library = resolve_provider_library(config, config_file)?;
+    let spec = ProviderProbeSpec {
+        library_dirs: resolve_library_dirs(config, config_file, &library)?,
+        library: library.clone(),
+    };
+    let executable = std::env::current_exe().context("locate Omaspeak executable")?;
+    let encoded = serde_json::to_string(&spec).context("encode audio.cpp provider probe")?;
+    let loader_path = std::env::join_paths(&spec.library_dirs)
+        .context("encode audio.cpp provider probe library path")?;
+    let mut child = Command::new(executable)
+        .arg("__audiocpp-probe")
+        .arg("--spec")
+        .arg(encoded)
+        .env("LD_LIBRARY_PATH", loader_path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .context("start isolated audio.cpp provider probe")?;
+    let deadline = Instant::now() + PROVIDER_PROBE_TIMEOUT;
+    let status = loop {
+        if let Some(status) = child
+            .try_wait()
+            .context("wait for audio.cpp provider probe")?
+        {
+            break status;
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            if !wait_for_exit(&mut child, WORKER_STOP_TIMEOUT)? {
+                bail!("audio.cpp provider probe did not stop after its timeout");
+            }
+            bail!("audio.cpp provider probe timed out");
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    let mut stderr = String::new();
+    if let Some(mut stream) = child.stderr.take() {
+        stream
+            .read_to_string(&mut stderr)
+            .context("read audio.cpp provider probe error")?;
+    }
+    if !status.success() {
+        let detail = stderr.trim();
+        bail!(
+            "audio.cpp provider probe failed{}",
+            if detail.is_empty() {
+                format!(" with {status}")
+            } else {
+                format!(": {detail}")
+            }
+        );
+    }
+    Ok(library)
+}
+
+pub fn run_provider_probe(spec_json: &str) -> Result<()> {
+    disable_core_dumps()?;
+    let spec: ProviderProbeSpec =
+        serde_json::from_str(spec_json).context("decode audio.cpp provider probe spec")?;
+    Api::load(&spec.library).map(|_| ())
+}
+
 fn disable_core_dumps() -> Result<()> {
     #[cfg(target_os = "linux")]
     let dumpable_result = unsafe { libc::prctl(libc::PR_SET_DUMPABLE, 0) };
@@ -717,16 +949,70 @@ fn disable_core_dumps() -> Result<()> {
 }
 
 fn resolve_provider_library(config: &Config, config_file: &Path) -> Result<PathBuf> {
-    let configured = config
-        .backend
-        .library
-        .as_deref()
-        .context("backend.library must point to a complete audio.cpp provider library")?;
-    resolve_file_beneath(
-        configured,
-        config_file.parent().unwrap_or_else(|| Path::new(".")),
-        "backend.library",
+    if let Some(configured) = config.backend.library.as_deref() {
+        return resolve_file_beneath(
+            configured,
+            config_file.parent().unwrap_or_else(|| Path::new(".")),
+            "backend.library",
+        );
+    }
+    discover_provider_library(config, config_file)?.with_context(
+        || "audio.cpp provider was not found; install the packaged default or set backend.library",
     )
+}
+
+/// Find an audio.cpp provider only in explicitly configured or package-owned
+/// library directories. Ambient loader paths are intentionally excluded.
+pub fn discover_provider_library(config: &Config, config_file: &Path) -> Result<Option<PathBuf>> {
+    if let Some(configured) = config.backend.library.as_deref() {
+        return resolve_file_beneath(
+            configured,
+            config_file.parent().unwrap_or_else(|| Path::new(".")),
+            "backend.library",
+        )
+        .map(Some);
+    }
+    let report = crate::runtime::inspect(&config.backend, config_file);
+    let mut directories = report.configured_library_dirs;
+    directories.extend(report.package_library_dirs);
+    let directories = directories
+        .into_iter()
+        .fold(Vec::new(), |mut unique, path| {
+            if !unique.contains(&path) {
+                unique.push(path);
+            }
+            unique
+        });
+    Ok(find_provider_library(&directories))
+}
+
+fn find_provider_library(directories: &[PathBuf]) -> Option<PathBuf> {
+    for directory in directories {
+        let direct = directory.join("libaudiocpp.so");
+        if direct.is_file() {
+            return direct.canonicalize().ok();
+        }
+    }
+    let mut versioned = directories
+        .iter()
+        .flat_map(|directory| std::fs::read_dir(directory).into_iter().flatten().flatten())
+        .map(|entry| entry.path())
+        .filter_map(|path| {
+            let version = path
+                .is_file()
+                .then(|| path.file_name()?.to_str()?.strip_prefix("libaudiocpp.so."))
+                .flatten()?
+                .split('.')
+                .map(str::parse::<u64>)
+                .collect::<std::result::Result<Vec<_>, _>>()
+                .ok()?;
+            (!version.is_empty()).then_some((version, path))
+        })
+        .collect::<Vec<_>>();
+    versioned.sort_by(|(left, _), (right, _)| left.cmp(right));
+    versioned
+        .pop()
+        .and_then(|(_, path)| path.canonicalize().ok())
 }
 
 fn resolve_library_dirs(
@@ -735,9 +1021,7 @@ fn resolve_library_dirs(
     library: &Path,
 ) -> Result<Vec<PathBuf>> {
     let base = config_file.parent().unwrap_or_else(|| Path::new("."));
-    let canonical_base = base
-        .canonicalize()
-        .with_context(|| format!("resolve backend.library_dirs base {}", base.display()))?;
+    let mut canonical_base = None;
     let mut directories = Vec::with_capacity(config.backend.library_dirs.len() + 1);
     for configured in &config.backend.library_dirs {
         let explicit_absolute = configured.is_absolute();
@@ -755,11 +1039,19 @@ fn resolve_library_dirs(
                 resolved.display()
             );
         }
-        if !explicit_absolute && !resolved.starts_with(&canonical_base) {
-            bail!(
-                "backend.library_dirs entry escapes the config directory {}",
-                canonical_base.display()
-            );
+        if !explicit_absolute {
+            if canonical_base.is_none() {
+                canonical_base = Some(base.canonicalize().with_context(|| {
+                    format!("resolve backend.library_dirs base {}", base.display())
+                })?);
+            }
+            let relative_base = canonical_base.as_ref().expect("base was initialized");
+            if !resolved.starts_with(relative_base) {
+                bail!(
+                    "backend.library_dirs entry escapes the config directory {}",
+                    relative_base.display()
+                );
+            }
         }
         if !directories.contains(&resolved) {
             directories.push(resolved);

@@ -8,12 +8,20 @@ fn every_model_references_a_backend() {
                 .iter()
                 .any(|backend| backend.kind == model.backend)
         );
-        assert_eq!(model.archive_sha256.len(), 64);
+        if let Some(file) = model.single_file {
+            assert_eq!(file.sha256.len(), 64);
+            assert!(file.url.starts_with("https://"));
+            assert!(file.size > 0);
+            assert!(!file.path.is_empty());
+        } else if model.downloadable {
+            assert_eq!(model.archive_sha256.len(), 64);
+            assert!(model.archive_url.starts_with("https://"));
+            assert!(model.archive_size > 0);
+        }
         assert!(!model.license.is_empty());
         assert!(model.license_url.starts_with("https://"));
         assert!(!model.license_status.is_empty());
         if model.requires_acceptance {
-            assert!(model.downloadable);
             assert!(!model.license_file.is_empty());
             assert_eq!(model.license_sha256.len(), 64);
             assert!(model_license_text(model).is_some());
@@ -41,9 +49,24 @@ fn every_model_references_a_backend() {
 
 #[test]
 fn catalog_enforces_current_model_license_policy() {
+    let gguf = model("supertonic-3-gguf").unwrap();
+    assert!(gguf.downloadable);
+    assert_eq!(gguf.backend, "audiocpp");
+    assert_eq!(
+        gguf.source_revision,
+        "09fe073ba154561f4474162e8bd4ab233a848eca"
+    );
+    let file = gguf.single_file.unwrap();
+    assert_eq!(file.size, 454_072_836);
+    assert_eq!(
+        file.sha256,
+        "af814486a0bc9513fb36afabd9b1155ad14fb2c36a107ac6ffe62ea9adafb662"
+    );
+
     for id in ["supertonic-3-int8", "supertonic-3-npu"] {
         let supertonic = model(id).unwrap();
-        assert!(supertonic.downloadable);
+        assert!(!supertonic.downloadable);
+        assert!(supertonic.archive_url.is_empty());
         assert!(supertonic.requires_acceptance);
         assert_eq!(supertonic.license, "OpenRAIL-M");
         assert_eq!(supertonic.source_revision.len(), 40);

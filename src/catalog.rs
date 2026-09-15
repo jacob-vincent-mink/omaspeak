@@ -17,6 +17,14 @@ pub struct RequiredFile {
 }
 
 #[derive(Clone, Copy, Debug, Serialize)]
+pub struct SingleFile {
+    pub path: &'static str,
+    pub url: &'static str,
+    pub size: u64,
+    pub sha256: &'static str,
+}
+
+#[derive(Clone, Copy, Debug, Serialize)]
 pub struct SupplementalFile {
     pub path: &'static str,
     pub supersedes: &'static str,
@@ -44,6 +52,9 @@ pub struct ModelSpec {
     pub downloadable: bool,
     pub requires_acceptance: bool,
     pub source_revision: &'static str,
+    /// A directly downloadable model artifact. Archive-backed models leave
+    /// this empty and use the archive metadata below.
+    pub single_file: Option<SingleFile>,
     pub license_file: &'static str,
     pub license_sha256: &'static str,
     pub archive_url: &'static str,
@@ -79,10 +90,23 @@ const SUPERTONIC_VOICES: &[VoiceSpec] = &[
     VoiceSpec { id: 9, name: "F5" },
 ];
 
-const BACKENDS: &[BackendSpec] = &[BackendSpec {
-    kind: "supertonic",
-    name: "Supertonic",
-    description: "Local Supertonic synthesis through runtime-loaded inference engines",
+const BACKENDS: &[BackendSpec] = &[
+    BackendSpec {
+        kind: "audiocpp",
+        name: "audio.cpp",
+        description: "Portable GGUF synthesis through one complete native audio.cpp provider",
+    },
+    BackendSpec {
+        kind: "supertonic",
+        name: "Direct OpenVINO",
+        description: "Direct OpenVINO execution of the official Supertonic graphs on Intel hardware",
+    },
+];
+
+const SUPERTONIC_GGUF_FILES: &[RequiredFile] = &[RequiredFile {
+    path: "supertonic-3-orig.gguf",
+    size: 454_072_836,
+    sha256: "af814486a0bc9513fb36afabd9b1155ad14fb2c36a107ac6ffe62ea9adafb662",
 }];
 
 const SUPERTONIC_FILES: &[RequiredFile] = &[
@@ -171,6 +195,45 @@ const SUPERTONIC_NPU_SUPPLEMENTS: &[SupplementalFile] = &[SupplementalFile {
 
 const MODELS: &[ModelSpec] = &[
     ModelSpec {
+        id: "supertonic-3-gguf",
+        backend: "audiocpp",
+        family: "supertonic",
+        name: "supertonic-3-gguf",
+        description: "Supertonic 3 original-precision GGUF for audio.cpp (31 languages)",
+        license: "OpenRAIL-M",
+        license_url: "https://huggingface.co/Supertone/supertonic-3/blob/724fb5abbf5502583fb520898d45929e62f02c0b/LICENSE",
+        license_status: "verified-converted",
+        downloadable: true,
+        requires_acceptance: true,
+        source_revision: "09fe073ba154561f4474162e8bd4ab233a848eca",
+        single_file: Some(SingleFile {
+            path: "supertonic-3-orig.gguf",
+            url: "https://huggingface.co/audio-cpp/audio.cpp-gguf/resolve/09fe073ba154561f4474162e8bd4ab233a848eca/Supertonic-3-GGUF/supertonic-3-orig.gguf?download=true",
+            size: 454_072_836,
+            sha256: "af814486a0bc9513fb36afabd9b1155ad14fb2c36a107ac6ffe62ea9adafb662",
+        }),
+        license_file: "MODEL-LICENSE",
+        license_sha256: "0d944a9110fed9a9602d60e0423a272903e7bd21ab060490774efc77c2275e9f",
+        archive_url: "",
+        archive_size: 0,
+        archive_sha256: "",
+        archive_root: "",
+        duration_predictor: "",
+        text_encoder: "",
+        vector_estimator: "",
+        vocoder: "",
+        tts_json: "",
+        unicode_indexer: "",
+        voice_style: "",
+        language: "en",
+        steps: 8,
+        voices: SUPERTONIC_VOICES,
+        openvino_capable: false,
+        npu_capable: false,
+        required_files: SUPERTONIC_GGUF_FILES,
+        supplemental_files: &[],
+    },
+    ModelSpec {
         id: "supertonic-3-int8",
         backend: "supertonic",
         family: "supertonic",
@@ -178,16 +241,17 @@ const MODELS: &[ModelSpec] = &[
         description: "Supertonic 3 multilingual int8 (31 languages; OpenVINO evaluation model)",
         license: "OpenRAIL-M",
         license_url: "https://huggingface.co/Supertone/supertonic-3/blob/724fb5abbf5502583fb520898d45929e62f02c0b/LICENSE",
-        license_status: "verified",
-        downloadable: true,
+        license_status: "verified; direct upstream bundle pending",
+        downloadable: false,
         requires_acceptance: true,
         source_revision: "724fb5abbf5502583fb520898d45929e62f02c0b",
+        single_file: None,
         license_file: "MODEL-LICENSE",
         license_sha256: "0d944a9110fed9a9602d60e0423a272903e7bd21ab060490774efc77c2275e9f",
-        archive_url: "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/sherpa-onnx-supertonic-3-tts-int8-2026-05-11.tar.bz2",
-        archive_size: 128_774_318,
-        archive_sha256: "82fa96f91c4ef8abaae3a14a3f4153facf88bed821d1f7331cec2700f432c427",
-        archive_root: "sherpa-onnx-supertonic-3-tts-int8-2026-05-11",
+        archive_url: "",
+        archive_size: 0,
+        archive_sha256: "",
+        archive_root: "",
         duration_predictor: "duration_predictor.int8.onnx",
         text_encoder: "text_encoder.int8.onnx",
         vector_estimator: "vector_estimator.int8.onnx",
@@ -211,16 +275,17 @@ const MODELS: &[ModelSpec] = &[
         description: "Supertonic 3 for Intel NPU (FP32 vector estimator; 31 languages)",
         license: "OpenRAIL-M",
         license_url: "https://huggingface.co/Supertone/supertonic-3/blob/724fb5abbf5502583fb520898d45929e62f02c0b/LICENSE",
-        license_status: "verified-modified",
-        downloadable: true,
+        license_status: "verified-modified; direct upstream bundle pending",
+        downloadable: false,
         requires_acceptance: true,
         source_revision: "724fb5abbf5502583fb520898d45929e62f02c0b",
+        single_file: None,
         license_file: "MODEL-LICENSE",
         license_sha256: "0d944a9110fed9a9602d60e0423a272903e7bd21ab060490774efc77c2275e9f",
-        archive_url: "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/sherpa-onnx-supertonic-3-tts-int8-2026-05-11.tar.bz2",
-        archive_size: 128_774_318,
-        archive_sha256: "82fa96f91c4ef8abaae3a14a3f4153facf88bed821d1f7331cec2700f432c427",
-        archive_root: "sherpa-onnx-supertonic-3-tts-int8-2026-05-11",
+        archive_url: "",
+        archive_size: 0,
+        archive_sha256: "",
+        archive_root: "",
         duration_predictor: "duration_predictor.int8.onnx",
         text_encoder: "text_encoder.int8.onnx",
         vector_estimator: "vector_estimator.onnx",
@@ -260,6 +325,9 @@ impl ModelSpec {
         config.model.family = self.family.into();
         config.model.name = self.name.into();
         config.model.directory.clear();
+        config.model.file = self
+            .single_file
+            .map_or_else(String::new, |file| file.path.into());
         config.model.duration_predictor = self.duration_predictor.into();
         config.model.text_encoder = self.text_encoder.into();
         config.model.vector_estimator = self.vector_estimator.into();

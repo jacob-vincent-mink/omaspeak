@@ -4,7 +4,7 @@ use bzip2::write::BzEncoder;
 use std::net::TcpListener;
 use std::thread;
 
-use crate::catalog::{RequiredFile, SupplementalFile};
+use crate::catalog::{RequiredFile, SingleFile, SupplementalFile};
 
 fn temp(name: &str) -> PathBuf {
     let path =
@@ -125,6 +125,7 @@ fn spec(archive_bytes: &[u8], url: &str) -> &'static ModelSpec {
         downloadable: true,
         requires_acceptance: false,
         source_revision: "test-revision",
+        single_file: None,
         license_file: "",
         license_sha256: "",
         archive_url: leak(url.to_owned()),
@@ -181,6 +182,22 @@ fn spec_with_supplement(archive_bytes: &[u8]) -> &'static ModelSpec {
     }))
 }
 
+fn single_file_spec() -> &'static ModelSpec {
+    let bytes = b"tiny model";
+    let mut model = *spec(&[], "");
+    model.single_file = Some(SingleFile {
+        path: "model.bin",
+        url: "https://example.invalid/model.bin",
+        size: bytes.len() as u64,
+        sha256: leak(digest(bytes)),
+    });
+    model.archive_url = "";
+    model.archive_size = 0;
+    model.archive_sha256 = "";
+    model.archive_root = "";
+    Box::leak(Box::new(model))
+}
+
 fn paths(root: &Path) -> AppPaths {
     AppPaths {
         config_file: root.join("config/config.toml"),
@@ -203,8 +220,38 @@ fn model_path_is_backend_neutral() {
     let spec = crate::catalog::models().first().unwrap();
     assert_eq!(
         model_directory(&paths, spec),
-        PathBuf::from("/tmp/data/models/supertonic-3-int8")
+        PathBuf::from("/tmp/data/models/supertonic-3-gguf")
     );
+}
+
+#[test]
+fn cached_single_file_install_is_verified_and_published_atomically() {
+    let root = temp("single-file");
+    let app_paths = paths(&root);
+    let model = single_file_spec();
+    let cache = app_paths.data_dir.join("downloads/tiny-model.bin");
+    fs::create_dir_all(cache.parent().unwrap()).unwrap();
+    fs::write(&cache, b"tiny model").unwrap();
+
+    let installed = install(&app_paths, model, None, ProgressFormat::Human, None).unwrap();
+    assert_eq!(
+        fs::read(installed.join("model.bin")).unwrap(),
+        b"tiny model"
+    );
+    verify(&app_paths, model).unwrap();
+    assert!(installed.join(".omaspeak-model.json").is_file());
+    assert!(
+        fs::read_dir(app_paths.data_dir.join("models"))
+            .unwrap()
+            .all(|entry| !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".tiny.install-"))
+    );
+
+    fs::write(installed.join("model.bin"), b"bad").unwrap();
+    assert!(verify(&app_paths, model).is_err());
 }
 
 #[test]

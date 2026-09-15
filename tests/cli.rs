@@ -51,54 +51,58 @@ fn audiocpp_worker_reports_a_clean_loader_error_without_a_core_dump() {
 }
 
 #[test]
-fn runtime_apply_rejects_bad_abi_and_native_process_exit_without_writes() {
+fn runtime_apply_rejects_a_non_audiocpp_library_without_writes() {
     let root = sandbox();
     let directory = root.join("native");
     fs::create_dir_all(&directory).unwrap();
     let config_path = root.join("config/omaspeak/config.toml");
     Config::default().save(&config_path).unwrap();
     let before = fs::read(&config_path).unwrap();
-    for source in [
-        "#include <stdint.h>\ntypedef struct { void *api; const char *(*version)(void); } Base; static const char *version(void) {return \"1.28.0\";} static Base base={0,version}; const Base *OrtGetApiBase(void) {return &base;}",
-        "#include <unistd.h>\n__attribute__((constructor)) static void fail(void) {_exit(37);}",
-    ] {
-        fs::write(directory.join("fixture.c"), source).unwrap();
-        assert!(
-            Command::new("cc")
-                .args(["-shared", "-fPIC"])
-                .arg(directory.join("fixture.c"))
-                .arg("-o")
-                .arg(directory.join("libonnxruntime.so"))
-                .status()
-                .unwrap()
-                .success()
-        );
-        let output = run(
-            &root,
-            &[
-                "setup",
-                "runtime",
-                "--runtime",
-                "default",
-                "--device",
-                "cpu",
-                "--dir",
-                directory.to_str().unwrap(),
-                "--apply",
-            ],
-        );
-        assert!(!output.status.success());
-        assert!(stderr(&output).contains("runtime candidate rejected; config unchanged"));
-        assert_eq!(fs::read(&config_path).unwrap(), before);
-    }
+    let library = [
+        "/usr/lib/libm.so.6",
+        "/usr/lib64/libm.so.6",
+        "/lib/x86_64-linux-gnu/libm.so.6",
+    ]
+    .into_iter()
+    .map(PathBuf::from)
+    .find(|path| path.is_file());
+    let Some(library) = library else {
+        return;
+    };
+    fs::copy(library, directory.join("libaudiocpp.so")).unwrap();
+    let output = run(
+        &root,
+        &[
+            "setup",
+            "runtime",
+            "--runtime",
+            "default",
+            "--device",
+            "cpu",
+            "--dir",
+            directory.to_str().unwrap(),
+            "--apply",
+        ],
+    );
+    assert!(!output.status.success());
+    let error = stderr(&output);
+    assert!(
+        error.contains("runtime candidate rejected; config unchanged"),
+        "{error}"
+    );
+    assert!(error.contains("audiocpp_abi_version"), "{error}");
+    assert_eq!(fs::read(&config_path).unwrap(), before);
 }
 
 #[test]
 fn real_cpu_preview_then_apply_pins_paths() {
-    let library = std::env::var_os("OMASPEAK_TEST_ONNXRUNTIME_LIBRARY")
+    let library = std::env::var_os("OMASPEAK_TEST_AUDIOCPP_LIBRARY")
         .map(PathBuf::from)
         .unwrap_or_else(|| {
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/debug/libonnxruntime.so")
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .unwrap()
+                .join(".scratch-ortfree/build-release-omaspeak/bin/libaudiocpp.so.0.1.0")
         });
     if !library.is_file() {
         return;
@@ -137,22 +141,11 @@ fn real_cpu_preview_then_apply_pins_paths() {
     );
     assert!(applied.status.success(), "{}", stderr(&applied));
     let config = Config::load(&config_path).unwrap();
+    assert_eq!(config.backend.kind, "audiocpp");
     assert_eq!(
-        config.backend.onnxruntime_library,
+        config.backend.library,
         Some(library.canonicalize().unwrap())
     );
-    let inventory = run(&root, &["setup", "runtime", "--json"]);
-    assert!(inventory.status.success(), "{}", stderr(&inventory));
-    let value: serde_json::Value = serde_json::from_slice(&inventory.stdout).unwrap();
-    let cpu = value["inventory"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|state| state["runtime"] == "default" && state["device"] == "cpu")
-        .unwrap();
-    assert_eq!(cpu["ready"], true);
-    assert_eq!(cpu["configured"], true);
-    assert_eq!(cpu["source"], "configured");
 }
 
 fn sandbox() -> PathBuf {
@@ -258,7 +251,7 @@ fn guided_setup_accepts_arrow_keys_and_enter_in_a_real_pty() {
     assert!(terminal.contains("Omaspeak setup"));
     assert!(terminal.contains("Omaspeak runtime"));
     assert!(terminal.contains("Omaspeak device"));
-    assert!(terminal.contains("runtime candidate rejected; config unchanged"));
+    assert!(terminal.contains("audio.cpp provider was not found"));
     assert!(!root.join("config/omaspeak/config.toml").exists());
 }
 

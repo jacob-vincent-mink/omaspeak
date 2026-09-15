@@ -79,6 +79,69 @@ fn framed_control_protocol_round_trips_and_is_bounded() {
 }
 
 #[test]
+fn bounded_worker_reap_polling_reports_exit_and_timeout() {
+    let mut polls = 0;
+    assert!(
+        poll_until(Instant::now() + Duration::from_secs(1), || {
+            polls += 1;
+            Ok(polls == 3)
+        })
+        .unwrap()
+    );
+    assert_eq!(polls, 3);
+
+    let mut timeout_polls = 0;
+    assert!(
+        !poll_until(Instant::now(), || {
+            timeout_polls += 1;
+            Ok(false)
+        })
+        .unwrap()
+    );
+    assert_eq!(timeout_polls, 1);
+}
+
+#[test]
+fn backend_options_require_a_scope_and_reserve_model_owned_request_values() {
+    let mut options = BTreeMap::new();
+    options.insert("load.config".into(), "small".into());
+    options.insert("session.batch".into(), "1".into());
+    options.insert("request.temperature".into(), "0.5".into());
+    let parsed = scoped_options(&options).unwrap();
+    assert_eq!(parsed.load["config"], "small");
+    assert_eq!(parsed.session["batch"], "1");
+    assert_eq!(parsed.request["temperature"], "0.5");
+
+    for invalid in [
+        "unscoped",
+        "unknown.value",
+        "request.language",
+        "request.num_inference_steps",
+    ] {
+        let options = BTreeMap::from([(invalid.into(), "value".into())]);
+        assert!(scoped_options(&options).is_err(), "accepted {invalid}");
+    }
+}
+
+#[test]
+fn provider_discovery_prefers_soname_then_highest_numeric_version() {
+    let root = temp("provider-versions");
+    fs::write(root.join("libaudiocpp.so.9"), b"nine").unwrap();
+    fs::write(root.join("libaudiocpp.so.10"), b"ten").unwrap();
+    fs::write(root.join("libaudiocpp.so.preview"), b"invalid").unwrap();
+    assert_eq!(
+        find_provider_library(std::slice::from_ref(&root)).unwrap(),
+        root.join("libaudiocpp.so.10").canonicalize().unwrap()
+    );
+
+    fs::write(root.join("libaudiocpp.so"), b"soname").unwrap();
+    assert_eq!(
+        find_provider_library(std::slice::from_ref(&root)).unwrap(),
+        root.join("libaudiocpp.so").canonicalize().unwrap()
+    );
+}
+
+#[test]
 fn pcm_protocol_round_trips_finite_samples_and_rejects_bad_shapes() {
     let expected = [-1.0, -0.25, 0.0, 0.5, 1.0];
     let mut bytes = Vec::new();

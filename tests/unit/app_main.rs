@@ -1549,7 +1549,7 @@ fn guided_runtime_preselects_current_values_and_saves_selection() {
     assert_eq!(selector.calls[0].2, 0);
     assert!(selector.calls[0].1[0].enabled);
     assert!(selector.calls[0].1.iter().any(|item| {
-        item.label == "CUDA" && item.enabled && item.detail.contains("Needs setup")
+        item.label == "audio.cpp · CUDA" && item.enabled && item.detail.contains("Needs setup")
     }));
     assert_eq!(selector.calls[1].0, "Omaspeak device");
     assert_eq!(selector.calls[1].2, 1);
@@ -1847,10 +1847,10 @@ fn guided_model_marks_active_installed_and_downloadable_models() {
     let mut selector = ScriptedSelector::new([Some(0)]);
     let selected =
         choose_model(&paths.config_file, &paths, &installed, None, &mut selector).unwrap();
-    assert_eq!(selected.as_deref(), Some("supertonic-3-int8"));
-    assert!(selector.calls[0].1[0].label.contains("● active"));
+    assert_eq!(selected.as_deref(), Some("supertonic-3-gguf"));
+    assert!(selector.calls[0].1[1].label.contains("● active"));
     assert!(
-        selector.calls[0].1[1]
+        selector.calls[0].1[2]
             .detail
             .contains("Intel NPU validated")
     );
@@ -1865,7 +1865,7 @@ fn guided_model_marks_active_installed_and_downloadable_models() {
     );
     assert_eq!(
         Config::load(&paths.config_file).unwrap().model.name,
-        "supertonic-3-int8"
+        "supertonic-3-gguf"
     );
     assert_eq!(selector.calls[1].0, "Omaspeak voice");
     assert_eq!(selector.calls[1].1.len(), 10);
@@ -1926,7 +1926,7 @@ fn model_only_flow_constrains_catalog_for_active_npu_runtime() {
     config.backend.device = "NPU".into();
     config.model.name = "supertonic-3-npu".into();
     config.save(&paths.config_file).unwrap();
-    let mut selector = ScriptedSelector::new([Some(1)]);
+    let mut selector = ScriptedSelector::new([Some(2)]);
     let selected = choose_model(
         &paths.config_file,
         &paths,
@@ -1938,8 +1938,9 @@ fn model_only_flow_constrains_catalog_for_active_npu_runtime() {
 
     assert_eq!(selected.as_deref(), Some("supertonic-3-npu"));
     assert!(!selector.calls[0].1[0].enabled);
-    assert!(selector.calls[0].1[1].enabled);
-    assert_eq!(selector.calls[0].2, 1);
+    assert!(!selector.calls[0].1[1].enabled);
+    assert!(selector.calls[0].1[2].enabled);
+    assert_eq!(selector.calls[0].2, 2);
     assert!(selector.calls[0].1[0].detail.contains("Incompatible"));
 }
 
@@ -1968,6 +1969,62 @@ fn full_setup_confirmation_cancel_leaves_configuration_untouched() {
     assert_eq!(selector.calls[5].0, "Apply Omaspeak setup");
     assert_eq!(selector.calls[5].1[0].label, "Apply setup");
     assert!(!paths.config_file.exists());
+}
+
+#[test]
+fn fresh_full_setup_stages_audio_cpp_cpu_and_gguf_together() {
+    let root = sandbox();
+    let paths = paths(&root);
+    let mut selector =
+        ScriptedSelector::new([Some(0), Some(0), Some(0), Some(0), Some(0), Some(0)]);
+
+    guided_full_setup_with_validator(
+        &paths.config_file,
+        &paths,
+        &FakeModelOperations { installed: false },
+        &mut selector,
+        |candidate, _, _| {
+            assert_eq!(candidate.backend.kind, "audiocpp");
+            assert_eq!(candidate.backend.runtime, Runtime::Default);
+            assert_eq!(candidate.backend.device, "auto");
+            Ok(())
+        },
+        |paths| Ok(paths.data_dir.join("applications/omaspeak.desktop")),
+        || false,
+        |was_active| {
+            assert!(!was_active);
+            Ok(false)
+        },
+        |_, _| Ok(()),
+        |_, _| Ok(()),
+    )
+    .unwrap();
+
+    let configured = Config::load(&paths.config_file).unwrap();
+    assert_eq!(configured.backend.kind, "audiocpp");
+    assert_eq!(configured.backend.runtime, Runtime::Default);
+    assert_eq!(configured.backend.device, "cpu");
+    assert_eq!(configured.model.name, "supertonic-3-gguf");
+    assert_eq!(configured.model.file, "supertonic-3-orig.gguf");
+    assert!(selector.calls[2].1[0].enabled);
+    assert!(!selector.calls[2].1[1].enabled);
+    assert!(!selector.calls[2].1[2].enabled);
+}
+
+#[test]
+fn runtime_only_audio_cpp_requires_or_stages_an_installed_gguf() {
+    let mut config = Config::default();
+    config.backend.kind = "audiocpp".into();
+    let error =
+        stage_installed_audio_cpp_model_with(&mut config, |_| bail!("not installed")).unwrap_err();
+    assert!(error.to_string().contains("choose Full setup"));
+    assert_eq!(config.model.name, "supertonic-3-int8");
+
+    stage_installed_audio_cpp_model_with(&mut config, |_| Ok(())).unwrap();
+    assert_eq!(config.model.name, "supertonic-3-gguf");
+    assert_eq!(config.model.file, "supertonic-3-orig.gguf");
+    assert_eq!(config.backend.runtime, Runtime::Default);
+    assert_eq!(config.backend.device, "cpu");
 }
 
 #[test]
@@ -2464,7 +2521,7 @@ fn builtin_model_boundaries_and_offline_command_validation_are_actionable() {
     let root = sandbox();
     let paths = paths(&root);
     let spec = BuiltinModels.resolve("supertonic-3-int8").unwrap();
-    assert_eq!(BuiltinModels.models().len(), 2);
+    assert_eq!(BuiltinModels.models().len(), 3);
     assert!(BuiltinModels.verify(&paths, spec).is_err());
     assert!(
         BuiltinModels
@@ -2579,7 +2636,7 @@ fn installed_guided_model_and_voice_validation_cover_local_only_paths() {
         guided_model(&paths.config_file, &paths, &operations, &mut selector)
             .unwrap()
             .as_deref(),
-        Some("supertonic-3-int8")
+        Some("supertonic-3-gguf")
     );
     assert_eq!(Config::load(&paths.config_file).unwrap().model.voice, 2);
 
@@ -2883,7 +2940,7 @@ fn hidden_inventory_probe_dispatches_and_rejects_invalid_candidates() {
 fn noninteractive_runtime_setup_persists_selection_and_rejects_an_invalid_library() {
     let root = sandbox();
     let paths = paths(&root);
-    apply_runtime_selection(
+    apply_runtime_selection_with_provider_probe(
         &paths.config_file,
         &paths,
         Runtime::Default,
@@ -2902,6 +2959,7 @@ fn noninteractive_runtime_setup_persists_selection_and_rejects_an_invalid_librar
             },
             errors: Vec::new(),
         },
+        |_, _| Ok(PathBuf::from("/test/libaudiocpp.so")),
     )
     .unwrap();
 
@@ -2925,11 +2983,7 @@ fn noninteractive_runtime_setup_persists_selection_and_rejects_an_invalid_librar
         &paths,
     )
     .unwrap_err();
-    assert!(
-        error
-            .to_string()
-            .contains("runtime candidate rejected; config unchanged")
-    );
+    assert!(error.to_string().contains("libaudiocpp.so was not found"));
     assert_eq!(fs::read_to_string(&paths.config_file).unwrap(), original);
     setup(
         Some(SetupCommand::Runtime {

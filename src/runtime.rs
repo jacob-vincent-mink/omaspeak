@@ -601,6 +601,7 @@ fn contains_runtime_anchor(directory: &Path) -> bool {
         "libonnxruntime.so",
         "libonnxruntime_providers_cuda.so",
         "libopenvino_c.so",
+        "libaudiocpp.so",
     ]
     .iter()
     .any(|name| {

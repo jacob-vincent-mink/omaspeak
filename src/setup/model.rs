@@ -77,10 +77,20 @@ pub fn install(
         fs::remove_dir_all(&staging)?;
     }
     fs::create_dir_all(&staging)?;
-    emit(progress, "extract", spec, None, None)?;
+    emit(
+        progress,
+        if spec.single_file.is_some() {
+            "install-file"
+        } else {
+            "extract"
+        },
+        spec,
+        None,
+        None,
+    )?;
     let prepare = || -> Result<PathBuf> {
-        let extracted = extract_archive(&archive, &staging, spec)
-            .with_context(|| format!("extract model archive {}", archive.display()))?;
+        let extracted = materialize_artifact(&archive, &staging, spec)
+            .with_context(|| format!("install model artifact {}", archive.display()))?;
         for (asset, source) in spec.supplemental_files.iter().zip(&supplemental_files) {
             install_supplemental(source, &extracted, asset)?;
             if !asset.supersedes.is_empty() && asset.supersedes != asset.path {
@@ -200,10 +210,12 @@ fn write_install_manifest(
     let manifest = serde_json::json!({
         "catalog": spec,
         "provenance": {
-            "source": if archive_override.is_some() { "user-supplied-archive" } else { "catalog-download" },
+            "source": if archive_override.is_some() {
+                if spec.single_file.is_some() { "user-supplied-file" } else { "user-supplied-archive" }
+            } else { "catalog-download" },
             "source_revision": spec.source_revision,
-            "archive_url": spec.archive_url,
-            "archive_sha256": spec.archive_sha256,
+            "artifact_url": artifact_url(spec),
+            "artifact_sha256": artifact_sha256(spec),
             "supplemental_assets": spec.supplemental_files,
             "modified": !spec.supplemental_files.is_empty(),
         },
@@ -388,37 +400,40 @@ fn download_archive(
     let cache_id = crate::catalog::models()
         .iter()
         .find(|candidate| {
-            candidate.archive_size == spec.archive_size
-                && candidate.archive_sha256 == spec.archive_sha256
-                && candidate.archive_url == spec.archive_url
+            artifact_size(candidate) == artifact_size(spec)
+                && artifact_sha256(candidate) == artifact_sha256(spec)
+                && artifact_url(candidate) == artifact_url(spec)
         })
         .map_or(spec.id, |candidate| candidate.id);
     let target = paths
         .data_dir
         .join("downloads")
-        .join(format!("{cache_id}.tar.bz2"));
+        .join(spec.single_file.map_or_else(
+            || format!("{cache_id}.tar.bz2"),
+            |file| format!("{cache_id}-{}", file.path.replace(['/', '\\'], "-")),
+        ));
     if verify_archive(&target, spec).is_ok() {
         emit(
             progress,
             "cached",
             spec,
-            Some(spec.archive_size),
-            Some(spec.archive_size),
+            Some(artifact_size(spec)),
+            Some(artifact_size(spec)),
         )?;
         return Ok(target);
     }
-    let part = target.with_extension("tar.bz2.part");
+    let part = target.with_extension("part");
     let _ = fs::remove_file(&part);
     emit(
         progress,
         "download-start",
         spec,
         Some(0),
-        Some(spec.archive_size),
+        Some(artifact_size(spec)),
     )?;
-    let response = ureq::get(spec.archive_url)
+    let response = ureq::get(artifact_url(spec))
         .call()
-        .with_context(|| format!("download {}", spec.archive_url))?;
+        .with_context(|| format!("download {}", artifact_url(spec)))?;
     write_download(response.into_reader(), &part, &target, spec, progress)?;
     Ok(target)
 }
@@ -442,34 +457,34 @@ fn write_download(
             break;
         }
         total += count as u64;
-        if total > spec.archive_size {
+        if total > artifact_size(spec) {
             bail!("download exceeded expected size for {}", spec.id);
         }
         hasher.update(&buffer[..count]);
         output.write_all(&buffer[..count])?;
-        if should_report_progress(total, reported, spec.archive_size) {
+        if should_report_progress(total, reported, artifact_size(spec)) {
             emit(
                 progress,
                 "download-progress",
                 spec,
                 Some(total),
-                Some(spec.archive_size),
+                Some(artifact_size(spec)),
             )?;
             reported = total;
         }
     }
     output.flush()?;
     output.get_ref().sync_all()?;
-    if total != spec.archive_size {
+    if total != artifact_size(spec) {
         bail!(
             "downloaded {} bytes for {}, expected {}",
             total,
             spec.id,
-            spec.archive_size
+            artifact_size(spec)
         );
     }
     let digest = format!("{:x}", hasher.finalize());
-    if digest != spec.archive_sha256 {
+    if digest != artifact_sha256(spec) {
         bail!("download checksum mismatch for {}", spec.id);
     }
     fs::rename(part, target)?;
@@ -484,17 +499,31 @@ fn should_report_progress(current: u64, last: u64, total: u64) -> bool {
 fn verify_archive(path: &Path, spec: &ModelSpec) -> Result<()> {
     let metadata = fs::symlink_metadata(path)
         .with_context(|| format!("model archive is missing: {}", path.display()))?;
-    if !metadata.file_type().is_file() || metadata.len() != spec.archive_size {
-        bail!("archive size mismatch for {}", path.display());
+    if !metadata.file_type().is_file() || metadata.len() != artifact_size(spec) {
+        bail!("model artifact size mismatch for {}", path.display());
     }
     let digest = sha256_file(path)?;
-    if digest != spec.archive_sha256 {
-        bail!("archive checksum mismatch for {}", path.display());
+    if digest != artifact_sha256(spec) {
+        bail!("model artifact checksum mismatch for {}", path.display());
     }
     Ok(())
 }
 
-fn extract_archive(archive: &Path, staging: &Path, spec: &ModelSpec) -> Result<PathBuf> {
+fn materialize_artifact(archive: &Path, staging: &Path, spec: &ModelSpec) -> Result<PathBuf> {
+    if let Some(file) = spec.single_file {
+        validate_relative_file(file.path)?;
+        let directory = staging.join(spec.id);
+        let target = directory.join(file.path);
+        fs::create_dir_all(target.parent().context("single-file model has no parent")?)?;
+        fs::copy(archive, &target).with_context(|| {
+            format!(
+                "copy single-file model {} to {}",
+                archive.display(),
+                target.display()
+            )
+        })?;
+        return Ok(directory);
+    }
     let decoder = BzDecoder::new(BufReader::new(File::open(archive)?));
     let mut archive = tar::Archive::new(decoder);
     for entry in archive.entries()? {
@@ -522,6 +551,24 @@ fn extract_archive(archive: &Path, staging: &Path, spec: &ModelSpec) -> Result<P
         }
     }
     Ok(staging.join(spec.archive_root))
+}
+
+#[cfg(test)]
+fn extract_archive(archive: &Path, staging: &Path, spec: &ModelSpec) -> Result<PathBuf> {
+    materialize_artifact(archive, staging, spec)
+}
+
+fn artifact_url(spec: &ModelSpec) -> &str {
+    spec.single_file.map_or(spec.archive_url, |file| file.url)
+}
+
+fn artifact_size(spec: &ModelSpec) -> u64 {
+    spec.single_file.map_or(spec.archive_size, |file| file.size)
+}
+
+fn artifact_sha256(spec: &ModelSpec) -> &str {
+    spec.single_file
+        .map_or(spec.archive_sha256, |file| file.sha256)
 }
 
 fn verify_directory(directory: &Path, spec: &ModelSpec) -> Result<()> {
