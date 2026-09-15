@@ -56,12 +56,12 @@ cargo build --release
 ```
 
 The normal Linux release archive includes a working CPU default under `lib/`:
-the official ONNX Runtime 1.29.0 CPU library. An unpacked release therefore
+the official ONNX Runtime 1.30.0 CPU library. An unpacked release therefore
 needs only a Supertonic model for CPU inference. OpenVINO setup loads a
-user-supplied OpenVINO runtime directly. CUDA setup points the same executable
-at a user-supplied, ABI-matched ONNX Runtime, CUDA provider plugin, and vendor
-runtime. Omaspeak validates each selected runtime before it creates the TTS
-engine. The release does not bundle acceleration libraries.
+user-supplied OpenVINO runtime directly. CUDA setup keeps the packaged ORT core
+and points the same executable at Microsoft's standalone CUDA Plugin EP plus
+its vendor runtime. Omaspeak validates each selected runtime before it creates
+the TTS engine. The release does not bundle acceleration libraries.
 
 The Rust Supertonic frontend handles text, voice styles, diffusion, and audio
 assembly for both ONNX Runtime and direct OpenVINO execution. The direct ONNX
@@ -158,7 +158,7 @@ paths take precedence over exact
 environment paths. Directory search order is configured directories, the
 `OMASPEAK_LIBRARY_PATH` overlay, package directories, the ambient loader path,
 then system libraries. This makes the bundled CPU stack the automatic default
-while a configured external CUDA stack wins deterministically. Direct OpenVINO
+while a configured external CUDA plugin wins deterministically. Direct OpenVINO
 libraries use their separately configured paths.
 Relative TOML paths resolve beside the config file; environment overrides must
 be absolute. Omaspeak checks `lib/` beside the executable and
@@ -287,8 +287,8 @@ Runtime validation fails closed for missing or incompatible external libraries
 unless `fallback = "cpu"`; a fallback is warned and reported. Every release
 binary exposes CPU, OpenVINO, and CUDA from the same link-free executable.
 
-With `runtime = "cuda"`, Omaspeak verifies the exact external ONNX Runtime
-1.29 core, registers the selected CUDA provider DSO, and checks that the
+With `runtime = "cuda"`, Omaspeak verifies its exact ONNX Runtime 1.30.0 core,
+registers the selected standalone CUDA Plugin EP DSO, and checks that the
 requested NVIDIA device is accessible. `backend.device_id` selects its logical
 CUDA ordinal (for example, `0` for the first visible GPU). Inventory evidence
 also reports the runtime's hardware ID for each enumerated device.
@@ -300,6 +300,9 @@ to avoid ONNX Runtime's expensive exhaustive search during cold loads.
 `backend.options.device_id` is reserved; use the
 typed `backend.device_id` setting instead. Relative paths resolve beside the
 Omaspeak config file. Supertonic submits all four component graphs to CUDA.
+Setup accepts a directory containing only `libonnxruntime_providers_cuda.so`;
+it reuses the packaged ORT core and never downloads or installs accelerator
+software.
 
 Provider and model option maps can also be managed without editing TOML:
 

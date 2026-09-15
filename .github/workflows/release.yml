@@ -15,14 +15,28 @@ defaults:
     shell: bash
 
 jobs:
-  linux-x86_64:
-    name: linux-x86_64
-    runs-on: ubuntu-22.04
+  linux:
+    name: linux-${{ matrix.package_arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            ort_arch: x64
+            package_arch: x86_64
+            ort_archive_sha256: a5ed5a3cac51fbb2e90da632ae43d19212faaa20e76484e62bcb7c23ddb3b3fd
+          - runner: ubuntu-22.04-arm
+            ort_arch: aarch64
+            package_arch: aarch64
+            ort_archive_sha256: e16a27a8ed330bbc698df7330b0cf56e722f354e3bcc92118682c74ef3c3e3da
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
     env:
-      OMA_ORT_ROOT: /tmp/onnxruntime-linux-x64-1.29.0
-      ORT_ARCHIVE_SHA256: c3fddc4f139a045b0c4902c57410f0694f1c2fdf9b6939fbe38b1aeae7cd14ba
-      ORT_VERSION: 1.29.0
+      OMA_ORT_ROOT: /tmp/onnxruntime-linux-${{ matrix.ort_arch }}-1.30.0
+      ORT_ARCH: ${{ matrix.ort_arch }}
+      ORT_ARCHIVE_SHA256: ${{ matrix.ort_archive_sha256 }}
+      ORT_VERSION: 1.30.0
+      PACKAGE_ARCH: ${{ matrix.package_arch }}
     steps:
       - uses: actions/checkout@v4
 
@@ -42,9 +56,9 @@ jobs:
       - name: Download the pinned CPU ONNX Runtime SDK
         run: |
           set -euo pipefail
-          archive="/tmp/onnxruntime-linux-x64-${ORT_VERSION}.tgz"
+          archive="/tmp/onnxruntime-linux-${ORT_ARCH}-${ORT_VERSION}.tgz"
           curl -fsSL --retry 3 -o "${archive}" \
-            "https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}/onnxruntime-linux-x64-${ORT_VERSION}.tgz"
+            "https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}/onnxruntime-linux-${ORT_ARCH}-${ORT_VERSION}.tgz"
           printf '%s  %s\n' "${ORT_ARCHIVE_SHA256}" "${archive}" | sha256sum -c -
           tar -C /tmp -xzf "${archive}"
           test -f "${OMA_ORT_ROOT}/include/onnxruntime_cxx_api.h"
@@ -66,7 +80,7 @@ jobs:
             }
             version=${tag_version}
           fi
-          package="omaspeak-${version}-linux-x86_64"
+          package="omaspeak-${version}-linux-${PACKAGE_ARCH}"
           mkdir -p "dist/${package}/lib" "dist/${package}/licenses"
           cargo about generate about.hbs > "dist/${package}/licenses/RUST-DEPENDENCIES.txt"
           cp target/release/omaspeak "dist/${package}/omaspeak"
@@ -83,7 +97,7 @@ jobs:
           cp README.md INSTALL.md ACCELERATOR_SETUP.md CHANGELOG.md RELEASE_NOTES.md DEMO.md config.example.toml "dist/${package}/"
           cp -a assets benchmarks packaging "dist/${package}/"
           tar -C dist -cJf "dist/${package}.tar.xz" "${package}"
-          (cd dist && sha256sum "${package}.tar.xz" > SHA256SUMS.txt)
+          (cd dist && sha256sum "${package}.tar.xz" > "${package}.sha256")
           echo "name=${package}" >> "${GITHUB_OUTPUT}"
 
       - name: Verify the release contract
@@ -101,7 +115,7 @@ jobs:
           test -s "${smoke_root}/${package}/benchmarks/cuda-gb10-2026-09-14.md"
           test -s "${smoke_root}/${package}/packaging/systemd/omaspeak.service"
           expected_version="${package#omaspeak-}"
-          expected_version="${expected_version%-linux-x86_64}"
+          expected_version="${expected_version%-linux-${PACKAGE_ARCH}}"
           [[ "$("${binary}" --version)" == "omaspeak ${expected_version}" ]]
           "${binary}" setup runtime --json > /tmp/runtime.json
           python3 - <<'PY'
@@ -247,6 +261,36 @@ jobs:
           name: ${{ steps.package.outputs.name }}
           path: |
             dist/${{ steps.package.outputs.name }}.tar.xz
+            dist/${{ steps.package.outputs.name }}.sha256
+          if-no-files-found: error
+
+  publish:
+    name: publish-linux-release
+    needs: linux
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: omaspeak-*-linux-*
+          path: dist
+          merge-multiple: true
+
+      - name: Verify and combine checksums
+        run: |
+          set -euo pipefail
+          cd dist
+          for checksum in omaspeak-*.sha256; do
+            sha256sum -c "${checksum}"
+          done
+          sha256sum omaspeak-*.tar.xz > SHA256SUMS.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: omaspeak-linux-release-assets
+          path: |
+            dist/omaspeak-*.tar.xz
             dist/SHA256SUMS.txt
           if-no-files-found: error
 
@@ -257,5 +301,5 @@ jobs:
           prerelease: ${{ contains(github.ref_name, '-rc') }}
           body_path: RELEASE_NOTES.md
           files: |
-            dist/${{ steps.package.outputs.name }}.tar.xz
+            dist/omaspeak-*.tar.xz
             dist/SHA256SUMS.txt

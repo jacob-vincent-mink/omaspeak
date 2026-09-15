@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Updated the packaged CPU core to ONNX Runtime 1.30.0 and switched CUDA setup
+  to Microsoft's separately distributed CUDA Plugin EP.
+- Added native Linux aarch64 release packaging alongside x86-64.
 - Added strict migration for configuration files generated before the direct
   Supertonic runtime, including the former `provider_config` and model fields.
 - Prevented native build and test debris beside a developer binary from being

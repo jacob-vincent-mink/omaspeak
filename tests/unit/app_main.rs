@@ -1597,7 +1597,7 @@ fn runtime_directory_setup_discovers_flat_and_sdk_library_layouts() {
     }
     fs::create_dir_all(&overlay).unwrap();
     fs::write(overlay.join("libvendor.so"), b"vendor").unwrap();
-    fs::write(lib.join("libonnxruntime.so.1.29.0"), b"ort").unwrap();
+    fs::write(lib.join("libonnxruntime.so.1.30.0"), b"ort").unwrap();
     fs::write(release.join("libopenvino_c.so.2600"), b"openvino").unwrap();
     fs::create_dir_all(vendor.join("openvino")).unwrap();
     fs::write(vendor.join("openvino/plugins.xml"), b"<ie/>").unwrap();
@@ -1648,7 +1648,7 @@ fn runtime_directory_setup_accepts_cpu_ort() {
     let bundle = root.join("cpu-runtime");
     let lib = bundle.join("lib");
     fs::create_dir_all(&lib).unwrap();
-    let ort = lib.join("libonnxruntime.so.1.29.0");
+    let ort = lib.join("libonnxruntime.so.1.30.0");
     fs::write(&ort, b"ort").unwrap();
 
     let mut config = Config::default();
@@ -1662,6 +1662,37 @@ fn runtime_directory_setup_accepts_cpu_ort() {
         ort.canonicalize().unwrap()
     );
     assert!(configured.provider_library.is_none());
+}
+
+#[test]
+fn runtime_directory_setup_accepts_standalone_cuda_plugin() {
+    let root = sandbox();
+    let paths = paths(&root);
+    let bundle = root.join("cuda-plugin");
+    fs::create_dir_all(&bundle).unwrap();
+    let provider = bundle.join("libonnxruntime_providers_cuda.so");
+    fs::write(&provider, b"provider").unwrap();
+
+    let packaged_core = root.join("package/lib/libonnxruntime.so.1.30.0");
+    let mut config = Config::default();
+    config.backend.runtime = Runtime::Cuda;
+    config.backend.device = "gpu".into();
+    config.backend.onnxruntime_library = Some(packaged_core.clone());
+    config.save(&paths.config_file).unwrap();
+
+    configure_runtime_directory_with(&paths.config_file, &bundle, |_, _, _| Ok(())).unwrap();
+
+    let configured = Config::load(&paths.config_file).unwrap().backend;
+    assert_eq!(configured.onnxruntime_library, Some(packaged_core));
+    assert_eq!(
+        configured.provider_library,
+        Some(provider.canonicalize().unwrap())
+    );
+    assert!(
+        configured
+            .library_dirs
+            .contains(&bundle.canonicalize().unwrap())
+    );
 }
 
 #[test]

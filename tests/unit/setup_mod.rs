@@ -95,6 +95,45 @@ fn check_printers_fail_when_remediation_is_required() {
 }
 
 #[test]
+fn human_runtime_catalog_reports_split_cuda_plugin_and_missing_directories() {
+    let Some(ort) = std::env::var_os("OMASPEAK_TEST_ONNXRUNTIME_LIBRARY") else {
+        return;
+    };
+    let (root, paths) = fixture("print-split-cuda");
+    let provider_source = root.join("provider.c");
+    let provider = root.join("libonnxruntime_providers_cuda.so");
+    fs::write(&provider_source, "int omaspeak_fixture(void) { return 0; }").unwrap();
+    assert!(
+        std::process::Command::new("cc")
+            .args(["-shared", "-fPIC"])
+            .arg(&provider_source)
+            .arg("-o")
+            .arg(&provider)
+            .status()
+            .unwrap()
+            .success()
+    );
+
+    let mut config = Config::default();
+    config.backend.runtime = crate::backend::Runtime::Cuda;
+    config.backend.device = "gpu".into();
+    config.backend.onnxruntime_library = Some(ort.into());
+    config.backend.provider_library = Some(provider);
+    config.backend.openvino_library = Some(root.join("missing-openvino.so"));
+    config.backend.openvino_plugins = Some(root.join("missing-plugins.xml"));
+    config.backend.library_dirs = vec![root.clone()];
+    config.save(&paths.config_file).unwrap();
+    print_runtime(&paths.config_file, false).unwrap();
+
+    config
+        .backend
+        .library_dirs
+        .push(root.join("missing-directory"));
+    config.save(&paths.config_file).unwrap();
+    print_runtime(&paths.config_file, false).unwrap();
+}
+
+#[test]
 fn checks_accept_a_verified_catalog_model_and_initialized_openvino_engine() {
     let Some(home) = std::env::var_os("HOME").map(std::path::PathBuf::from) else {
         return;

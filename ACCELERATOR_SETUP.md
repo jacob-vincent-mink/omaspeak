@@ -18,7 +18,7 @@ omaspeak setup all --accept-license OpenRAIL-M
 omaspeak say "Default CPU is ready" --no-play --out cpu-check.wav
 ```
 
-The release-provided `libonnxruntime.so.1.29.0` is found beside the executable
+The release-provided `libonnxruntime.so.1.30.0` is found beside the executable
 or under `/usr/lib/omaspeak` when installed by a package.
 
 ## Intel CPU, integrated GPU, and NPU with OpenVINO
@@ -87,29 +87,39 @@ records CPU, integrated GPU, and NPU placement, timing, and output accuracy.
 
 ## NVIDIA GPU with CUDA
 
-Omaspeak's CUDA backend needs an ONNX Runtime 1.29 GPU archive whose CUDA major
-matches the installed NVIDIA stack. ONNX Runtime 1.29 supports CUDA 12 with
-cuDNN 9 and CUDA 13 with cuDNN 9. Install the NVIDIA driver, CUDA, and cuDNN
-using the distribution or NVIDIA instructions, then download one official ORT
-archive:
+Omaspeak continues to use the ONNX Runtime 1.30.0 CPU core shipped in its
+release package, then registers Microsoft's separately released CUDA Plugin EP.
+Install the NVIDIA driver, matching CUDA toolkit, and cuDNN using the
+distribution or NVIDIA instructions. Download the plugin archive matching the
+machine architecture and installed CUDA major; the archive contains the
+provider DSO and no second ONNX Runtime core.
 
 ```bash
 # CUDA 13, Linux x86-64
-curl -fLO https://github.com/microsoft/onnxruntime/releases/download/v1.29.0/onnxruntime-linux-x64-gpu_cuda13-1.29.0.tgz
+curl -fLO https://github.com/microsoft/onnxruntime/releases/download/plugin-ep-cuda/v0.1.0/cuda_ep_cuda13_0.1.0_linux-x64.tar.gz
 printf '%s  %s\n' \
-  844c64acfc43ab9423215c26493055ea229268e28283146cc644ecef0bdae048 \
-  onnxruntime-linux-x64-gpu_cuda13-1.29.0.tgz | sha256sum -c -
-tar -xzf onnxruntime-linux-x64-gpu_cuda13-1.29.0.tgz
+  5fa5cc5b19843809707818302771e4d16b740df069ca63908b28245e5f6b8398 \
+  cuda_ep_cuda13_0.1.0_linux-x64.tar.gz | sha256sum -c -
+mkdir -p "$HOME/.local/share/omaspeak/runtimes/cuda13"
+tar -C "$HOME/.local/share/omaspeak/runtimes/cuda13" \
+  -xzf cuda_ep_cuda13_0.1.0_linux-x64.tar.gz
 
-# CUDA 12 alternative: SHA-256
-# 4ca594a0da83927befbd73fe020d7f569be151d70bb4fe9741ad405f4882e2ad
 ```
 
-Point setup at the extracted ORT root:
+Other official v0.1.0 Linux assets:
+
+| CUDA | Architecture | Archive | SHA-256 |
+|---|---|---|---|
+| 12 | x86-64 | [`cuda_ep_cuda12_0.1.0_linux-x64.tar.gz`](https://github.com/microsoft/onnxruntime/releases/download/plugin-ep-cuda/v0.1.0/cuda_ep_cuda12_0.1.0_linux-x64.tar.gz) | `dc34a4450e1b352671235205fb7d865c56ae61c7f8631df33ae2a369d4d1dcab` |
+| 13 | aarch64 | [`cuda_ep_cuda13_0.1.0_linux-aarch64.tar.gz`](https://github.com/microsoft/onnxruntime/releases/download/plugin-ep-cuda/v0.1.0/cuda_ep_cuda13_0.1.0_linux-aarch64.tar.gz) | `d02f9d438df1ad2cfc770e9eb93094710c1713d6a23f6bdc0f532ed83eb4b5f4` |
+
+Point setup at the extracted plugin directory. Setup probes those files in
+place and saves their paths only after a successful probe; it does not copy or
+install the plugin, toolkit, driver, or cuDNN.
 
 ```bash
-ort_root="$PWD/onnxruntime-linux-x64-gpu_cuda13-1.29.0"
-omaspeak setup runtime --runtime cuda --device gpu --dir "$ort_root" --apply
+cuda_plugin="$HOME/.local/share/omaspeak/runtimes/cuda13"
+omaspeak setup runtime --runtime cuda --device gpu --dir "$cuda_plugin" --apply
 omaspeak setup check
 omaspeak say "CUDA check" --no-play --out cuda-check.wav
 ```
@@ -120,7 +130,7 @@ persist every required directory and rerun the probe:
 
 ```bash
 omaspeak config set backend.library_dirs \
-  "$ort_root/lib:/usr/local/cuda/lib64:/absolute/path/to/cudnn/lib"
+  "$cuda_plugin:/usr/local/cuda/lib64:/absolute/path/to/cudnn/lib"
 omaspeak setup check
 ```
 
@@ -138,4 +148,5 @@ Official runtime references:
 
 - [OpenVINO Linux installation](https://docs.openvino.ai/2026/get-started/install-openvino/install-openvino-linux.html)
 - [OpenVINO NPU device requirements](https://docs.openvino.ai/2026/openvino-workflow/running-inference/inference-devices-and-modes/npu-device.html)
-- [ONNX Runtime CUDA compatibility](https://onnxruntime.ai/docs/execution-providers/CUDA-ExecutionProvider.html)
+- [CUDA Plugin EP v0.1.0](https://github.com/microsoft/onnxruntime/releases/tag/plugin-ep-cuda/v0.1.0)
+- [CUDA Plugin EP quick start](https://github.com/microsoft/onnxruntime/blob/main/docs/cuda_plugin_ep/QUICK_START.md)

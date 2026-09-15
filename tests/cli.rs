@@ -456,7 +456,7 @@ fn runtime_discovery_reports_invalid_paths_without_reexecing() {
     );
     assert!(report["libraries"]["runtime_loadable"].is_object());
 
-    let explicit_core = root.join("libonnxruntime.so.1.29.0");
+    let explicit_core = root.join("libonnxruntime.so.1.30.0");
     fs::write(&explicit_core, b"invalid ORT fixture").unwrap();
     let explicit = Command::new(env!("CARGO_BIN_EXE_omaspeak"))
         .args(["setup", "runtime", "--json"])

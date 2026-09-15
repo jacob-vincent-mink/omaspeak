@@ -166,12 +166,12 @@ pub fn inventory(config: &BackendConfig, path: &Path) -> Vec<State> {
             anchor.is_some(),
         );
         let required = match runtime {
-            Runtime::Default => "ONNX Runtime 1.29.0 libonnxruntime.so",
+            Runtime::Default => "ONNX Runtime 1.30.0 libonnxruntime.so",
             Runtime::Openvino => {
                 "Intel OpenVINO libopenvino_c.so, plugins.xml and device plugins"
             }
             Runtime::Cuda => {
-                "ONNX Runtime 1.29.0 core, libonnxruntime_providers_cuda.so and NVIDIA vendor libraries"
+                "the CUDA Plugin EP libonnxruntime_providers_cuda.so and its NVIDIA vendor libraries; Omaspeak supplies the ONNX Runtime 1.30.0 core"
             }
         };
         State {
@@ -284,13 +284,36 @@ pub fn probe(config: &BackendConfig, path: &Path) -> Probe {
     let exact = resolve(config, path);
     let attempt = (|| -> Result<Probe> {
         exact.validate_shape()?;
-        for library in required(&exact) {
-            if !library.is_some_and(Path::is_file) {
-                bail!(
-                    "required {} library or plugins.xml missing; inspect paths and supply --dir /absolute/runtime",
-                    name(exact.runtime)
-                );
+        let missing = match exact.runtime {
+            Runtime::Default
+                if !exact
+                    .onnxruntime_library
+                    .as_deref()
+                    .is_some_and(Path::is_file) =>
+            {
+                Some("ONNX Runtime 1.30.0 core library")
             }
+            Runtime::Cuda
+                if !exact
+                    .onnxruntime_library
+                    .as_deref()
+                    .is_some_and(Path::is_file) =>
+            {
+                Some("packaged ONNX Runtime 1.30.0 core library")
+            }
+            Runtime::Cuda if !exact.provider_library.as_deref().is_some_and(Path::is_file) => {
+                Some("CUDA Plugin EP libonnxruntime_providers_cuda.so")
+            }
+            Runtime::Openvino if !exact.openvino_library.as_deref().is_some_and(Path::is_file) => {
+                Some("OpenVINO C library")
+            }
+            Runtime::Openvino if !exact.openvino_plugins.as_deref().is_some_and(Path::is_file) => {
+                Some("OpenVINO plugins.xml")
+            }
+            _ => None,
+        };
+        if let Some(missing) = missing {
+            bail!("required {missing} missing; inspect paths and supply --dir /absolute/runtime");
         }
         for directory in &exact.library_dirs {
             if !directory.is_absolute() || !directory.is_dir() {
@@ -588,8 +611,8 @@ pub(crate) fn verify_ort_version(path: &Path) -> Result<()> {
             bail!("ORT version is null");
         }
         let version = CStr::from_ptr(version).to_str()?;
-        if version != "1.29.0" {
-            bail!("ONNX Runtime version mismatch: expected 1.29.0, loaded {version}");
+        if version != "1.30.0" {
+            bail!("ONNX Runtime version mismatch: expected 1.30.0, loaded {version}");
         }
     }
     Ok(())
@@ -698,7 +721,7 @@ fn child_with(
                 None
             };
             let devices = ort_probe(ort_path, provider)?;
-            result.evidence.versions.push("ONNX Runtime 1.29.0".into());
+            result.evidence.versions.push("ONNX Runtime 1.30.0".into());
             if config.runtime == Runtime::Cuda {
                 result.loadable = true;
                 result.evidence.provider_registration = true;

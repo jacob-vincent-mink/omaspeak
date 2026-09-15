@@ -270,7 +270,7 @@ fn direct_openvino_stack_is_independent_and_resolves_exact_files() {
     assert_eq!(report.runtime_loadable.get("openvino"), Some(&true));
     assert_eq!(report.runtime_loadable.get("cuda"), Some(&false));
     assert!(report.remediation(Runtime::Openvino).is_none());
-    assert!(report.remediation(Runtime::Cuda).unwrap().contains("cuda"));
+    assert!(report.remediation(Runtime::Cuda).unwrap().contains("CUDA"));
 
     let resolved_ort =
         resolve_onnx_runtime(&config, &config_file, &report, Runtime::Default).unwrap();
@@ -389,7 +389,7 @@ fn remediation_covers_runtime_specific_probe_and_missing_path_messages() {
         report
             .remediation(Runtime::Cuda)
             .unwrap()
-            .contains("matching external")
+            .contains("CUDA Plugin EP")
     );
     report.runtime_probe_errors.insert("cuda", "bad ABI".into());
     assert!(

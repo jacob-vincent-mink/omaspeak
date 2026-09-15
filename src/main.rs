@@ -1966,7 +1966,7 @@ fn choose_runtime(
                 "NVIDIA GPU execution",
                 locations.runtime_loadable.get("cuda") == Some(&true),
                 &locations.remediation(Runtime::Cuda).unwrap_or_else(|| {
-                    "configure matching ONNX Runtime and CUDA provider libraries".into()
+                    "configure the official CUDA Plugin EP and its vendor libraries".into()
                 }),
             ),
         ),
@@ -2020,8 +2020,10 @@ fn choose_runtime(
     } else {
         let directory_help = if runtime == Runtime::Openvino {
             "Enter an absolute OpenVINO installation directory containing libopenvino_c and plugins.xml. Leave empty to use a runtime already available through configured, package, or system paths."
+        } else if runtime == Runtime::Cuda {
+            "Enter an absolute directory containing the CUDA Plugin EP and its vendor runtime libraries. Omaspeak continues to use its packaged ONNX Runtime core. Leave empty to use a provider already available through configured or system paths."
         } else {
-            "Enter an absolute directory containing libonnxruntime plus the selected provider. Leave empty to use a runtime already available through configured, package, or system paths."
+            "Enter an absolute directory containing libonnxruntime. Leave empty to use a runtime already available through configured, package, or system paths."
         };
         let Some(value) = selector.input("Native runtime directory", directory_help)? else {
             return Ok(None);
@@ -2241,21 +2243,25 @@ fn apply_runtime_directory(
         )?);
         config.backend.openvino_plugins = Some(find_openvino_plugins(&candidates, &directory)?);
         config.backend.provider_library = None;
+    } else if config.backend.runtime == Runtime::Cuda {
+        // The official CUDA Plugin EP is intentionally distributed separately
+        // from the ORT core. Keep an existing/package-discovered core when the
+        // selected directory contains only the provider plugin.
+        if let Ok(runtime) = find_runtime_file(&candidates, &directory, "libonnxruntime.so") {
+            config.backend.onnxruntime_library = Some(runtime);
+        }
+        config.backend.provider_library = Some(find_runtime_file(
+            &candidates,
+            &directory,
+            "libonnxruntime_providers_cuda.so",
+        )?);
     } else {
         config.backend.onnxruntime_library = Some(find_runtime_file(
             &candidates,
             &directory,
             "libonnxruntime.so",
         )?);
-        config.backend.provider_library = match config.backend.runtime {
-            Runtime::Default => None,
-            Runtime::Cuda => Some(find_runtime_file(
-                &candidates,
-                &directory,
-                "libonnxruntime_providers_cuda.so",
-            )?),
-            Runtime::Openvino => unreachable!(),
-        };
+        config.backend.provider_library = None;
     }
     let mut selected_parents = [
         config.backend.onnxruntime_library.as_ref(),

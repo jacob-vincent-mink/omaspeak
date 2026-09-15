@@ -435,6 +435,48 @@ fn candidate_sources_follow_the_documented_precedence() {
 }
 
 #[test]
+fn missing_runtime_files_report_the_exact_component_setup_must_supply() {
+    let root = env::temp_dir().join(format!(
+        "omaspeak-missing-runtime-components-{}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&root).unwrap();
+    let config_path = root.join("config.toml");
+
+    let mut config = BackendConfig {
+        onnxruntime_library: Some(root.join("missing-libonnxruntime.so")),
+        ..Default::default()
+    };
+    let result = probe(&config, &config_path);
+    assert!(result.errors[0].contains("ONNX Runtime 1.30.0 core library"));
+
+    config.runtime = Runtime::Cuda;
+    config.device = "gpu".into();
+    let result = probe(&config, &config_path);
+    assert!(result.errors[0].contains("packaged ONNX Runtime 1.30.0 core library"));
+
+    let core = root.join("libonnxruntime.so");
+    fs::write(&core, b"fixture").unwrap();
+    config.onnxruntime_library = Some(core);
+    config.provider_library = Some(root.join("missing-libonnxruntime_providers_cuda.so"));
+    let result = probe(&config, &config_path);
+    assert!(result.errors[0].contains("CUDA Plugin EP"));
+
+    config.runtime = Runtime::Openvino;
+    config.device = "npu".into();
+    config.openvino_library = Some(root.join("missing-libopenvino_c.so"));
+    config.openvino_plugins = Some(root.join("missing-plugins.xml"));
+    let result = probe(&config, &config_path);
+    assert!(result.errors[0].contains("OpenVINO C library"));
+
+    let openvino = root.join("libopenvino_c.so");
+    fs::write(&openvino, b"fixture").unwrap();
+    config.openvino_library = Some(openvino);
+    let result = probe(&config, &config_path);
+    assert!(result.errors[0].contains("OpenVINO plugins.xml"));
+}
+
+#[test]
 fn resolved_candidates_keep_runtime_overlay_dirs_without_ambient_loader_paths() {
     let root = env::temp_dir().join(format!("omaspeak-runtime-overlay-{}", std::process::id()));
     let configured = root.join("configured");
@@ -443,7 +485,7 @@ fn resolved_candidates_keep_runtime_overlay_dirs_without_ambient_loader_paths() 
     for directory in [&configured, &overlay, &ambient] {
         fs::create_dir_all(directory).unwrap();
     }
-    let core = configured.join("libonnxruntime.so.1.29.0");
+    let core = configured.join("libonnxruntime.so.1.30.0");
     fs::write(&core, b"fixture").unwrap();
 
     let config = BackendConfig {

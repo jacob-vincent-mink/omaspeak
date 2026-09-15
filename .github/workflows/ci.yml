@@ -8,8 +8,8 @@ jobs:
   rust:
     runs-on: ubuntu-latest
     env:
-      ORT_VERSION: 1.29.0
-      ORT_ARCHIVE_SHA256: c3fddc4f139a045b0c4902c57410f0694f1c2fdf9b6939fbe38b1aeae7cd14ba
+      ORT_VERSION: 1.30.0
+      ORT_ARCHIVE_SHA256: a5ed5a3cac51fbb2e90da632ae43d19212faaa20e76484e62bcb7c23ddb3b3fd
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable

@@ -2,9 +2,10 @@
 
 This first preview provides local Supertonic 3 speech synthesis with ten
 speaker styles, WAV output, on-demand execution, a hot-model daemon, JSON
-benchmarks, and guided setup. The Linux x86-64 archive includes the default CPU
-runtime. The same executable can use an externally installed direct OpenVINO
-runtime or ONNX Runtime CUDA stack selected during setup.
+benchmarks, and guided setup. Linux x86-64 and aarch64 archives include the
+default CPU runtime. The same executable can use an externally installed direct
+OpenVINO runtime or the standalone ONNX Runtime CUDA Plugin EP selected during
+setup.
 
 Intel NPU setup prepares and verifies a fixed 12-graph cache before activation;
 normal synthesis requires those cache hits and will not compile an unprepared

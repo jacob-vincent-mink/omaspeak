@@ -72,10 +72,7 @@ impl LibraryPathReport {
             Runtime::Openvino => format!(
                 "set backend.openvino_library and backend.openvino_plugins (or {OPENVINO_LIBRARY_ENV} and {OPENVINO_PLUGINS_ENV}) to an installed OpenVINO C runtime"
             ),
-            Runtime::Cuda => format!(
-                "configure matching external ONNX Runtime and the {} provider with its vendor dependencies",
-                runtime.capability()
-            ),
+            Runtime::Cuda => "configure the official CUDA Plugin EP with its vendor dependencies; Omaspeak supplies ONNX Runtime 1.30.0 in release packages".to_owned(),
         })
     }
 }
@@ -245,7 +242,7 @@ pub fn inspect_with(
     let name = accelerated_runtime.capability();
     if supported_capabilities().contains(&name) && runtime_loadable.get(name) != Some(&true) {
         remediation.push(format!(
-            "set backend.library_dirs or {LIBRARY_PATH_ENV} to directories containing the {name} provider and its vendor runtime libraries"
+            "set backend.library_dirs or {LIBRARY_PATH_ENV} to directories containing the official CUDA Plugin EP and its vendor runtime libraries"
         ));
     }
 

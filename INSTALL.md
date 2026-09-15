@@ -1,11 +1,12 @@
 # Installing Omaspeak
 
-Omaspeak 0.0.1-rc supports Linux x86-64. The release archive contains one
+Omaspeak supports Linux x86-64 and aarch64. Each release archive contains one
 runtime-neutral executable and a bundled CPU ONNX Runtime. OpenVINO and CUDA
 remain external runtime choices configured after installation.
 
-There are no 0.0.1-rc prebuilt artifacts for aarch64, macOS, or Windows. CUDA has
-also been validated from source on aarch64 NVIDIA GB10 hardware.
+Linux release CI produces x86-64 and aarch64 archives. There are no prebuilt
+artifacts for macOS or Windows. CUDA has been validated on aarch64 NVIDIA GB10
+hardware.
 
 ## Release archive
 
@@ -50,7 +51,9 @@ that file does not enable or start the daemon.
 
 ## OpenVINO or CUDA
 
-Install the vendor runtime, then point setup at its root or library directory:
+Install the vendor runtime, then point setup at its root or library directory.
+For CUDA, use the official standalone CUDA Plugin EP directory; the packaged
+ONNX Runtime core remains selected.
 
 ```bash
 omaspeak setup runtime --runtime openvino --device npu \
@@ -65,8 +68,8 @@ or install accelerator runtimes. Use `omaspeak setup runtime --json` for exact
 library, device, and remediation details.
 
 See [ACCELERATOR_SETUP.md](ACCELERATOR_SETUP.md) for tested Arch/Omarchy Intel
-iGPU and NPU packages, setup-time NPU cache compilation, and an official ONNX
-Runtime CUDA bundle recipe.
+iGPU and NPU packages, setup-time NPU cache compilation, and official CUDA
+Plugin EP downloads and checksums.
 
 ## Build from source
 
