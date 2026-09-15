@@ -2,13 +2,13 @@
 
 use std::fs;
 use std::io::{BufRead, BufReader, IsTerminal, Read, Write};
-use std::os::fd::AsRawFd;
+use std::os::fd::{AsRawFd, RawFd};
 use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};
 use std::os::unix::net::{UnixListener, UnixStream};
 #[cfg(target_os = "linux")]
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
-use std::process::{Command as ProcessCommand, ExitCode};
+use std::process::{Child, Command as ProcessCommand, ExitCode, ExitStatus, Stdio};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -863,9 +863,18 @@ fn serve_daemon(
         socket.display()
     );
 
-    let serve_result = serve_requests(engine, config, paths, || {
-        accept_daemon_connection(&listener, &interrupted)
-    });
+    let shutdown = interrupted.clone();
+    let serve_result = serve_requests_with_cancellation(
+        engine,
+        config,
+        paths,
+        || accept_daemon_connection(&listener, &interrupted),
+        |stream: &UnixStream| {
+            let fd = stream.as_raw_fd();
+            let shutdown = shutdown.clone();
+            move || shutdown.load(Ordering::Relaxed) || socket_peer_disconnected(fd)
+        },
+    );
     let serve_result = match serve_result {
         Err(error) if error.downcast_ref::<DaemonInterrupted>().is_some() => Ok(()),
         result => result,
@@ -968,19 +977,47 @@ fn prepare_daemon_socket(paths: &AppPaths) -> Result<(PathBuf, fs::File)> {
     Ok((socket, startup_lock))
 }
 
+#[cfg(test)]
 fn serve_requests<S: Read + Write>(
     engine: &impl SpeechEngine,
     config: &Config,
     paths: &AppPaths,
     mut accept: impl FnMut() -> Result<S>,
 ) -> Result<()> {
+    serve_requests_with_cancellation(engine, config, paths, &mut accept, |_| || false)
+}
+
+fn serve_requests_with_cancellation<S: Read + Write, C: FnMut() -> bool>(
+    engine: &impl SpeechEngine,
+    config: &Config,
+    paths: &AppPaths,
+    mut accept: impl FnMut() -> Result<S>,
+    mut cancellation_for: impl FnMut(&S) -> C,
+) -> Result<()> {
     loop {
         let mut stream = accept()?;
         let response = match read_request(&mut stream, config.daemon.max_text_bytes + 16_384) {
             Ok(request) => {
                 let should_stop = matches!(request.command, Command::Shutdown);
-                let response = handle_request(engine, config, paths, request);
-                write_response_best_effort(&mut stream, &response);
+                let response = handle_request_with_cancellation(
+                    engine,
+                    config,
+                    paths,
+                    request,
+                    cancellation_for(&stream),
+                );
+                if matches!(
+                    &response.result,
+                    ResultPayload::Error { code, .. } if code == "cancelled"
+                ) {
+                    // Cancellation normally means the requesting client has
+                    // already closed its socket. A best-effort response is
+                    // useful for daemon shutdown, but a broken pipe is not an
+                    // operational error worth logging.
+                    let _ = write_response(&mut stream, &response);
+                } else {
+                    write_response_best_effort(&mut stream, &response);
+                }
                 if should_stop {
                     return Ok(());
                 }
@@ -990,6 +1027,31 @@ fn serve_requests<S: Read + Write>(
         };
         write_response_best_effort(&mut stream, &response);
     }
+}
+
+fn socket_peer_disconnected(fd: RawFd) -> bool {
+    let mut byte = 0_u8;
+    let received = unsafe {
+        libc::recv(
+            fd,
+            std::ptr::from_mut(&mut byte).cast(),
+            1,
+            libc::MSG_PEEK | libc::MSG_DONTWAIT,
+        )
+    };
+    if received == 0 {
+        return true;
+    }
+    if received > 0 {
+        return false;
+    }
+    matches!(
+        std::io::Error::last_os_error().kind(),
+        std::io::ErrorKind::BrokenPipe
+            | std::io::ErrorKind::ConnectionAborted
+            | std::io::ErrorKind::ConnectionReset
+            | std::io::ErrorKind::NotConnected
+    )
 }
 
 fn write_response_best_effort(stream: &mut impl Write, response: &Response) {
@@ -1065,6 +1127,16 @@ fn handle_request(
     paths: &AppPaths,
     request: Request,
 ) -> Response {
+    handle_request_with_cancellation(engine, config, paths, request, || false)
+}
+
+fn handle_request_with_cancellation(
+    engine: &impl SpeechEngine,
+    config: &Config,
+    paths: &AppPaths,
+    request: Request,
+    mut cancelled: impl FnMut() -> bool,
+) -> Response {
     let id = request.id;
     let result = match request.command {
         Command::Say {
@@ -1083,14 +1155,21 @@ fn handle_request(
                 let output = output
                     .map(PathBuf::from)
                     .unwrap_or_else(|| paths.state_dir.join("last.wav"));
-                engine
-                    .synthesize(&text, speed, voice, &output)
-                    .and_then(|synthesis| {
-                        if !no_play {
-                            play(&synthesis.output)?;
-                        }
-                        Ok(synthesis_payload(engine, synthesis))
-                    })
+                if cancelled() {
+                    Err(PlaybackCancelled.into())
+                } else {
+                    engine
+                        .synthesize(&text, speed, voice, &output)
+                        .and_then(|synthesis| {
+                            if cancelled() {
+                                return Err(PlaybackCancelled.into());
+                            }
+                            if !no_play {
+                                play(&synthesis.output, &mut cancelled)?;
+                            }
+                            Ok(synthesis_payload(engine, synthesis))
+                        })
+                }
             }
         }
         Command::Status => Ok(status_payload(engine, config)),
@@ -1102,7 +1181,14 @@ fn handle_request(
             id,
             result,
         },
-        Err(error) => Response::error(id, "runtime", error),
+        Err(error) => {
+            let code = if error.downcast_ref::<PlaybackCancelled>().is_some() {
+                "cancelled"
+            } else {
+                "runtime"
+            };
+            Response::error(id, code, error)
+        }
     }
 }
 
@@ -3434,23 +3520,101 @@ fn pin_audio_cpp_library(config: &mut Config, config_path: &Path) -> Result<()> 
     Ok(())
 }
 
-fn play(path: &Path) -> Result<()> {
-    play_with(path, |program, path| {
-        ProcessCommand::new(program).arg(path).status()
-    })
+#[derive(Debug)]
+struct PlaybackCancelled;
+
+impl std::fmt::Display for PlaybackCancelled {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("speech request cancelled")
+    }
+}
+
+impl std::error::Error for PlaybackCancelled {}
+
+fn play(path: &Path, cancelled: impl FnMut() -> bool) -> Result<()> {
+    play_with(
+        path,
+        |program, path| {
+            let mut command = ProcessCommand::new(program);
+            command.arg(path).stdin(Stdio::null());
+            configure_child_parent_death(&mut command);
+            command.spawn()
+        },
+        cancelled,
+    )
 }
 
 fn play_with(
     path: &Path,
-    mut run: impl FnMut(&str, &Path) -> std::io::Result<std::process::ExitStatus>,
+    mut spawn: impl FnMut(&str, &Path) -> std::io::Result<Child>,
+    mut cancelled: impl FnMut() -> bool,
 ) -> Result<()> {
     for program in ["pw-play", "aplay"] {
-        if run(program, path).is_ok_and(|status| status.success()) {
+        if cancelled() {
+            return Err(PlaybackCancelled.into());
+        }
+        let Ok(mut child) = spawn(program, path) else {
+            continue;
+        };
+        let status = wait_for_playback(&mut child, &mut cancelled)?;
+        if status.success() {
             return Ok(());
         }
     }
     bail!("no working WAV player found (tried pw-play and aplay)")
 }
+
+fn wait_for_playback(child: &mut Child, mut cancelled: impl FnMut() -> bool) -> Result<ExitStatus> {
+    loop {
+        if let Some(status) = child.try_wait().context("wait for WAV player")? {
+            return Ok(status);
+        }
+        if cancelled() {
+            match child.kill() {
+                Ok(()) => {
+                    child.wait().context("reap cancelled WAV player")?;
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::InvalidInput => {
+                    // The player exited between try_wait and kill. wait still
+                    // collects its status, so the race cannot leave a zombie.
+                    child.wait().context("reap completed WAV player")?;
+                }
+                Err(error) => {
+                    if child
+                        .try_wait()
+                        .context("recheck WAV player after failed termination")?
+                        .is_none()
+                    {
+                        return Err(error).context("terminate cancelled WAV player");
+                    }
+                }
+            }
+            return Err(PlaybackCancelled.into());
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn configure_child_parent_death(command: &mut ProcessCommand) {
+    unsafe {
+        command.pre_exec(|| {
+            if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM) == -1 {
+                return Err(std::io::Error::last_os_error());
+            }
+            if libc::getppid() == 1 {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::Interrupted,
+                    "Omaspeak exited while starting WAV player",
+                ));
+            }
+            Ok(())
+        });
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn configure_child_parent_death(_command: &mut ProcessCommand) {}
 
 fn request_id() -> String {
     let nanos = SystemTime::now()

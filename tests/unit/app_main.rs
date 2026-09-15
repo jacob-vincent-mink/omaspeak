@@ -544,6 +544,24 @@ fn daemon_request_handler_validates_and_dispatches_all_commands() {
     );
     assert!(matches!(too_long.result, ResultPayload::Error { .. }));
 
+    let cancelled = handle_request_with_cancellation(
+        &engine,
+        &config,
+        &paths,
+        request(Command::Say {
+            text: "hello".into(),
+            speed: 1.0,
+            voice: 0,
+            output: None,
+            no_play: true,
+        }),
+        || true,
+    );
+    assert!(matches!(
+        cancelled.result,
+        ResultPayload::Error { ref code, .. } if code == "cancelled"
+    ));
+
     let failing = FakeEngine {
         fail: true,
         runtime: Runtime::Cuda,
@@ -1084,27 +1102,74 @@ fn benchmark_rejects_invalid_text_iterations_and_synthesis_metadata() {
 
 #[test]
 fn playback_tries_players_in_order_and_reports_failure() {
-    use std::os::unix::process::ExitStatusExt;
-
     let path = Path::new("voice.wav");
     let mut attempts = Vec::new();
     assert!(
-        play_with(path, |program, received_path| {
-            assert_eq!(received_path, path);
-            attempts.push(program.to_owned());
-            Ok(std::process::ExitStatus::from_raw(1 << 8))
-        })
+        play_with(
+            path,
+            |program, received_path| {
+                assert_eq!(received_path, path);
+                attempts.push(program.to_owned());
+                ProcessCommand::new("sh").args(["-c", "exit 1"]).spawn()
+            },
+            || false
+        )
         .is_err()
     );
     assert_eq!(attempts, ["pw-play", "aplay"]);
 
     let mut attempts = Vec::new();
-    play_with(path, |program, _| {
-        attempts.push(program.to_owned());
-        Ok(std::process::ExitStatus::from_raw(0))
-    })
+    play_with(
+        path,
+        |program, _| {
+            attempts.push(program.to_owned());
+            ProcessCommand::new("sh").args(["-c", "exit 0"]).spawn()
+        },
+        || false,
+    )
     .unwrap();
     assert_eq!(attempts, ["pw-play"]);
+}
+
+#[test]
+fn daemon_peer_disconnect_terminates_and_reaps_playback_without_fallback() {
+    let (server, client) = UnixStream::pair().unwrap();
+    let fd = server.as_raw_fd();
+    assert!(!socket_peer_disconnected(fd));
+
+    let disconnect = thread::spawn(move || {
+        thread::sleep(Duration::from_millis(75));
+        drop(client);
+    });
+    let mut attempts = Vec::new();
+    let mut player_pid = None;
+    let started = Instant::now();
+    let error = play_with(
+        Path::new("silent.wav"),
+        |program, _| {
+            attempts.push(program.to_owned());
+            let child = ProcessCommand::new("sleep").arg("30").spawn()?;
+            player_pid = Some(child.id());
+            Ok(child)
+        },
+        || socket_peer_disconnected(fd),
+    )
+    .unwrap_err();
+    disconnect.join().unwrap();
+
+    assert!(error.downcast_ref::<PlaybackCancelled>().is_some());
+    assert!(started.elapsed() < Duration::from_secs(1));
+    assert_eq!(attempts, ["pw-play"]);
+    let pid = player_pid.unwrap().try_into().unwrap();
+    assert_eq!(
+        unsafe { libc::kill(pid, 0) },
+        -1,
+        "player {pid} was not reaped"
+    );
+    assert_eq!(
+        std::io::Error::last_os_error().raw_os_error(),
+        Some(libc::ESRCH)
+    );
 }
 
 #[test]

@@ -35,7 +35,9 @@ printf '%s' 'Piped input works too.' | omaspeak say --no-play --out /tmp/test.wa
 
 When the text argument is omitted, `say` reads redirected or piped standard
 input. An interactive invocation with no text exits immediately with usage
-guidance.
+guidance. Pressing Ctrl-C cancels playback. When a daemon handles the request,
+it watches the client connection and stops its player as soon as the client
+exits.
 
 `setup all` installs the verified model and desktop settings launcher. It does
 not install or start a service. `say` starts inference on demand when no daemon

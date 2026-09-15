@@ -1,6 +1,6 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output, Stdio};
+use std::process::{Child, Command, Output, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -15,6 +15,58 @@ use omaspeak::protocol::{Request, Response, ResultPayload};
 use std::os::unix::fs::PermissionsExt;
 
 static NEXT: AtomicUsize = AtomicUsize::new(0);
+
+#[cfg(target_os = "linux")]
+struct ProcessGuard(Option<Child>);
+
+#[cfg(target_os = "linux")]
+impl ProcessGuard {
+    fn new(child: Child) -> Self {
+        Self(Some(child))
+    }
+
+    fn collect_output(&mut self) -> Output {
+        self.0.take().unwrap().wait_with_output().unwrap()
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl std::ops::Deref for ProcessGuard {
+    type Target = Child;
+
+    fn deref(&self) -> &Self::Target {
+        self.0.as_ref().unwrap()
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl std::ops::DerefMut for ProcessGuard {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.0.as_mut().unwrap()
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl Drop for ProcessGuard {
+    fn drop(&mut self) {
+        let Some(child) = self.0.as_mut() else {
+            return;
+        };
+        if child.try_wait().ok().flatten().is_none() {
+            unsafe {
+                libc::kill(child.id() as i32, libc::SIGTERM);
+            }
+            let deadline = Instant::now() + Duration::from_secs(1);
+            while child.try_wait().ok().flatten().is_none() && Instant::now() < deadline {
+                thread::sleep(Duration::from_millis(10));
+            }
+            if child.try_wait().ok().flatten().is_none() {
+                let _ = child.kill();
+            }
+        }
+        let _ = child.wait();
+    }
+}
 
 #[cfg(target_os = "linux")]
 fn build_audio_cpp_stub(root: &Path) -> PathBuf {
@@ -83,6 +135,199 @@ fn process_isolated_audio_cpp_provider_synthesizes_without_its_cli() {
     let bytes = fs::read(wav).unwrap();
     assert!(bytes.starts_with(b"RIFF"));
     assert_eq!(bytes.len(), 44 + 441 * 2);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn ctrl_c_client_cancels_daemon_playback_and_leaves_daemon_healthy() {
+    let root = sandbox();
+    let library = build_audio_cpp_stub(&root);
+    audio_cpp_stub_config(&root, library, "supertonic.gguf")
+        .save(&root.join("config/omaspeak/config.toml"))
+        .unwrap();
+
+    let bin = root.join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    let player_pid_file = root.join("player.pid");
+    let player = bin.join("pw-play");
+    fs::write(
+        &player,
+        format!(
+            "#!/bin/sh\nprintf '%s' \"$$\" > '{}'\nexec /usr/bin/sleep 30\n",
+            player_pid_file.display()
+        ),
+    )
+    .unwrap();
+    fs::set_permissions(&player, fs::Permissions::from_mode(0o755)).unwrap();
+
+    let configure = |command: &mut Command| {
+        command
+            .env("HOME", &root)
+            .env("XDG_CONFIG_HOME", root.join("config"))
+            .env("XDG_DATA_HOME", root.join("data"))
+            .env("XDG_STATE_HOME", root.join("state"))
+            .env("XDG_RUNTIME_DIR", root.join("run"))
+            .env("PATH", &bin)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+    };
+
+    let mut daemon_command = Command::new(env!("CARGO_BIN_EXE_omaspeak"));
+    daemon_command.arg("daemon");
+    configure(&mut daemon_command);
+    let mut daemon = ProcessGuard::new(daemon_command.spawn().unwrap());
+    let socket = root.join("run/omaspeak/control.sock");
+    let startup_deadline = Instant::now() + Duration::from_secs(2);
+    while !socket.exists() {
+        if daemon.try_wait().unwrap().is_some() {
+            let output = daemon.collect_output();
+            panic!("test daemon exited during startup: {}", stderr(&output));
+        }
+        if Instant::now() >= startup_deadline {
+            daemon.kill().unwrap();
+            let output = daemon.collect_output();
+            panic!("test daemon did not create its socket: {}", stderr(&output));
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+
+    let mut client_command = Command::new(env!("CARGO_BIN_EXE_omaspeak"));
+    client_command.args(["say", "cancel this playback"]);
+    configure(&mut client_command);
+    let mut client = ProcessGuard::new(client_command.spawn().unwrap());
+    let playback_deadline = Instant::now() + Duration::from_secs(2);
+    while !player_pid_file.exists() {
+        assert!(
+            Instant::now() < playback_deadline,
+            "daemon did not start the fake WAV player"
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
+    let player_pid: i32 = fs::read_to_string(&player_pid_file)
+        .unwrap()
+        .parse()
+        .unwrap();
+
+    assert_eq!(unsafe { libc::kill(client.id() as i32, libc::SIGINT) }, 0);
+    let client_deadline = Instant::now() + Duration::from_secs(2);
+    while client.try_wait().unwrap().is_none() {
+        assert!(
+            Instant::now() < client_deadline,
+            "client ignored SIGINT during playback"
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
+    assert!(!client.wait().unwrap().success());
+
+    let reap_deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        if unsafe { libc::kill(player_pid, 0) } == -1
+            && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
+        {
+            break;
+        }
+        assert!(
+            Instant::now() < reap_deadline,
+            "fake WAV player {player_pid} survived client cancellation"
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
+
+    let stopped = run(&root, &["stop"]);
+    assert!(stopped.status.success(), "{}", stderr(&stopped));
+    let daemon_deadline = Instant::now() + Duration::from_secs(2);
+    while daemon.try_wait().unwrap().is_none() {
+        assert!(
+            Instant::now() < daemon_deadline,
+            "daemon did not accept shutdown after cancellation"
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
+    let daemon_output = daemon.collect_output();
+    assert!(daemon_output.status.success(), "{}", stderr(&daemon_output));
+    assert!(!socket.exists());
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn ctrl_c_on_demand_say_does_not_orphan_its_player_or_worker() {
+    let root = sandbox();
+    let library = build_audio_cpp_stub(&root);
+    audio_cpp_stub_config(&root, library, "supertonic.gguf")
+        .save(&root.join("config/omaspeak/config.toml"))
+        .unwrap();
+
+    let bin = root.join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    let player_pid_file = root.join("player.pid");
+    let player = bin.join("pw-play");
+    fs::write(
+        &player,
+        format!(
+            "#!/bin/sh\nprintf '%s' \"$$\" > '{}'\nexec /usr/bin/sleep 30\n",
+            player_pid_file.display()
+        ),
+    )
+    .unwrap();
+    fs::set_permissions(&player, fs::Permissions::from_mode(0o755)).unwrap();
+
+    let mut client = ProcessGuard::new(
+        Command::new(env!("CARGO_BIN_EXE_omaspeak"))
+            .args(["say", "cancel on-demand playback"])
+            .env("HOME", &root)
+            .env("XDG_CONFIG_HOME", root.join("config"))
+            .env("XDG_DATA_HOME", root.join("data"))
+            .env("XDG_STATE_HOME", root.join("state"))
+            .env("XDG_RUNTIME_DIR", root.join("run"))
+            .env("PATH", &bin)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap(),
+    );
+    let playback_deadline = Instant::now() + Duration::from_secs(2);
+    while !player_pid_file.exists() {
+        if client.try_wait().unwrap().is_some() {
+            let output = client.collect_output();
+            panic!("on-demand say exited before playback: {}", stderr(&output));
+        }
+        assert!(
+            Instant::now() < playback_deadline,
+            "on-demand say did not start its fake WAV player"
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
+    let player_pid: i32 = fs::read_to_string(&player_pid_file)
+        .unwrap()
+        .parse()
+        .unwrap();
+    let children = fs::read_to_string(format!("/proc/{0}/task/{0}/children", client.id()))
+        .unwrap()
+        .split_whitespace()
+        .map(|pid| pid.parse::<i32>().unwrap())
+        .collect::<Vec<_>>();
+    assert!(children.contains(&player_pid));
+
+    assert_eq!(unsafe { libc::kill(client.id() as i32, libc::SIGINT) }, 0);
+    assert!(!client.wait().unwrap().success());
+
+    let cleanup_deadline = Instant::now() + Duration::from_secs(2);
+    for pid in children {
+        loop {
+            if unsafe { libc::kill(pid, 0) } == -1
+                && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
+            {
+                break;
+            }
+            assert!(
+                Instant::now() < cleanup_deadline,
+                "on-demand child {pid} survived Ctrl-C"
+            );
+            thread::sleep(Duration::from_millis(10));
+        }
+    }
 }
 
 #[cfg(target_os = "linux")]

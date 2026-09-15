@@ -6,6 +6,9 @@
 
 - Promoted the validated rc.3 native-provider architecture to the first stable
   release.
+- Cancel daemon-backed and on-demand playback when `omaspeak say` is
+  interrupted, and terminate and reap the player instead of leaving speech
+  running after its client exits.
 - Kept runtime transitions provider-specific: the packaged CPU provider is
   reused when leaving OpenVINO, while accelerator selections still require a
   matching complete external provider.
