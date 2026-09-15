@@ -1,0 +1,81 @@
+{
+  "failures": [],
+  "lanes": {
+    "default-cpu": {
+      "npu_busy_delta_us": 0,
+      "placements": [
+        {
+          "effective_runtime": "default",
+          "fallback_used": false,
+          "placement_evidence": "runtime-loaded ONNX Runtime CPU engine initialized",
+          "placement_verified": true,
+          "requested_device": "cpu"
+        },
+        {
+          "effective_runtime": "default",
+          "fallback_used": false,
+          "placement_evidence": "runtime-loaded ONNX Runtime CPU engine initialized",
+          "placement_verified": true,
+          "requested_device": "cpu"
+        },
+        {
+          "effective_runtime": "default",
+          "fallback_used": false,
+          "placement_evidence": "runtime-loaded ONNX Runtime CPU engine initialized",
+          "placement_verified": true,
+          "requested_device": "cpu"
+        },
+        {
+          "effective_runtime": "default",
+          "fallback_used": false,
+          "placement_evidence": "runtime-loaded ONNX Runtime CPU engine initialized",
+          "placement_verified": true,
+          "requested_device": "cpu"
+        }
+      ],
+      "reference_words": 25,
+      "wer": 0.0,
+      "word_errors": 0
+    },
+    "openvino-npu": {
+      "npu_busy_delta_us": 233397,
+      "placements": [
+        {
+          "effective_runtime": "openvino",
+          "fallback_used": false,
+          "placement_evidence": "OpenVINO EXECUTION_DEVICES matched the requested device for every compiled graph",
+          "placement_verified": true,
+          "requested_device": "npu"
+        },
+        {
+          "effective_runtime": "openvino",
+          "fallback_used": false,
+          "placement_evidence": "OpenVINO EXECUTION_DEVICES matched the requested device for every compiled graph",
+          "placement_verified": true,
+          "requested_device": "npu"
+        },
+        {
+          "effective_runtime": "openvino",
+          "fallback_used": false,
+          "placement_evidence": "OpenVINO EXECUTION_DEVICES matched the requested device for every compiled graph",
+          "placement_verified": true,
+          "requested_device": "npu"
+        },
+        {
+          "effective_runtime": "openvino",
+          "fallback_used": false,
+          "placement_evidence": "OpenVINO EXECUTION_DEVICES matched the requested device for every compiled graph",
+          "placement_verified": true,
+          "requested_device": "npu"
+        }
+      ],
+      "reference_words": 25,
+      "wer": 0.0,
+      "word_errors": 0
+    }
+  },
+  "max_wer_delta": 0.1,
+  "npu_minus_cpu_wer": 0.0,
+  "passed": true,
+  "schema_version": 1
+}

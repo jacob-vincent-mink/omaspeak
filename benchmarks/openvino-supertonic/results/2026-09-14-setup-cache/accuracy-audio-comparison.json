@@ -1,0 +1,106 @@
+{
+  "passed": true,
+  "failures": [],
+  "comparisons": [
+    {
+      "id": "accuracy-1",
+      "cpu": {
+        "path": "/tmp/omaspeak-npu-final-validation.Y1cyTs/audio/default-cpu-accuracy-1.wav",
+        "rate": 44100,
+        "samples": 143621,
+        "duration_seconds": 3.2567120181405897,
+        "peak": 0.405426025390625,
+        "rms": 0.04970377857540479,
+        "clipped_samples": 0
+      },
+      "npu": {
+        "path": "/tmp/omaspeak-npu-final-validation.Y1cyTs/audio/npu-accuracy-1.wav",
+        "rate": 44100,
+        "samples": 142684,
+        "duration_seconds": 3.2354648526077097,
+        "peak": 0.373382568359375,
+        "rms": 0.05647698559358127,
+        "clipped_samples": 0
+      },
+      "duration_relative_delta": 0.006524115554132137,
+      "npu_to_cpu_rms_ratio": 1.1362714709486514,
+      "unaligned_pearson": 0.03145814683173655,
+      "passed": true
+    },
+    {
+      "id": "accuracy-2",
+      "cpu": {
+        "path": "/tmp/omaspeak-npu-final-validation.Y1cyTs/audio/default-cpu-accuracy-2.wav",
+        "rate": 44100,
+        "samples": 201187,
+        "duration_seconds": 4.562063492063492,
+        "peak": 0.346343994140625,
+        "rms": 0.04962137056407085,
+        "clipped_samples": 0
+      },
+      "npu": {
+        "path": "/tmp/omaspeak-npu-final-validation.Y1cyTs/audio/npu-accuracy-2.wav",
+        "rate": 44100,
+        "samples": 199035,
+        "duration_seconds": 4.513265306122449,
+        "peak": 0.335205078125,
+        "rms": 0.049025484111168825,
+        "clipped_samples": 0
+      },
+      "duration_relative_delta": 0.010696516176492622,
+      "npu_to_cpu_rms_ratio": 0.9879913342552153,
+      "unaligned_pearson": 0.11245573065502261,
+      "passed": true
+    },
+    {
+      "id": "accuracy-3",
+      "cpu": {
+        "path": "/tmp/omaspeak-npu-final-validation.Y1cyTs/audio/default-cpu-accuracy-3.wav",
+        "rate": 44100,
+        "samples": 214449,
+        "duration_seconds": 4.862789115646258,
+        "peak": 0.339935302734375,
+        "rms": 0.043499878696923344,
+        "clipped_samples": 0
+      },
+      "npu": {
+        "path": "/tmp/omaspeak-npu-final-validation.Y1cyTs/audio/npu-accuracy-3.wav",
+        "rate": 44100,
+        "samples": 212687,
+        "duration_seconds": 4.822834467120181,
+        "peak": 0.415283203125,
+        "rms": 0.048693044065633954,
+        "clipped_samples": 0
+      },
+      "duration_relative_delta": 0.008216405765473379,
+      "npu_to_cpu_rms_ratio": 1.1193834448342477,
+      "unaligned_pearson": -0.023391366884438013,
+      "passed": true
+    },
+    {
+      "id": "accuracy-4",
+      "cpu": {
+        "path": "/tmp/omaspeak-npu-final-validation.Y1cyTs/audio/default-cpu-accuracy-4.wav",
+        "rate": 44100,
+        "samples": 205658,
+        "duration_seconds": 4.663446712018141,
+        "peak": 0.414520263671875,
+        "rms": 0.052032302919612146,
+        "clipped_samples": 0
+      },
+      "npu": {
+        "path": "/tmp/omaspeak-npu-final-validation.Y1cyTs/audio/npu-accuracy-4.wav",
+        "rate": 44100,
+        "samples": 204031,
+        "duration_seconds": 4.626553287981859,
+        "peak": 0.29473876953125,
+        "rms": 0.048575221595518914,
+        "clipped_samples": 0
+      },
+      "duration_relative_delta": 0.00791119236791189,
+      "npu_to_cpu_rms_ratio": 0.9335589406943167,
+      "unaligned_pearson": 0.044988983939140866,
+      "passed": true
+    }
+  ]
+}

@@ -1,6 +1,8 @@
 use super::*;
 use bzip2::Compression;
 use bzip2::write::BzEncoder;
+use std::net::TcpListener;
+use std::thread;
 
 use crate::catalog::{RequiredFile, SupplementalFile};
 
@@ -161,6 +163,7 @@ fn paths(root: &Path) -> AppPaths {
     AppPaths {
         config_file: root.join("config/config.toml"),
         data_dir: root.join("data"),
+        cache_dir: root.join("cache"),
         state_dir: root.join("state"),
         runtime_dir: root.join("run"),
     }
@@ -171,6 +174,7 @@ fn model_path_is_backend_neutral() {
     let paths = AppPaths {
         config_file: "/tmp/config".into(),
         data_dir: "/tmp/data".into(),
+        cache_dir: "/tmp/cache".into(),
         state_dir: "/tmp/state".into(),
         runtime_dir: "/tmp/run".into(),
     };
@@ -613,4 +617,156 @@ fn failed_model_finalization_restores_the_previous_directory() {
         Some(spec.archive_size),
     )
     .unwrap();
+}
+
+#[test]
+fn failed_model_preparation_cleans_staging_and_supplement_parts() {
+    let root = temp("prepare-cleanup");
+    let archive_bytes = archive("tiny-root", "model.bin", b"tiny model");
+    let broken_archive = root.join("broken.tar.bz2");
+    fs::write(&broken_archive, b"not a bzip archive").unwrap();
+    let model_spec = spec(b"not a bzip archive", "http://unused.invalid/model");
+    let app_paths = paths(&root);
+    let error = install(
+        &app_paths,
+        model_spec,
+        Some(&broken_archive),
+        ProgressFormat::Human,
+        None,
+    )
+    .unwrap_err();
+    assert!(
+        format!("{error:#}").contains("prepare verified model installation"),
+        "{error:#}"
+    );
+    assert!(
+        !app_paths
+            .data_dir
+            .join("models")
+            .join(format!(".tiny.install-{}", std::process::id()))
+            .exists()
+    );
+
+    let supplemental_spec = spec_with_supplement(&archive_bytes);
+    let asset = &supplemental_spec.supplemental_files[0];
+    let part = root.join("supplement.part");
+    let target = root.join("supplement");
+    assert!(
+        write_pinned_download(
+            &b"float model extra"[..],
+            &part,
+            &target,
+            asset.size,
+            asset.sha256,
+            supplemental_spec,
+            ProgressFormat::Human,
+        )
+        .is_err()
+    );
+    assert!(!part.exists());
+    assert!(
+        write_pinned_download(
+            &b"wrong model"[..],
+            &part,
+            &target,
+            asset.size,
+            asset.sha256,
+            supplemental_spec,
+            ProgressFormat::Human,
+        )
+        .is_err()
+    );
+    assert!(!part.exists());
+
+    let destination = root.join("installed");
+    fs::create_dir_all(&destination).unwrap();
+    let wrong_source = root.join("wrong-source");
+    fs::write(&wrong_source, b"bad").unwrap();
+    assert!(install_supplemental(&wrong_source, &destination, asset).is_err());
+    assert!(!destination.join("extra/.model.fp32.part").exists());
+}
+
+fn local_download(body: Vec<u8>) -> Option<(String, thread::JoinHandle<()>)> {
+    let listener = match TcpListener::bind("127.0.0.1:0") {
+        Ok(listener) => listener,
+        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => return None,
+        Err(error) => panic!("bind local download fixture: {error}"),
+    };
+    let address = listener.local_addr().unwrap();
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut request = [0_u8; 2048];
+        let _ = stream.read(&mut request).unwrap();
+        write!(
+            stream,
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            body.len()
+        )
+        .unwrap();
+        stream.write_all(&body).unwrap();
+    });
+    Some((format!("http://{address}/asset"), server))
+}
+
+#[test]
+fn local_http_downloads_are_pinned_before_entering_the_install_cache() {
+    let root = temp("local-downloads");
+    let app_paths = paths(&root);
+    fs::create_dir_all(app_paths.data_dir.join("downloads")).unwrap();
+
+    let archive_bytes = archive("tiny-root", "model.bin", b"tiny model");
+    let Some((archive_url, archive_server)) = local_download(archive_bytes.clone()) else {
+        return;
+    };
+    let archive_spec = spec(&archive_bytes, &archive_url);
+    let downloaded = download_archive(&app_paths, archive_spec, ProgressFormat::Json).unwrap();
+    archive_server.join().unwrap();
+    assert_eq!(fs::read(downloaded).unwrap(), archive_bytes);
+
+    let supplement = b"float model".to_vec();
+    let (supplement_url, supplement_server) = local_download(supplement.clone()).unwrap();
+    let base = spec_with_supplement(&archive_bytes);
+    let supplemental_files: &'static [SupplementalFile] = Box::leak(
+        vec![SupplementalFile {
+            url: leak(supplement_url),
+            ..base.supplemental_files[0]
+        }]
+        .into_boxed_slice(),
+    );
+    let with_supplement = Box::leak(Box::new(ModelSpec {
+        id: "local-supplement",
+        supplemental_files,
+        ..*base
+    }));
+    let downloaded = download_supplemental(
+        &app_paths,
+        with_supplement,
+        &supplemental_files[0],
+        ProgressFormat::Json,
+    )
+    .unwrap();
+    supplement_server.join().unwrap();
+    assert_eq!(fs::read(downloaded).unwrap(), supplement);
+
+    let large = (0..1_200_000)
+        .map(|index| ((index * 31 + 17) % 251) as u8)
+        .collect::<Vec<_>>();
+    let (large_url, large_server) = local_download(large.clone()).unwrap();
+    let large_spec = spec(&large, &large_url);
+    let downloaded = download_archive(&app_paths, large_spec, ProgressFormat::Json).unwrap();
+    large_server.join().unwrap();
+    assert_eq!(fs::read(downloaded).unwrap(), large);
+
+    let (large_supplement_url, large_supplement_server) = local_download(large.clone()).unwrap();
+    let large_asset = Box::leak(Box::new(SupplementalFile {
+        path: "large/model.bin",
+        supersedes: "",
+        url: leak(large_supplement_url),
+        size: large.len() as u64,
+        sha256: leak(digest(&large)),
+    }));
+    let downloaded =
+        download_supplemental(&app_paths, large_spec, large_asset, ProgressFormat::Human).unwrap();
+    large_supplement_server.join().unwrap();
+    assert_eq!(fs::read(downloaded).unwrap(), large);
 }

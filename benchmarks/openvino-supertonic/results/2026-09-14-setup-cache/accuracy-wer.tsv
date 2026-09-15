@@ -1,0 +1,9 @@
+id	runtime	transcript	wer
+accuracy-1	default-cpu	The quick brown fox jumps over the lazy dog.	0.0
+accuracy-1	npu	The quick brown fox jumps over the lazy dog.	0.0
+accuracy-2	default-cpu	OMASpeak prepares its neural processor catch during setup.	0.125
+accuracy-2	npu	OMA speak prepares its neural processor catch during setup.	0.125
+accuracy-3	default-cpu	Clear speech should remain accurate across every prepared shape.	0.0
+accuracy-3	npu	Clear speech should remain accurate across every prepared shape.	0.0
+accuracy-4	default-cpu	Different speakers can read the same sentence at different speeds.	0.0
+accuracy-4	npu	Different speakers can read the same sentence at different speeds.	0.0

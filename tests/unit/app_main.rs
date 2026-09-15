@@ -22,9 +22,30 @@ fn paths(root: &Path) -> AppPaths {
     AppPaths {
         config_file: root.join("config/config.toml"),
         data_dir: root.join("data"),
+        cache_dir: root.join("cache"),
         state_dir: root.join("state"),
         runtime_dir: root.join("run"),
     }
+}
+
+fn write_npu_fingerprint_assets(config: &Config, paths: &AppPaths) {
+    let model = config.model_directory(paths);
+    fs::create_dir_all(&model).unwrap();
+    for name in [
+        &config.model.duration_predictor,
+        &config.model.text_encoder,
+        &config.model.vector_estimator,
+        &config.model.vocoder,
+        &config.model.tts_json,
+        &config.model.unicode_indexer,
+        &config.model.voice_style,
+    ] {
+        fs::write(model.join(name), name.as_bytes()).unwrap();
+    }
+    let runtime = paths.data_dir.join("openvino");
+    fs::create_dir_all(&runtime).unwrap();
+    fs::write(runtime.join("libopenvino_c.so"), b"runtime").unwrap();
+    fs::write(runtime.join("plugins.xml"), b"<ie/>").unwrap();
 }
 
 fn create_stale_stream_socket(path: &Path) -> bool {
@@ -267,7 +288,11 @@ impl SpeechEngine for FakeEngine {
     }
 
     fn backend_kind(&self) -> &'static str {
-        "fake"
+        if self.runtime == Runtime::Openvino {
+            "openvino"
+        } else {
+            "fake"
+        }
     }
 
     fn model_name(&self) -> &str {
@@ -697,6 +722,7 @@ fn cli_parser_and_catalog_helpers_cover_command_surface() {
         vec!["omaspeak", "setup", "check", "--json"],
         vec!["omaspeak", "setup", "runtime", "--json"],
         vec!["omaspeak", "setup", "runtime", "--dir", "/opt/oma-sdk"],
+        vec!["omaspeak", "setup", "cache", "--prepare", "--json"],
         vec!["omaspeak", "setup", "model", "--list"],
         vec![
             "omaspeak",
@@ -1509,7 +1535,7 @@ fn guided_runtime_preselects_current_values_and_saves_selection() {
     config.save(&paths.config_file).unwrap();
     let mut selector = ScriptedSelector::new([Some(0), Some(1), Some(0)]);
 
-    let selected = guided_runtime(&paths.config_file, &mut selector)
+    let selected = guided_runtime(&paths.config_file, &paths, &mut selector)
         .unwrap()
         .unwrap();
     assert_eq!(selected, (Runtime::Default, "cpu".into()));
@@ -1639,23 +1665,22 @@ fn runtime_directory_setup_accepts_cpu_ort() {
 }
 
 #[test]
-fn guided_runtime_rejects_npu_when_active_catalog_model_is_incompatible() {
+fn guided_runtime_allows_npu_selection_before_a_compatible_model_is_installed() {
     let root = sandbox();
     let paths = paths(&root);
     let config = Config::default();
     config.save(&paths.config_file).unwrap();
-    let original = fs::read_to_string(&paths.config_file).unwrap();
-    let mut selector = ScriptedSelector::new([Some(1), Some(3)]);
+    let mut selector = ScriptedSelector::new([Some(1), Some(3), Some(0)]);
 
-    let error = guided_runtime(&paths.config_file, &mut selector).unwrap_err();
+    let selected = guided_runtime(&paths.config_file, &paths, &mut selector)
+        .unwrap()
+        .unwrap();
 
-    assert!(
-        error
-            .to_string()
-            .contains("not compatible with direct OpenVINO")
-    );
-    assert!(error.to_string().contains("choose Full setup"));
-    assert_eq!(fs::read_to_string(&paths.config_file).unwrap(), original);
+    assert_eq!(selected, (Runtime::Openvino, "npu".into()));
+    let saved = Config::load(&paths.config_file).unwrap();
+    assert_eq!(saved.backend.runtime, Runtime::Openvino);
+    assert_eq!(saved.backend.device, "npu");
+    assert!(!omaspeak::supertonic::npu_cache_state(&saved, &paths).ready);
 }
 
 #[test]
@@ -1712,7 +1737,7 @@ fn guided_runtime_cancel_at_apply_leaves_configuration_untouched() {
     let mut selector = ScriptedSelector::new([Some(0), Some(0), Some(1)]);
 
     assert!(
-        guided_runtime(&paths.config_file, &mut selector)
+        guided_runtime(&paths.config_file, &paths, &mut selector)
             .unwrap()
             .is_none()
     );
@@ -1914,7 +1939,7 @@ fn guided_flows_handle_back_without_mutating_configuration() {
     let paths = paths(&root);
     let mut selector = ScriptedSelector::new([None]);
     assert!(
-        guided_runtime(&paths.config_file, &mut selector)
+        guided_runtime(&paths.config_file, &paths, &mut selector)
             .unwrap()
             .is_none()
     );
@@ -2296,6 +2321,45 @@ fn setup_transaction_restores_existing_and_new_configs_on_late_failures() {
     .unwrap_err();
     assert!(error.to_string().contains("restart failed"));
     assert_eq!(fs::read(&restart.config_file).unwrap(), original);
+}
+
+#[test]
+fn setup_precompile_failure_leaves_config_launcher_and_service_untouched() {
+    let root = sandbox();
+    let paths = paths(&root);
+    let original = b"# unchanged while NPU compilation fails\n";
+    fs::create_dir_all(paths.config_file.parent().unwrap()).unwrap();
+    fs::write(&paths.config_file, original).unwrap();
+    let launcher_called = std::cell::Cell::new(false);
+    let restart_called = std::cell::Cell::new(false);
+    let error = setup_all_with_config_and_preparer(
+        Config::load(&paths.config_file).unwrap(),
+        &paths.config_file,
+        &paths,
+        &FakeModelOperations { installed: true },
+        "supertonic-3-int8",
+        None,
+        None,
+        Some("OpenRAIL-M"),
+        ProgressFormat::Human,
+        |_| {
+            launcher_called.set(true);
+            unreachable!()
+        },
+        || true,
+        |_| {
+            restart_called.set(true);
+            unreachable!()
+        },
+        |_, _| unreachable!(),
+        |_, _| unreachable!(),
+        |_, _, _| bail!("injected NPU compilation failure"),
+    )
+    .unwrap_err();
+    assert!(format!("{error:#}").contains("NPU compilation failure"));
+    assert_eq!(fs::read(&paths.config_file).unwrap(), original);
+    assert!(!launcher_called.get());
+    assert!(!restart_called.get());
 }
 
 #[test]
@@ -2710,6 +2774,20 @@ fn filesystem_daemon_and_report_branches_need_no_native_runtime() {
             .unwrap()
             .contains("CPU engine")
     );
+    let openvino = FakeEngine {
+        fail: false,
+        runtime: Runtime::Openvino,
+    };
+    let mut openvino_config = Config::default();
+    openvino_config.backend.runtime = Runtime::Openvino;
+    openvino_config.backend.device = "gpu".into();
+    let report = benchmark_report(&openvino_config, &openvino, &args, Vec::new()).unwrap();
+    assert!(
+        report["backend"]["placement_evidence"]
+            .as_str()
+            .unwrap()
+            .contains("EXECUTION_DEVICES")
+    );
 
     let response = handle_request(
         &engine,
@@ -2754,6 +2832,7 @@ fn noninteractive_runtime_setup_persists_selection_and_rejects_an_invalid_librar
     let paths = paths(&root);
     apply_runtime_selection(
         &paths.config_file,
+        &paths,
         Runtime::Default,
         "cpu",
         None,
@@ -2881,4 +2960,685 @@ fn noninteractive_runtime_setup_persists_selection_and_rejects_an_invalid_librar
         )
         .is_err()
     );
+}
+
+#[test]
+fn noninteractive_npu_runtime_apply_defers_cache_on_a_clean_install() {
+    let root = sandbox();
+    let paths = paths(&root);
+    apply_runtime_selection(
+        &paths.config_file,
+        &paths,
+        Runtime::Openvino,
+        "npu",
+        None,
+        true,
+        |_, _| omaspeak::runtime_inventory::Probe {
+            loadable: true,
+            device_accessible: true,
+            ready: true,
+            evidence: omaspeak::runtime_inventory::Evidence {
+                available_devices: vec!["NPU".into()],
+                selected_device: Some("NPU".into()),
+                ..Default::default()
+            },
+            errors: Vec::new(),
+        },
+    )
+    .unwrap();
+    let config = Config::load(&paths.config_file).unwrap();
+    assert_eq!(config.backend.runtime, Runtime::Openvino);
+    assert_eq!(config.backend.device, "npu");
+    assert!(!omaspeak::supertonic::npu_cache_state(&config, &paths).ready);
+}
+
+#[test]
+fn npu_cache_progress_orchestration_handles_formats_skip_and_missing_state() {
+    let root = sandbox();
+    let app_paths = paths(&root);
+    let mut config = Config::default();
+    let calls = std::cell::Cell::new(0);
+    prepare_npu_cache_with_progress_with(&mut config, &app_paths, ProgressFormat::Human, |_, _| {
+        calls.set(calls.get() + 1);
+        unreachable!("CPU setup must skip NPU preparation")
+    })
+    .unwrap();
+    assert_eq!(calls.get(), 0);
+
+    config.backend.runtime = Runtime::Openvino;
+    config.backend.device = "npu".into();
+    for format in [ProgressFormat::Human, ProgressFormat::Json] {
+        let expected = app_paths.cache_dir.join("prepared");
+        prepare_npu_cache_with_progress_with(&mut config, &app_paths, format, |_, _| {
+            Ok(Some(omaspeak::supertonic::NpuCacheState {
+                required: true,
+                ready: true,
+                fingerprint: Some("fixture".into()),
+                directory: Some(expected.clone()),
+                blobs: Vec::new(),
+                detail: "12 prepared OpenVINO cache blobs".into(),
+            }))
+        })
+        .unwrap();
+    }
+    let error = prepare_npu_cache_with_progress_with(
+        &mut config,
+        &app_paths,
+        ProgressFormat::Json,
+        |_, _| Ok(None),
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("unexpectedly skipped"));
+}
+
+#[test]
+fn npu_model_readiness_distinguishes_catalog_custom_and_device_states() {
+    let root = sandbox();
+    let app_paths = paths(&root);
+    let mut config = Config::default();
+    assert!(!npu_model_ready_with(&config, &app_paths, |_, _| Ok(())).unwrap());
+
+    config.backend.runtime = Runtime::Openvino;
+    config.backend.device = "npu".into();
+    let error = npu_model_ready_with(&config, &app_paths, |_, _| Ok(())).unwrap_err();
+    assert!(error.to_string().contains("not validated for Intel NPU"));
+
+    config.model.name = "supertonic-3-npu".into();
+    assert!(!npu_model_ready_with(&config, &app_paths, |_, _| bail!("missing")).unwrap());
+    assert!(npu_model_ready_with(&config, &app_paths, |_, _| Ok(())).unwrap());
+
+    config.model.name = "custom-npu".into();
+    config.model.directory = root.join("custom-model").display().to_string();
+    assert!(!npu_model_ready_with(&config, &app_paths, |_, _| unreachable!()).unwrap());
+    fs::create_dir_all(config.model_directory(&app_paths)).unwrap();
+    let error = npu_model_ready_with(&config, &app_paths, |_, _| unreachable!()).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("cannot be assumed Intel NPU compatible")
+    );
+}
+
+#[test]
+fn explicit_cache_setup_reports_optional_unready_and_ready_states() {
+    let root = sandbox();
+    let app_paths = paths(&root);
+    Config::default().save(&app_paths.config_file).unwrap();
+    setup(
+        Some(SetupCommand::Cache {
+            prepare: false,
+            json: false,
+        }),
+        &app_paths.config_file,
+        &app_paths,
+    )
+    .unwrap();
+    setup(
+        Some(SetupCommand::Cache {
+            prepare: false,
+            json: true,
+        }),
+        &app_paths.config_file,
+        &app_paths,
+    )
+    .unwrap();
+    let error = setup(
+        Some(SetupCommand::Cache {
+            prepare: true,
+            json: false,
+        }),
+        &app_paths.config_file,
+        &app_paths,
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("runtime/device"));
+
+    let mut unready = Config::default();
+    unready.backend.runtime = Runtime::Openvino;
+    unready.backend.device = "npu".into();
+    unready.model.name = "custom-npu".into();
+    unready.model.directory = root.join("missing-model").display().to_string();
+    unready.save(&app_paths.config_file).unwrap();
+    let error = setup(
+        Some(SetupCommand::Cache {
+            prepare: false,
+            json: false,
+        }),
+        &app_paths.config_file,
+        &app_paths,
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("cache is not ready"));
+
+    let mut ready = unready;
+    ready.model.directory = root.join("ready-model").display().to_string();
+    ready.backend.openvino_library = Some(app_paths.data_dir.join("openvino/libopenvino_c.so"));
+    ready.backend.openvino_plugins = Some(app_paths.data_dir.join("openvino/plugins.xml"));
+    write_npu_fingerprint_assets(&ready, &app_paths);
+    ready.save(&app_paths.config_file).unwrap();
+    let directory = omaspeak::supertonic::npu_cache_directory(&ready, &app_paths).unwrap();
+    fs::create_dir_all(&directory).unwrap();
+    for index in 0..omaspeak::supertonic::NPU_COMPILED_MODELS {
+        fs::write(directory.join(format!("model-{index}.blob")), b"compiled").unwrap();
+    }
+    omaspeak::supertonic::write_npu_cache_manifest(&ready, &app_paths, &directory).unwrap();
+    setup(
+        Some(SetupCommand::Cache {
+            prepare: false,
+            json: false,
+        }),
+        &app_paths.config_file,
+        &app_paths,
+    )
+    .unwrap();
+}
+
+#[test]
+fn top_level_dispatch_uses_injected_paths_for_safe_offline_commands() {
+    let root = sandbox();
+    let app_paths = paths(&root);
+    Config::default().save(&app_paths.config_file).unwrap();
+
+    for json in [false, true] {
+        run_with_paths(
+            Cli {
+                config: Some(app_paths.config_file.clone()),
+                command: TopCommand::Status { json },
+            },
+            app_paths.clone(),
+        )
+        .unwrap();
+        run_with_paths(
+            Cli {
+                config: Some(app_paths.config_file.clone()),
+                command: TopCommand::Config {
+                    command: ConfigCommand::Schema { json },
+                },
+            },
+            app_paths.clone(),
+        )
+        .unwrap();
+        run_with_paths(
+            Cli {
+                config: Some(app_paths.config_file.clone()),
+                command: TopCommand::Config {
+                    command: ConfigCommand::Get {
+                        key: json.then(|| "model.name".into()),
+                        json,
+                    },
+                },
+            },
+            app_paths.clone(),
+        )
+        .unwrap();
+        run_with_paths(
+            Cli {
+                config: Some(app_paths.config_file.clone()),
+                command: TopCommand::Setup {
+                    command: Some(SetupCommand::Model {
+                        list: !json,
+                        json,
+                        download: None,
+                        set: None,
+                        verify: None,
+                        archive: None,
+                        accept_license: None,
+                        no_activate: false,
+                        progress_format: ProgressFormat::Human,
+                    }),
+                },
+            },
+            app_paths.clone(),
+        )
+        .unwrap();
+    }
+
+    run_with_paths(
+        Cli {
+            config: Some(app_paths.config_file.clone()),
+            command: TopCommand::Config {
+                command: ConfigCommand::Set {
+                    key: "model.language".into(),
+                    value: "ja".into(),
+                },
+            },
+        },
+        app_paths.clone(),
+    )
+    .unwrap();
+    run_with_paths(
+        Cli {
+            config: Some(app_paths.config_file.clone()),
+            command: TopCommand::Config {
+                command: ConfigCommand::Unset {
+                    key: "model.language".into(),
+                },
+            },
+        },
+        app_paths.clone(),
+    )
+    .unwrap();
+    let stop = run_with_paths(
+        Cli {
+            config: Some(app_paths.config_file.clone()),
+            command: TopCommand::Stop,
+        },
+        app_paths,
+    )
+    .unwrap_err();
+    assert!(stop.to_string().contains("daemon is not running"));
+
+    fn invoke(injected: &mut AppPaths, command: TopCommand) -> Result<()> {
+        let config_file = injected.config_file.clone();
+        run_with_paths_and_prepare(
+            Cli {
+                config: Some(config_file),
+                command,
+            },
+            injected,
+            |_, _| Ok(()),
+        )
+    }
+    let mut injected = paths(&root);
+    assert!(
+        invoke(
+            &mut injected,
+            TopCommand::NpuPrecompile {
+                request: "not json".into()
+            }
+        )
+        .is_err()
+    );
+    assert!(
+        invoke(
+            &mut injected,
+            TopCommand::Say(SayArgs {
+                text: Some(" ".into()),
+                voice: None,
+                speed: None,
+                out: None,
+                no_play: true,
+            })
+        )
+        .is_err()
+    );
+    assert!(
+        invoke(
+            &mut injected,
+            TopCommand::Benchmark(BenchmarkArgs {
+                text: String::new(),
+                out_dir: root.join("benchmark"),
+                warmup: 0,
+                iterations: 1,
+                voice: None,
+            })
+        )
+        .is_err()
+    );
+    assert!(
+        invoke(
+            &mut injected,
+            TopCommand::Setup {
+                command: Some(SetupCommand::Check { json: true })
+            }
+        )
+        .is_err()
+    );
+
+    let mut unsupported = Config::default();
+    unsupported.backend.kind = "unsupported".into();
+    unsupported.save(&injected.config_file).unwrap();
+    assert!(invoke(&mut injected, TopCommand::Daemon).is_err());
+}
+
+#[test]
+fn production_npu_setup_guards_are_safe_before_native_preparation() {
+    let root = sandbox();
+    let app_paths = paths(&root);
+    let mut config = Config::default();
+
+    assert!(!npu_model_ready(&config, &app_paths).unwrap());
+    prepare_npu_for_setup(&mut config, &app_paths, ProgressFormat::Human).unwrap();
+    prepare_npu_for_runtime_selection(&mut config, &app_paths, ProgressFormat::Human).unwrap();
+    prepare_npu_cache_with_progress(&mut config, &app_paths, ProgressFormat::Json).unwrap();
+
+    config.backend.runtime = Runtime::Openvino;
+    config.backend.device = "npu".into();
+    config.model.name = "custom-npu".into();
+    config.model.directory = root.join("missing-model").display().to_string();
+    assert!(!npu_model_ready(&config, &app_paths).unwrap());
+    for format in [ProgressFormat::Human, ProgressFormat::Json] {
+        let error = prepare_npu_for_setup(&mut config, &app_paths, format).unwrap_err();
+        assert!(error.to_string().contains("NPU-capable model"));
+        prepare_npu_for_runtime_selection(&mut config, &app_paths, format).unwrap();
+    }
+
+    config.save(&app_paths.config_file).unwrap();
+    for json in [false, true] {
+        let error = setup(
+            Some(SetupCommand::Cache {
+                prepare: true,
+                json,
+            }),
+            &app_paths.config_file,
+            &app_paths,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("NPU-capable model"));
+    }
+}
+
+#[test]
+fn daemon_orchestration_serves_shutdown_and_cleans_its_socket_without_signals() {
+    let root = sandbox();
+    let app_paths = paths(&root);
+    fs::create_dir_all(&app_paths.runtime_dir).unwrap();
+    let probe = app_paths.runtime_dir.join("probe.sock");
+    match UnixListener::bind(&probe) {
+        Ok(listener) => {
+            drop(listener);
+            fs::remove_file(probe).unwrap();
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => return,
+        Err(error) => panic!("probe daemon socket support: {error}"),
+    }
+    let thread_paths = app_paths.clone();
+    Config::default().save(&thread_paths.config_file).unwrap();
+    let server = thread::spawn(move || {
+        run_daemon_with(
+            &thread_paths.config_file,
+            &thread_paths,
+            |_, _| {
+                Ok(FakeEngine {
+                    fail: false,
+                    runtime: Runtime::Default,
+                })
+            },
+            |_| Ok(()),
+        )
+        .unwrap();
+    });
+
+    let socket = app_paths.socket();
+    let mut response = None;
+    for _ in 0..100 {
+        if socket.exists()
+            && let Ok(Some(value)) = try_send_request(&socket, &request(Command::Shutdown))
+        {
+            response = Some(value);
+            break;
+        }
+        thread::sleep(Duration::from_millis(2));
+    }
+    assert!(matches!(response.unwrap().result, ResultPayload::Shutdown));
+    server.join().unwrap();
+    assert!(!socket.exists());
+}
+
+#[test]
+fn benchmark_orchestration_uses_loaded_engine_and_emits_a_complete_report() {
+    let root = sandbox();
+    let mut config = Config::default();
+    config.model.voice = 3;
+    assert!(
+        benchmark_with_engine(
+            &config,
+            &FakeEngine {
+                fail: false,
+                runtime: Runtime::Default,
+            },
+            BenchmarkArgs {
+                text: "safe injected benchmark".into(),
+                out_dir: root.join("benchmark"),
+                warmup: 1,
+                iterations: 2,
+                voice: None,
+            },
+        )
+        .is_ok()
+    );
+}
+
+#[test]
+fn setup_completion_and_snapshot_cleanup_cover_service_and_path_states() {
+    let root = sandbox();
+    let app_paths = paths(&root);
+    let service = app_setup::systemd::service_path(&app_paths);
+    fs::create_dir_all(service.parent().unwrap()).unwrap();
+    fs::write(&service, "existing unit").unwrap();
+    for restarted in [false, true] {
+        print_setup_complete(
+            &root.join("model"),
+            &app_paths.config_file,
+            &app_paths,
+            &root.join("launcher.desktop"),
+            true,
+            restarted,
+            ProgressFormat::Human,
+        )
+        .unwrap();
+    }
+
+    let nested = root.join("new/config.toml");
+    restore_config_snapshot(&nested, Some(b"[model]\nvoice = 2\n")).unwrap();
+    assert!(nested.is_file());
+    restore_config_snapshot(&nested, None).unwrap();
+    assert!(!nested.exists());
+}
+
+#[test]
+fn runtime_picker_handles_explicit_directories_and_cancelled_input_without_probing() {
+    struct InputSelector {
+        choices: VecDeque<Option<usize>>,
+        input: Option<String>,
+    }
+    impl SetupSelector for InputSelector {
+        fn select(&mut self, _: &str, _: &str, _: &[MenuItem], _: usize) -> Result<Option<usize>> {
+            Ok(self.choices.pop_front().flatten())
+        }
+        fn input(&mut self, _: &str, _: &str) -> Result<Option<String>> {
+            Ok(self.input.take())
+        }
+    }
+
+    let root = sandbox();
+    let app_paths = paths(&root);
+    let mut config = Config::default();
+    config.backend.runtime = Runtime::Cuda;
+    config.backend.onnxruntime_library = Some(root.join("missing-ort.so"));
+    config.backend.provider_library = Some(root.join("missing-cuda.so"));
+    config.save(&app_paths.config_file).unwrap();
+    let mut cancelled = InputSelector {
+        choices: [Some(2), Some(0)].into(),
+        input: None,
+    };
+    assert!(
+        choose_runtime(&app_paths.config_file, &mut cancelled)
+            .unwrap()
+            .is_none()
+    );
+
+    config.backend.runtime = Runtime::Openvino;
+    config.backend.openvino_library = Some(root.join("missing-openvino.so"));
+    config.backend.openvino_plugins = Some(root.join("missing-plugins.xml"));
+    config.save(&app_paths.config_file).unwrap();
+    let directory = root.join("sdk");
+    let mut selected = InputSelector {
+        choices: [Some(1), Some(3)].into(),
+        input: Some(directory.display().to_string()),
+    };
+    let choice = choose_runtime(&app_paths.config_file, &mut selected)
+        .unwrap()
+        .unwrap();
+    assert_eq!(choice.0, Runtime::Openvino);
+    assert_eq!(choice.1, "npu");
+    assert_eq!(choice.2.as_deref(), Some(directory.as_path()));
+}
+
+#[test]
+fn top_level_online_commands_exchange_protocol_without_loading_an_engine() {
+    let root = sandbox();
+    let app_paths = paths(&root);
+    fs::create_dir_all(&app_paths.runtime_dir).unwrap();
+    Config::default().save(&app_paths.config_file).unwrap();
+    let socket = app_paths.socket();
+    let listener = match UnixListener::bind(&socket) {
+        Ok(listener) => listener,
+        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => return,
+        Err(error) => panic!("bind command-dispatch socket: {error}"),
+    };
+    let server = thread::spawn(move || {
+        for _ in 0..3 {
+            let (mut stream, _) = listener.accept().unwrap();
+            let incoming = read_request(&mut stream, 4096).unwrap();
+            let result = match incoming.command {
+                Command::Say { .. } => ResultPayload::Synthesis {
+                    output: "/tmp/injected.wav".into(),
+                    sample_rate: 16_000,
+                    samples: 16_000,
+                    audio_seconds: 1.0,
+                    load_milliseconds: 1,
+                    synthesis_milliseconds: 2,
+                },
+                Command::Status => ResultPayload::Status {
+                    running: true,
+                    pid: 42,
+                    model: "fixture".into(),
+                    sample_rate: 16_000,
+                    backend: json!({"kind": "injected"}),
+                },
+                Command::Shutdown => ResultPayload::Shutdown,
+            };
+            write_response(
+                &mut stream,
+                &Response {
+                    protocol: 1,
+                    id: incoming.id,
+                    result,
+                },
+            )
+            .unwrap();
+        }
+    });
+
+    let invoke = |command| {
+        let mut paths = app_paths.clone();
+        run_with_paths_and_prepare(
+            Cli {
+                config: Some(paths.config_file.clone()),
+                command,
+            },
+            &mut paths,
+            |_, _| Ok(()),
+        )
+    };
+    invoke(TopCommand::Say(SayArgs {
+        text: Some("protocol only".into()),
+        voice: Some(0),
+        speed: Some(1.0),
+        out: Some(root.join("unused.wav")),
+        no_play: true,
+    }))
+    .unwrap();
+    invoke(TopCommand::Status { json: false }).unwrap();
+    invoke(TopCommand::Stop).unwrap();
+    server.join().unwrap();
+}
+
+#[test]
+fn daemon_socket_identity_and_already_running_guards_are_race_safe() {
+    let root = sandbox();
+    let app_paths = paths(&root);
+    fs::create_dir_all(&app_paths.runtime_dir).unwrap();
+    let socket = app_paths.socket();
+    let first = match UnixListener::bind(&socket) {
+        Ok(listener) => listener,
+        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => return,
+        Err(error) => panic!("bind first identity socket: {error}"),
+    };
+    let old = fs::symlink_metadata(&socket).unwrap();
+    assert!(
+        prepare_daemon_socket(&app_paths)
+            .unwrap_err()
+            .to_string()
+            .contains("already running")
+    );
+    drop(first);
+    fs::remove_file(&socket).unwrap();
+    let second = UnixListener::bind(&socket).unwrap();
+    let changed = remove_stale_socket(&socket, &old).unwrap_err();
+    assert!(changed.to_string().contains("changed while checking"));
+    drop(second);
+    fs::remove_file(&socket).unwrap();
+
+    let interrupted_paths = paths(&sandbox());
+    fs::create_dir_all(&interrupted_paths.runtime_dir).unwrap();
+    let probe = interrupted_paths.runtime_dir.join("probe.sock");
+    match UnixListener::bind(&probe) {
+        Ok(listener) => drop(listener),
+        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => return,
+        Err(error) => panic!("probe interrupted daemon socket: {error}"),
+    }
+    fs::remove_file(probe).unwrap();
+    serve_daemon(
+        &FakeEngine {
+            fail: false,
+            runtime: Runtime::Default,
+        },
+        &Config::default(),
+        &interrupted_paths,
+        Arc::new(AtomicBool::new(true)),
+    )
+    .unwrap();
+    assert!(!interrupted_paths.socket().exists());
+}
+
+#[test]
+fn unattended_setup_validation_boundary_preserves_transaction_semantics() {
+    let root = sandbox();
+    let app_paths = paths(&root);
+    Config::default().save(&app_paths.config_file).unwrap();
+    let validated = std::cell::Cell::new(false);
+    let error = setup_all_with_validator(
+        &app_paths.config_file,
+        &app_paths,
+        &FakeModelOperations { installed: true },
+        "supertonic-3-int8",
+        None,
+        None,
+        Some("OpenRAIL-M"),
+        ProgressFormat::Human,
+        |paths| Ok(paths.data_dir.join("omaspeak.desktop")),
+        || false,
+        |_| unreachable!("failed health check must prevent restart"),
+        |config, path, explicit| {
+            assert_eq!(config.backend.runtime, Runtime::Default);
+            assert_eq!(path, app_paths.config_file);
+            assert!(!explicit);
+            validated.set(true);
+            Ok(())
+        },
+    )
+    .unwrap_err();
+    assert!(validated.get());
+    assert!(format!("{error:#}").contains("setup checks failed"));
+
+    let before = fs::read(&app_paths.config_file).unwrap();
+    let error = setup_all_with_validator(
+        &app_paths.config_file,
+        &app_paths,
+        &FakeModelOperations { installed: true },
+        "supertonic-3-int8",
+        None,
+        None,
+        Some("OpenRAIL-M"),
+        ProgressFormat::Json,
+        |_| unreachable!(),
+        || unreachable!(),
+        |_| unreachable!(),
+        |_, _, _| bail!("injected runtime rejection"),
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("runtime rejection"));
+    assert_eq!(fs::read(&app_paths.config_file).unwrap(), before);
 }

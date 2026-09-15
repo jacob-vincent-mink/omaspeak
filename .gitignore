@@ -2,4 +2,10 @@
 /target-openvino
 /:memory:.ses
 /benchmarks/openvino-supertonic/results/
+!/benchmarks/openvino-supertonic/results/
+/benchmarks/openvino-supertonic/results/*
+!/benchmarks/openvino-supertonic/results/2026-09-14-direct-openvino/
+!/benchmarks/openvino-supertonic/results/2026-09-14-direct-openvino/**
+!/benchmarks/openvino-supertonic/results/2026-09-14-setup-cache/
+!/benchmarks/openvino-supertonic/results/2026-09-14-setup-cache/**
 **/__pycache__/

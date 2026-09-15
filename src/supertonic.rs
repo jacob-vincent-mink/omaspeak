@@ -10,6 +10,7 @@
 use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
+use std::io::Read;
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -25,7 +26,8 @@ use ort::ep::{
 use ort::session::{Session, builder::GraphOptimizationLevel};
 use ort::value::{DynValue, Tensor as OrtTensor};
 use rand::{Rng, SeedableRng, rngs::StdRng};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use unicode_normalization::UnicodeNormalization;
 
 use crate::backend::Runtime;
@@ -40,6 +42,11 @@ const LANGUAGES: &[&str] = &[
 ];
 const MAX_LATENT_LENGTH: i64 = 10_000;
 const MIN_DURATION_SECONDS: f32 = 0.1;
+pub const NPU_TEXT_BUCKET: i64 = 320;
+pub const NPU_LATENT_BUCKETS: &[i64] = &[32, 64, 128, 256, 512];
+pub const NPU_COMPILED_MODELS: usize = 2 + 2 * NPU_LATENT_BUCKETS.len();
+const NPU_CACHE_SCHEMA: u32 = 1;
+const NPU_MANIFEST: &str = "omaspeak-npu-cache.json";
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 enum Graph {
@@ -475,6 +482,7 @@ struct OpenvinoPipeline {
     graphs: HashMap<Graph, PathBuf>,
     compiler: Box<dyn OpenvinoCompiler>,
     compiled: HashMap<GraphKey, Box<dyn OpenvinoGraph>>,
+    require_cache_hits: bool,
 }
 
 trait OpenvinoCompiler: Send {
@@ -488,6 +496,9 @@ trait OpenvinoCompiler: Send {
 
 trait OpenvinoGraph: Send {
     fn execution_devices(&self) -> Result<String>;
+    fn loaded_from_cache(&self) -> Result<bool> {
+        Ok(false)
+    }
     fn run(
         &mut self,
         graph: Graph,
@@ -658,6 +669,7 @@ impl OpenvinoPipeline {
             device,
             graphs,
             compiled: HashMap::new(),
+            require_cache_hits: false,
         })
     }
 
@@ -685,6 +697,16 @@ impl OpenvinoPipeline {
                     "OpenVINO compiled {} for unexpected device {actual}; requested {}",
                     graph.name(),
                     self.device
+                );
+            }
+            if self.require_cache_hits
+                && !compiled
+                    .loaded_from_cache()
+                    .with_context(|| format!("query {} compiled-model cache state", graph.name()))?
+            {
+                bail!(
+                    "OpenVINO did not load the prepared {} model from cache",
+                    graph.name()
                 );
             }
             self.compiled.insert(key.clone(), compiled);
@@ -811,6 +833,17 @@ impl OpenvinoGraph for NativeOpenvinoGraph {
             .get_property(&PropertyKey::Other(Cow::Borrowed("EXECUTION_DEVICES")))
             .context("query OpenVINO execution devices")
             .map(Cow::into_owned)
+    }
+
+    fn loaded_from_cache(&self) -> Result<bool> {
+        let value = self
+            .0
+            .get_property(&PropertyKey::Other(Cow::Borrowed("LOADED_FROM_CACHE")))
+            .context("query OpenVINO compiled-model cache state")?;
+        Ok(matches!(
+            value.trim().to_ascii_uppercase().as_str(),
+            "YES" | "TRUE" | "1"
+        ))
     }
 
     fn run(
@@ -955,6 +988,72 @@ impl ModelPipeline for OpenvinoPipeline {
     }
 }
 
+impl OpenvinoPipeline {
+    fn prepare_npu_static_shapes(&mut self, frontend: &SupertonicFrontend) -> Result<()> {
+        let style = frontend.style.slice(0)?;
+        let (mut text_ids, mut text_mask) = process_text(
+            "Omaspeak NPU cache preparation.",
+            &frontend.language,
+            &frontend.indexer,
+        );
+        text_ids.resize(NPU_TEXT_BUCKET as usize, 0);
+        text_mask.resize(NPU_TEXT_BUCKET as usize, 0.0);
+        self.run(
+            Graph::DurationPredictor,
+            vec![
+                NamedTensor::i64("text_ids", [1, NPU_TEXT_BUCKET], text_ids.clone())?,
+                NamedTensor::f32("style_dp", style.dp_shape, style.dp.to_vec())?,
+                NamedTensor::f32("text_mask", [1, 1, NPU_TEXT_BUCKET], text_mask.clone())?,
+            ],
+            "duration",
+        )?;
+        let (text_embedding_shape, text_embedding) = self
+            .run(
+                Graph::TextEncoder,
+                vec![
+                    NamedTensor::i64("text_ids", [1, NPU_TEXT_BUCKET], text_ids)?,
+                    NamedTensor::f32("style_ttl", style.ttl_shape, style.ttl.to_vec())?,
+                    NamedTensor::f32("text_mask", [1, 1, NPU_TEXT_BUCKET], text_mask.clone())?,
+                ],
+                "text_emb",
+            )?
+            .into_f32()?;
+        let latent_dimension =
+            frontend.config.ttl.latent_dim * frontend.config.ttl.chunk_compress_factor;
+        for &bucket in NPU_LATENT_BUCKETS {
+            let latent_shape = [1, latent_dimension, bucket];
+            let latent = vec![0.0; (latent_dimension * bucket) as usize];
+            let denoised = self.run(
+                Graph::VectorEstimator,
+                vec![
+                    NamedTensor::f32("noisy_latent", latent_shape, latent)?,
+                    NamedTensor::f32(
+                        "text_emb",
+                        text_embedding_shape.clone(),
+                        text_embedding.clone(),
+                    )?,
+                    NamedTensor::f32("style_ttl", style.ttl_shape, style.ttl.to_vec())?,
+                    NamedTensor::f32("latent_mask", [1, 1, bucket], vec![1.0; bucket as usize])?,
+                    NamedTensor::f32("text_mask", [1, 1, NPU_TEXT_BUCKET], text_mask.clone())?,
+                    NamedTensor::f32("current_step", [1], vec![0.0])?,
+                    NamedTensor::f32("total_step", [1], vec![frontend.steps as f32])?,
+                ],
+                "denoised_latent",
+            )?;
+            let (shape, latent) = denoised.into_f32()?;
+            if shape != latent_shape {
+                bail!("vector estimator returned shape {shape:?} while preparing {latent_shape:?}");
+            }
+            self.run(
+                Graph::Vocoder,
+                vec![NamedTensor::f32("latent", latent_shape, latent)?],
+                "wav_tts",
+            )?;
+        }
+        Ok(())
+    }
+}
+
 #[derive(Deserialize)]
 struct TtsFileConfig {
     ae: AeConfig,
@@ -1015,6 +1114,360 @@ struct SupertonicFrontend {
     steps: i32,
     seed: Option<u64>,
     silence_seconds: f32,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct NpuCacheManifest {
+    schema: u32,
+    fingerprint: String,
+    text_bucket: i64,
+    latent_buckets: Vec<i64>,
+    compiled_models: usize,
+    blobs: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct NpuCacheState {
+    pub required: bool,
+    pub ready: bool,
+    pub fingerprint: Option<String>,
+    pub directory: Option<PathBuf>,
+    pub blobs: Vec<PathBuf>,
+    pub detail: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct NpuNativePreparation {
+    pub compiled_models: usize,
+    pub cache_blobs: Vec<PathBuf>,
+    pub loaded_from_cache_required: bool,
+}
+
+pub fn uses_static_npu_shapes(config: &Config) -> bool {
+    config.backend.runtime == Runtime::Openvino
+        && config.backend.device.trim().eq_ignore_ascii_case("npu")
+}
+
+fn fingerprint_contents(hasher: &mut Sha256, path: &Path) -> Result<()> {
+    hasher.update(path.to_string_lossy().as_bytes());
+    let mut input = fs::File::open(path).with_context(|| format!("open {}", path.display()))?;
+    let mut buffer = [0_u8; 128 * 1024];
+    loop {
+        let count = input
+            .read(&mut buffer)
+            .with_context(|| format!("read {}", path.display()))?;
+        if count == 0 {
+            break;
+        }
+        hasher.update(&buffer[..count]);
+    }
+    Ok(())
+}
+
+pub fn npu_cache_fingerprint(config: &Config, paths: &AppPaths) -> Result<String> {
+    if !uses_static_npu_shapes(config) {
+        bail!("Intel NPU cache preparation requires runtime=openvino and device=npu");
+    }
+    let mut hasher = Sha256::new();
+    hasher.update(env!("CARGO_PKG_VERSION").as_bytes());
+    hasher.update(NPU_CACHE_SCHEMA.to_le_bytes());
+    hasher.update(NPU_TEXT_BUCKET.to_le_bytes());
+    for bucket in NPU_LATENT_BUCKETS {
+        hasher.update(bucket.to_le_bytes());
+    }
+    hasher.update(config.model.name.as_bytes());
+    hasher.update(serde_json::to_vec(&config.backend.options)?);
+    let directory = config.model_directory(paths);
+    let configured_files = [
+        &config.model.duration_predictor,
+        &config.model.text_encoder,
+        &config.model.vector_estimator,
+        &config.model.vocoder,
+        &config.model.tts_json,
+        &config.model.unicode_indexer,
+        &config.model.voice_style,
+    ];
+    // Cache identity must follow the bytes OpenVINO will compile. File size and
+    // timestamps are insufficient: a model can be replaced in place while
+    // preserving both, which would otherwise allow an incompatible blob to be
+    // accepted as ready.
+    for name in configured_files {
+        fingerprint_contents(&mut hasher, &directory.join(name))?;
+    }
+    if let Some(spec) = crate::catalog::model(&config.model.name) {
+        hasher.update(spec.source_revision.as_bytes());
+        for file in spec.required_files {
+            hasher.update(file.path.as_bytes());
+            hasher.update(file.size.to_le_bytes());
+            hasher.update(file.sha256.as_bytes());
+        }
+    }
+    let runtime = crate::runtime::discover(&config.backend, &paths.config_file);
+    for path in [
+        runtime.openvino_library.as_deref(),
+        runtime.openvino_plugins.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        fingerprint_contents(&mut hasher, path)?;
+        if path.file_name().is_some_and(|name| name == "plugins.xml")
+            && let Some(parent) = path.parent()
+        {
+            let npu_plugin = parent.join("libopenvino_intel_npu_plugin.so");
+            if npu_plugin.is_file() {
+                fingerprint_contents(&mut hasher, &npu_plugin)?;
+            }
+        }
+    }
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+pub fn npu_cache_directory(config: &Config, paths: &AppPaths) -> Result<PathBuf> {
+    Ok(paths
+        .cache_dir
+        .join("openvino/npu/static-v1")
+        .join(npu_cache_fingerprint(config, paths)?))
+}
+
+pub(crate) fn cache_blobs(directory: &Path) -> Result<Vec<PathBuf>> {
+    fn walk(root: &Path, directory: &Path, output: &mut Vec<PathBuf>) -> Result<()> {
+        for entry in fs::read_dir(directory)
+            .with_context(|| format!("read OpenVINO cache {}", directory.display()))?
+        {
+            let path = entry?.path();
+            if path.is_dir() {
+                walk(root, &path, output)?;
+            } else if path
+                .extension()
+                .is_some_and(|extension| extension == "blob")
+            {
+                output.push(path.strip_prefix(root)?.to_owned());
+            }
+        }
+        Ok(())
+    }
+    let mut blobs = Vec::new();
+    if directory.is_dir() {
+        walk(directory, directory, &mut blobs)?;
+    }
+    blobs.sort();
+    Ok(blobs)
+}
+
+pub fn npu_cache_state(config: &Config, paths: &AppPaths) -> NpuCacheState {
+    if !uses_static_npu_shapes(config) {
+        return NpuCacheState {
+            required: false,
+            ready: true,
+            fingerprint: None,
+            directory: None,
+            blobs: Vec::new(),
+            detail: "static NPU cache is not required for this runtime/device".into(),
+        };
+    }
+    let fingerprint = match npu_cache_fingerprint(config, paths) {
+        Ok(fingerprint) => fingerprint,
+        Err(error) => {
+            return NpuCacheState {
+                required: true,
+                ready: false,
+                fingerprint: None,
+                directory: None,
+                blobs: Vec::new(),
+                detail: format!("{error:#}"),
+            };
+        }
+    };
+    let directory = paths
+        .cache_dir
+        .join("openvino/npu/static-v1")
+        .join(&fingerprint);
+    let attempted = (|| -> Result<NpuCacheState> {
+        let manifest_path = directory.join(NPU_MANIFEST);
+        let manifest: NpuCacheManifest =
+            serde_json::from_slice(&fs::read(&manifest_path).with_context(|| {
+                format!("read NPU cache manifest {}", manifest_path.display())
+            })?)?;
+        if manifest.schema != NPU_CACHE_SCHEMA
+            || manifest.fingerprint != fingerprint
+            || manifest.text_bucket != NPU_TEXT_BUCKET
+            || manifest.latent_buckets != NPU_LATENT_BUCKETS
+            || manifest.compiled_models != NPU_COMPILED_MODELS
+        {
+            bail!("NPU cache manifest does not match the active runtime, model, and shape plan");
+        }
+        if manifest.blobs.len() != NPU_COMPILED_MODELS {
+            bail!(
+                "NPU cache manifest records {} compiled-model blobs; expected {}",
+                manifest.blobs.len(),
+                NPU_COMPILED_MODELS
+            );
+        }
+        let relative_blobs = manifest.blobs.iter().map(PathBuf::from).collect::<Vec<_>>();
+        if relative_blobs.iter().any(|path| {
+            path.is_absolute()
+                || path
+                    .components()
+                    .any(|part| matches!(part, std::path::Component::ParentDir))
+        }) {
+            bail!("NPU cache manifest contains an unsafe compiled-model path");
+        }
+        let mut unique = relative_blobs.clone();
+        unique.sort();
+        unique.dedup();
+        if unique.len() != NPU_COMPILED_MODELS {
+            bail!("NPU cache manifest contains duplicate compiled-model blobs");
+        }
+        let blobs = relative_blobs
+            .iter()
+            .map(|relative| directory.join(relative))
+            .collect::<Vec<_>>();
+        if blobs.iter().any(|path| {
+            !path.is_file() || fs::metadata(path).is_ok_and(|metadata| metadata.len() == 0)
+        }) {
+            bail!("NPU cache manifest references missing or empty compiled-model blobs");
+        }
+        if cache_blobs(&directory)? != unique {
+            bail!("NPU cache directory does not exactly match its compiled-model manifest");
+        }
+        Ok(NpuCacheState {
+            required: true,
+            ready: true,
+            fingerprint: Some(fingerprint.clone()),
+            directory: Some(directory.clone()),
+            detail: format!("{} prepared OpenVINO cache blobs", blobs.len()),
+            blobs,
+        })
+    })();
+    attempted.unwrap_or_else(|error| NpuCacheState {
+        required: true,
+        ready: false,
+        fingerprint: Some(fingerprint),
+        directory: Some(directory),
+        blobs: Vec::new(),
+        detail: format!("{error:#}"),
+    })
+}
+
+pub fn write_npu_cache_manifest(
+    config: &Config,
+    paths: &AppPaths,
+    directory: &Path,
+) -> Result<Vec<PathBuf>> {
+    let fingerprint = npu_cache_fingerprint(config, paths)?;
+    let blobs = cache_blobs(directory)?;
+    if blobs.len() != NPU_COMPILED_MODELS {
+        bail!(
+            "OpenVINO NPU preparation created {} .blob files in {}; expected {}",
+            blobs.len(),
+            directory.display(),
+            NPU_COMPILED_MODELS
+        );
+    }
+    if blobs
+        .iter()
+        .any(|path| fs::metadata(directory.join(path)).is_ok_and(|metadata| metadata.len() == 0))
+    {
+        bail!("OpenVINO NPU preparation created an empty compiled-model blob");
+    }
+    let manifest = NpuCacheManifest {
+        schema: NPU_CACHE_SCHEMA,
+        fingerprint,
+        text_bucket: NPU_TEXT_BUCKET,
+        latent_buckets: NPU_LATENT_BUCKETS.to_vec(),
+        compiled_models: NPU_COMPILED_MODELS,
+        blobs: blobs
+            .iter()
+            .map(|path| path.to_string_lossy().into_owned())
+            .collect(),
+    };
+    let temporary = directory.join(format!("{NPU_MANIFEST}.tmp"));
+    fs::write(&temporary, serde_json::to_vec_pretty(&manifest)?)?;
+    fs::rename(temporary, directory.join(NPU_MANIFEST))?;
+    Ok(blobs)
+}
+
+pub(crate) fn prepare_npu_cache_native(
+    config: &Config,
+    paths: &AppPaths,
+    runtime: OpenvinoRuntimePaths,
+    cache_dir: &Path,
+    require_cache_hits: bool,
+) -> Result<NpuNativePreparation> {
+    prepare_npu_cache_native_with(config, cache_dir, require_cache_hits, || {
+        let (frontend, graphs) = SupertonicFrontend::load(config, paths)?;
+        let mut pipeline = OpenvinoPipeline::create(
+            runtime,
+            "NPU",
+            graphs,
+            cache_dir,
+            config.backend.threads,
+            &config.backend.options,
+        )?;
+        pipeline.require_cache_hits = require_cache_hits;
+        pipeline.prepare_npu_static_shapes(&frontend)?;
+        let compiled_models = pipeline.compiled.len();
+        // OpenVINO may finish serializing a compiled model when its last handle is
+        // released. Drop every compiled-model handle before inspecting the cache.
+        drop(pipeline);
+        Ok(compiled_models)
+    })
+}
+
+fn prepare_npu_cache_native_with(
+    config: &Config,
+    cache_dir: &Path,
+    require_cache_hits: bool,
+    compile_static_plan: impl FnOnce() -> Result<usize>,
+) -> Result<NpuNativePreparation> {
+    if !uses_static_npu_shapes(config) {
+        bail!("refusing NPU cache preparation for a non-NPU configuration");
+    }
+    let compiled_models = compile_static_plan()?;
+    if compiled_models != NPU_COMPILED_MODELS {
+        bail!(
+            "NPU shape preparation compiled {} models; expected {}",
+            compiled_models,
+            NPU_COMPILED_MODELS
+        );
+    }
+    let blobs = cache_blobs(cache_dir)?;
+    if blobs.is_empty() {
+        bail!("OpenVINO did not persist any compiled NPU cache blobs");
+    }
+    Ok(NpuNativePreparation {
+        compiled_models,
+        cache_blobs: blobs,
+        loaded_from_cache_required: require_cache_hits,
+    })
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SynthesisShapes {
+    Exact,
+    NpuStatic,
+}
+
+fn npu_latent_bucket(length: i64) -> Result<i64> {
+    NPU_LATENT_BUCKETS
+        .iter()
+        .copied()
+        .find(|bucket| length <= *bucket)
+        .with_context(|| {
+            format!(
+                "predicted latent length {length} exceeds the prepared Intel NPU limit of {}",
+                NPU_LATENT_BUCKETS.last().copied().unwrap_or_default()
+            )
+        })
+}
+
+fn zero_latent_padding(values: &mut [f32], channels: i64, used: i64, bucket: i64) {
+    for channel in 0..channels as usize {
+        let start = channel * bucket as usize + used as usize;
+        let end = (channel + 1) * bucket as usize;
+        values[start..end].fill(0.0);
+    }
 }
 
 impl SupertonicFrontend {
@@ -1117,6 +1570,27 @@ impl SupertonicFrontend {
         speed: f32,
         voice: i32,
     ) -> Result<Vec<f32>> {
+        self.generate_with_shapes(pipeline, text, speed, voice, SynthesisShapes::Exact)
+    }
+
+    fn generate_npu(
+        &self,
+        pipeline: &mut (impl ModelPipeline + ?Sized),
+        text: &str,
+        speed: f32,
+        voice: i32,
+    ) -> Result<Vec<f32>> {
+        self.generate_with_shapes(pipeline, text, speed, voice, SynthesisShapes::NpuStatic)
+    }
+
+    fn generate_with_shapes(
+        &self,
+        pipeline: &mut (impl ModelPipeline + ?Sized),
+        text: &str,
+        speed: f32,
+        voice: i32,
+        shapes: SynthesisShapes,
+    ) -> Result<Vec<f32>> {
         let max_len = if matches!(self.language.as_str(), "ko" | "ja") {
             120
         } else {
@@ -1130,7 +1604,8 @@ impl SupertonicFrontend {
         let mut rng = StdRng::seed_from_u64(seed);
         let mut output = Vec::new();
         for (index, chunk) in chunks.iter().enumerate() {
-            let audio = self.generate_chunk(pipeline, chunk, speed, voice as usize, &mut rng)?;
+            let audio =
+                self.generate_chunk(pipeline, chunk, speed, voice as usize, &mut rng, shapes)?;
             if index > 0 {
                 output.resize(
                     output.len()
@@ -1150,10 +1625,24 @@ impl SupertonicFrontend {
         speed: f32,
         voice: usize,
         rng: &mut StdRng,
+        shapes: SynthesisShapes,
     ) -> Result<Vec<f32>> {
         let style = self.style.slice(voice)?;
-        let (text_ids, text_mask) = process_text(text, &self.language, &self.indexer);
-        let text_len = text_ids.len() as i64;
+        let (mut text_ids, mut text_mask) = process_text(text, &self.language, &self.indexer);
+        let actual_text_len = text_ids.len() as i64;
+        let text_len = match shapes {
+            SynthesisShapes::Exact => actual_text_len,
+            SynthesisShapes::NpuStatic => {
+                if actual_text_len > NPU_TEXT_BUCKET {
+                    bail!(
+                        "normalized text chunk has {actual_text_len} tokens, exceeding the prepared Intel NPU limit of {NPU_TEXT_BUCKET}; split the input into shorter sentences"
+                    );
+                }
+                text_ids.resize(NPU_TEXT_BUCKET as usize, 0);
+                text_mask.resize(NPU_TEXT_BUCKET as usize, 0.0);
+                NPU_TEXT_BUCKET
+            }
+        };
         let (_, duration) = pipeline
             .run(
                 Graph::DurationPredictor,
@@ -1193,14 +1682,29 @@ impl SupertonicFrontend {
         let sample_rate = self.config.ae.sample_rate as i64;
         let wav_length = (seconds * sample_rate as f32) as i64;
         let chunk_size = self.config.ae.base_chunk_size * self.config.ttl.chunk_compress_factor;
-        let latent_length = (wav_length + chunk_size - 1) / chunk_size;
-        if !(1..=MAX_LATENT_LENGTH).contains(&latent_length) {
-            bail!("predicted latent length {latent_length} is outside 1..={MAX_LATENT_LENGTH}");
+        let actual_latent_length = (wav_length + chunk_size - 1) / chunk_size;
+        if !(1..=MAX_LATENT_LENGTH).contains(&actual_latent_length) {
+            bail!(
+                "predicted latent length {actual_latent_length} is outside 1..={MAX_LATENT_LENGTH}"
+            );
         }
+        let latent_length = match shapes {
+            SynthesisShapes::Exact => actual_latent_length,
+            SynthesisShapes::NpuStatic => npu_latent_bucket(actual_latent_length)?,
+        };
         let latent_dimension = self.config.ttl.latent_dim * self.config.ttl.chunk_compress_factor;
         let latent_shape = [1, latent_dimension, latent_length];
         let mut latent = normal_samples((latent_dimension * latent_length) as usize, rng);
-        let latent_mask = vec![1.0; latent_length as usize];
+        let mut latent_mask = vec![0.0; latent_length as usize];
+        latent_mask[..actual_latent_length as usize].fill(1.0);
+        if shapes == SynthesisShapes::NpuStatic {
+            zero_latent_padding(
+                &mut latent,
+                latent_dimension,
+                actual_latent_length,
+                latent_length,
+            );
+        }
         for step in 0..self.steps {
             let (shape, next) = pipeline
                 .run(
@@ -1229,6 +1733,14 @@ impl SupertonicFrontend {
                 bail!("vector estimator returned shape {shape:?}; expected {latent_shape:?}");
             }
             latent = next;
+            if shapes == SynthesisShapes::NpuStatic {
+                zero_latent_padding(
+                    &mut latent,
+                    latent_dimension,
+                    actual_latent_length,
+                    latent_length,
+                );
+            }
         }
         let (wav_shape, wav) = pipeline
             .run(
@@ -1249,6 +1761,7 @@ impl SupertonicFrontend {
 pub struct DirectOpenvinoBackend {
     frontend: SupertonicFrontend,
     pipeline: Mutex<Box<dyn ModelPipeline>>,
+    static_npu_shapes: bool,
 }
 
 pub struct DirectOrtBackend {
@@ -1331,17 +1844,16 @@ impl DirectOpenvinoBackend {
         runtime: OpenvinoRuntimePaths,
     ) -> Result<Self> {
         Self::create_with(config, paths, |frontend, graphs, device, cache_dir| {
-            Ok((
-                frontend,
-                Box::new(OpenvinoPipeline::create(
-                    runtime,
-                    device,
-                    graphs,
-                    cache_dir,
-                    config.backend.threads,
-                    &config.backend.options,
-                )?) as Box<dyn ModelPipeline>,
-            ))
+            let mut pipeline = OpenvinoPipeline::create(
+                runtime,
+                device,
+                graphs,
+                cache_dir,
+                config.backend.threads,
+                &config.backend.options,
+            )?;
+            pipeline.require_cache_hits = device.eq_ignore_ascii_case("npu");
+            Ok((frontend, Box::new(pipeline) as Box<dyn ModelPipeline>))
         })
     }
 
@@ -1357,14 +1869,29 @@ impl DirectOpenvinoBackend {
     ) -> Result<Self> {
         let (frontend, graphs) = SupertonicFrontend::load(config, paths)?;
         let device = config.backend.canonical_device()?;
-        let cache_dir = paths
-            .state_dir
-            .join("cache/openvino")
-            .join(device.to_ascii_lowercase());
+        let static_npu_shapes = device.eq_ignore_ascii_case("npu");
+        let cache_dir = if static_npu_shapes {
+            let state = npu_cache_state(config, paths);
+            if !state.ready {
+                bail!(
+                    "Intel NPU compiled-model cache is not prepared: {}; run `omaspeak setup cache --prepare` (or rerun full/model setup)",
+                    state.detail,
+                );
+            }
+            state
+                .directory
+                .context("prepared NPU cache path is missing")?
+        } else {
+            paths
+                .cache_dir
+                .join("openvino")
+                .join(device.to_ascii_lowercase())
+        };
         let (frontend, pipeline) = create_pipeline(frontend, graphs, &device, &cache_dir)?;
         Ok(Self {
             frontend,
             pipeline: Mutex::new(pipeline),
+            static_npu_shapes,
         })
     }
 }
@@ -1387,7 +1914,12 @@ impl TtsBackend for DirectOpenvinoBackend {
             .pipeline
             .lock()
             .map_err(|_| anyhow!("OpenVINO model pipeline lock was poisoned"))?;
-        self.frontend.generate(&mut **pipeline, text, speed, voice)
+        if self.static_npu_shapes {
+            self.frontend
+                .generate_npu(&mut **pipeline, text, speed, voice)
+        } else {
+            self.frontend.generate(&mut **pipeline, text, speed, voice)
+        }
     }
 }
 

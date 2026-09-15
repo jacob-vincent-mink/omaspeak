@@ -668,8 +668,11 @@ fn find_versioned_library(directories: &[PathBuf], name: &str) -> Option<PathBuf
 }
 
 fn dependencies_resolve(provider: &Path, effective_dirs: &[PathBuf]) -> bool {
-    let mut command = Command::new("ldd");
-    command.arg(provider);
+    let Some(loader) = native_dynamic_loader() else {
+        return false;
+    };
+    let mut command = Command::new(loader);
+    command.arg("--list").arg(provider);
     let mut loader_dirs = effective_dirs.to_vec();
     if let Some(existing) = env::var_os("LD_LIBRARY_PATH") {
         loader_dirs.extend(env::split_paths(&existing));
@@ -682,6 +685,23 @@ fn dependencies_resolve(provider: &Path, effective_dirs: &[PathBuf]) -> bool {
             && !String::from_utf8_lossy(&output.stdout).contains("not found")
             && !String::from_utf8_lossy(&output.stderr).contains("not found")
     })
+}
+
+fn native_dynamic_loader() -> Option<&'static Path> {
+    #[cfg(target_arch = "x86_64")]
+    const CANDIDATES: &[&str] = &[
+        "/lib64/ld-linux-x86-64.so.2",
+        "/usr/lib64/ld-linux-x86-64.so.2",
+    ];
+    #[cfg(target_arch = "aarch64")]
+    const CANDIDATES: &[&str] = &[
+        "/lib/ld-linux-aarch64.so.1",
+        "/usr/lib/ld-linux-aarch64.so.1",
+    ];
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    const CANDIDATES: &[&str] = &[];
+
+    CANDIDATES.iter().map(Path::new).find(|path| path.is_file())
 }
 
 pub fn augmented_loader_path(report: &LibraryPathReport) -> Result<Option<OsString>> {

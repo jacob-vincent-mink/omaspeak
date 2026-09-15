@@ -44,6 +44,10 @@ enum TopCommand {
     InventoryProbe {
         candidate: String,
     },
+    #[command(name = "__npu-precompile", hide = true)]
+    NpuPrecompile {
+        request: String,
+    },
     Daemon,
     Status {
         #[arg(long)]
@@ -121,6 +125,15 @@ enum SetupCommand {
     /// Check the active model, runtime, audio, launcher, and optional service.
     Check {
         /// Print machine-readable check results.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Inspect or explicitly prepare the compiled OpenVINO Intel NPU cache.
+    Cache {
+        /// Compile every supported static shape and verify a second process loads it from cache.
+        #[arg(long)]
+        prepare: bool,
+        /// Print machine-readable cache state and progress events.
         #[arg(long)]
         json: bool,
     },
@@ -326,9 +339,20 @@ fn main() -> ExitCode {
 }
 
 fn run(cli: Cli) -> Result<()> {
-    let mut paths = AppPaths::discover();
-    let config_path = select_config_path(cli.config, &mut paths);
-    prepare_native_library_path(&cli.command, &config_path)?;
+    run_with_paths(cli, AppPaths::discover())
+}
+
+fn run_with_paths(cli: Cli, mut paths: AppPaths) -> Result<()> {
+    run_with_paths_and_prepare(cli, &mut paths, prepare_native_library_path)
+}
+
+fn run_with_paths_and_prepare(
+    cli: Cli,
+    paths: &mut AppPaths,
+    prepare: impl FnOnce(&TopCommand, &Path) -> Result<()>,
+) -> Result<()> {
+    let config_path = select_config_path(cli.config, paths);
+    prepare(&cli.command, &config_path)?;
     match cli.command {
         TopCommand::InventoryProbe { candidate } => {
             println!(
@@ -339,14 +363,19 @@ fn run(cli: Cli) -> Result<()> {
             );
             Ok(())
         }
-        TopCommand::Daemon => run_daemon(&config_path, &paths),
-        TopCommand::Status { json } => print_status(&config_path, &paths, json),
-        TopCommand::Say(args) => say(&config_path, &paths, args),
-        TopCommand::Benchmark(args) => benchmark(&config_path, &paths, args),
-        TopCommand::Stop => stop(&paths),
-        TopCommand::Voices { json } => voices(&config_path, &paths, json),
-        TopCommand::Config { command } => config_command(command, &config_path, &paths),
-        TopCommand::Setup { command } => setup(command, &config_path, &paths),
+        TopCommand::NpuPrecompile { request } => {
+            let result = omaspeak::runtime_inventory::npu_child(serde_json::from_str(&request)?);
+            println!("{}", serde_json::to_string(&result?)?);
+            Ok(())
+        }
+        TopCommand::Daemon => run_daemon(&config_path, paths),
+        TopCommand::Status { json } => print_status(&config_path, paths, json),
+        TopCommand::Say(args) => say(&config_path, paths, args),
+        TopCommand::Benchmark(args) => benchmark(&config_path, paths, args),
+        TopCommand::Stop => stop(paths),
+        TopCommand::Voices { json } => voices(&config_path, paths, json),
+        TopCommand::Config { command } => config_command(command, &config_path, paths),
+        TopCommand::Setup { command } => setup(command, &config_path, paths),
     }
 }
 
@@ -458,6 +487,14 @@ fn benchmark(config_path: &Path, paths: &AppPaths, args: BenchmarkArgs) -> Resul
     let config = Config::load(config_path)?;
     validate_benchmark_text(&args.text, config.daemon.max_text_bytes)?;
     let engine = Engine::load(&config, paths)?;
+    benchmark_with_engine(&config, &engine, args)
+}
+
+fn benchmark_with_engine(
+    config: &Config,
+    engine: &impl SpeechEngine,
+    args: BenchmarkArgs,
+) -> Result<()> {
     let voice = args.voice.unwrap_or(config.model.voice);
     let iterations = benchmark_syntheses(
         &args.text,
@@ -467,7 +504,7 @@ fn benchmark(config_path: &Path, paths: &AppPaths, args: BenchmarkArgs) -> Resul
         |output| engine.synthesize(&args.text, 1.0, voice, output),
         Instant::now,
     )?;
-    let report = benchmark_report(&config, &engine, &args, iterations)?;
+    let report = benchmark_report(config, engine, &args, iterations)?;
     println!("{}", serde_json::to_string_pretty(&report)?);
     Ok(())
 }
@@ -613,16 +650,37 @@ fn milliseconds(duration: Duration) -> f64 {
 }
 
 fn run_daemon(config_path: &Path, paths: &AppPaths) -> Result<()> {
+    run_daemon_with(config_path, paths, Engine::load, |interrupted| {
+        for signal in [
+            signal_hook::consts::signal::SIGINT,
+            signal_hook::consts::signal::SIGTERM,
+        ] {
+            signal_hook::flag::register(signal, interrupted.clone())
+                .context("install daemon shutdown handler")?;
+        }
+        Ok(())
+    })
+}
+
+fn run_daemon_with<E: SpeechEngine>(
+    config_path: &Path,
+    paths: &AppPaths,
+    load: impl FnOnce(&Config, &AppPaths) -> Result<E>,
+    register_shutdown: impl FnOnce(&Arc<AtomicBool>) -> Result<()>,
+) -> Result<()> {
     let config = Config::load(config_path)?;
-    let engine = Engine::load(&config, paths)?;
+    let engine = load(&config, paths)?;
     let interrupted = Arc::new(AtomicBool::new(false));
-    for signal in [
-        signal_hook::consts::signal::SIGINT,
-        signal_hook::consts::signal::SIGTERM,
-    ] {
-        signal_hook::flag::register(signal, interrupted.clone())
-            .context("install daemon shutdown handler")?;
-    }
+    register_shutdown(&interrupted)?;
+    serve_daemon(&engine, &config, paths, interrupted)
+}
+
+fn serve_daemon(
+    engine: &impl SpeechEngine,
+    config: &Config,
+    paths: &AppPaths,
+    interrupted: Arc<AtomicBool>,
+) -> Result<()> {
     let socket = prepare_daemon_socket(paths)?;
     let listener = UnixListener::bind(&socket)
         .with_context(|| format!("bind daemon socket {}", socket.display()))?;
@@ -634,13 +692,13 @@ fn run_daemon(config_path: &Path, paths: &AppPaths) -> Result<()> {
         .context("make daemon socket interruptible")?;
     eprintln!(
         "omaspeak: ready model={} sample_rate={} load_ms={} socket={}",
-        engine.model_name,
-        engine.sample_rate,
-        engine.load_time.as_millis(),
+        engine.model_name(),
+        engine.sample_rate(),
+        engine.load_milliseconds(),
         socket.display()
     );
 
-    let serve_result = serve_requests(&engine, &config, paths, || {
+    let serve_result = serve_requests(engine, config, paths, || {
         accept_daemon_connection(&listener, &interrupted)
     });
     let serve_result = match serve_result {
@@ -1314,6 +1372,38 @@ fn setup(command: Option<SetupCommand>, config_path: &Path, paths: &AppPaths) ->
     };
     match command {
         SetupCommand::Check { json } => app_setup::print_checks(config_path, paths, json),
+        SetupCommand::Cache { prepare, json } => {
+            let mut config = Config::load(config_path)?;
+            if prepare {
+                if !omaspeak::supertonic::uses_static_npu_shapes(&config) {
+                    bail!(
+                        "NPU cache preparation requires the active runtime/device to be openvino/npu"
+                    );
+                }
+                prepare_npu_for_setup(
+                    &mut config,
+                    paths,
+                    if json {
+                        ProgressFormat::Json
+                    } else {
+                        ProgressFormat::Human
+                    },
+                )?;
+            }
+            let state = omaspeak::supertonic::npu_cache_state(&config, paths);
+            if json {
+                println!("{}", serde_json::to_string_pretty(&state)?);
+            } else {
+                println!("{}", state.detail);
+                if let Some(directory) = &state.directory {
+                    println!("cache: {}", directory.display());
+                }
+            }
+            if state.required && !state.ready {
+                bail!("Intel NPU cache is not ready; run `omaspeak setup cache --prepare`");
+            }
+            Ok(())
+        }
         SetupCommand::Runtime {
             json,
             runtime,
@@ -1326,6 +1416,7 @@ fn setup(command: Option<SetupCommand>, config_path: &Path, paths: &AppPaths) ->
                 canonical_device(runtime, &device)?;
                 apply_runtime_selection(
                     config_path,
+                    paths,
                     runtime,
                     &device,
                     dir.as_deref(),
@@ -1336,6 +1427,7 @@ fn setup(command: Option<SetupCommand>, config_path: &Path, paths: &AppPaths) ->
                 let current = Config::load(config_path)?;
                 apply_runtime_selection(
                     config_path,
+                    paths,
                     current.backend.runtime,
                     &current.backend.device,
                     Some(&dir),
@@ -1343,7 +1435,7 @@ fn setup(command: Option<SetupCommand>, config_path: &Path, paths: &AppPaths) ->
                     omaspeak::runtime_inventory::probe,
                 )
             } else if !json && is_interactive_terminal() {
-                guided_runtime(config_path, &mut TerminalSetupSelector).map(|_| ())
+                guided_runtime(config_path, paths, &mut TerminalSetupSelector).map(|_| ())
             } else {
                 app_setup::print_runtime(config_path, json)
             }
@@ -1401,7 +1493,8 @@ fn setup(command: Option<SetupCommand>, config_path: &Path, paths: &AppPaths) ->
             } else if uninstall {
                 app_setup::systemd::uninstall(paths)
             } else {
-                app_setup::ensure_config(config_path)?;
+                let mut config = app_setup::ensure_config(config_path)?;
+                prepare_npu_for_setup(&mut config, paths, ProgressFormat::Human)?;
                 let path = app_setup::systemd::install(paths, config_path, !no_start)?;
                 println!("installed: {}", path.display());
                 Ok(())
@@ -1439,16 +1532,155 @@ fn setup(command: Option<SetupCommand>, config_path: &Path, paths: &AppPaths) ->
     }
 }
 
+fn prepare_npu_cache_with_progress(
+    config: &mut Config,
+    paths: &AppPaths,
+    progress: ProgressFormat,
+) -> Result<()> {
+    prepare_npu_cache_with_progress_with(config, paths, progress, |config, paths| {
+        omaspeak::runtime_inventory::prepare_npu_cache(config, paths)
+    })
+}
+
+fn prepare_npu_cache_with_progress_with(
+    config: &mut Config,
+    paths: &AppPaths,
+    progress: ProgressFormat,
+    prepare: impl FnOnce(&mut Config, &AppPaths) -> Result<Option<omaspeak::supertonic::NpuCacheState>>,
+) -> Result<()> {
+    if !omaspeak::supertonic::uses_static_npu_shapes(config) {
+        return Ok(());
+    }
+    match progress {
+        ProgressFormat::Human => {
+            println!(
+                "Compiling the fixed Supertonic shape set for Intel NPU. This can take several minutes; setup will wait."
+            );
+        }
+        ProgressFormat::Json => println!(
+            "{}",
+            serde_json::to_string(&json!({
+                "event": "npu-cache-compile-start",
+                "model": config.model.name,
+                "text_bucket": omaspeak::supertonic::NPU_TEXT_BUCKET,
+                "latent_buckets": omaspeak::supertonic::NPU_LATENT_BUCKETS,
+            }))?
+        ),
+    }
+    let state =
+        prepare(config, paths)?.context("Intel NPU cache preparation was unexpectedly skipped")?;
+    match progress {
+        ProgressFormat::Human => println!(
+            "Intel NPU cache ready: {} ({})",
+            state
+                .directory
+                .as_deref()
+                .map_or_else(|| "(unknown)".into(), |path| path.display().to_string()),
+            state.detail
+        ),
+        ProgressFormat::Json => println!(
+            "{}",
+            serde_json::to_string(&json!({
+                "event": "npu-cache-compile-complete",
+                "model": config.model.name,
+                "cache": state,
+            }))?
+        ),
+    }
+    Ok(())
+}
+
+fn npu_model_ready(config: &Config, paths: &AppPaths) -> Result<bool> {
+    npu_model_ready_with(config, paths, app_setup::model::verify_at)
+}
+
+fn npu_model_ready_with(
+    config: &Config,
+    paths: &AppPaths,
+    verify: impl FnOnce(&Path, &omaspeak::catalog::ModelSpec) -> Result<()>,
+) -> Result<bool> {
+    if !omaspeak::supertonic::uses_static_npu_shapes(config) {
+        return Ok(false);
+    }
+    if let Some(spec) = omaspeak::catalog::model(&config.model.name) {
+        if verify(&config.model_directory(paths), spec).is_err() {
+            return Ok(false);
+        }
+        if !spec.npu_capable {
+            bail!(
+                "installed model {} is not validated for Intel NPU; select an NPU-capable model during model or full setup",
+                spec.id
+            );
+        }
+        return Ok(true);
+    }
+    if !config.model_directory(paths).is_dir() {
+        return Ok(false);
+    }
+    bail!(
+        "custom model {} cannot be assumed Intel NPU compatible; select an NPU-capable catalog model",
+        config.model.name
+    )
+}
+
+fn prepare_npu_for_setup(
+    config: &mut Config,
+    paths: &AppPaths,
+    progress: ProgressFormat,
+) -> Result<()> {
+    if !omaspeak::supertonic::uses_static_npu_shapes(config) {
+        return Ok(());
+    }
+    if !npu_model_ready(config, paths)? {
+        bail!(
+            "an installed, verified NPU-capable model is required before Intel NPU cache preparation"
+        );
+    }
+    prepare_npu_cache_with_progress(config, paths, progress)
+}
+
+fn prepare_npu_for_runtime_selection(
+    config: &mut Config,
+    paths: &AppPaths,
+    progress: ProgressFormat,
+) -> Result<()> {
+    if !omaspeak::supertonic::uses_static_npu_shapes(config) {
+        return Ok(());
+    }
+    if npu_model_ready(config, paths)? {
+        return prepare_npu_cache_with_progress(config, paths, progress);
+    }
+    match progress {
+        ProgressFormat::Human => println!(
+            "Intel NPU runtime configured; cache preparation is deferred until an NPU-capable model is installed."
+        ),
+        ProgressFormat::Json => println!(
+            "{}",
+            serde_json::to_string(&json!({
+                "event": "npu-cache-deferred",
+                "reason": "an NPU-capable model is not installed",
+                "next": "omaspeak setup model",
+            }))?
+        ),
+    }
+    Ok(())
+}
+
 fn apply_runtime_selection(
     config_path: &Path,
+    paths: &AppPaths,
     runtime: Runtime,
     device: &str,
     directory: Option<&Path>,
     apply: bool,
     probe: impl FnOnce(&omaspeak::backend::BackendConfig, &Path) -> omaspeak::runtime_inventory::Probe,
 ) -> Result<()> {
-    let candidate = runtime_configuration_candidate(config_path, runtime, device, directory)?;
-    let evidence = omaspeak::runtime_inventory::apply_with(&candidate, config_path, apply, probe)?;
+    let mut candidate = runtime_configuration_candidate(config_path, runtime, device, directory)?;
+    let evidence = omaspeak::runtime_inventory::apply_with(&candidate, config_path, false, probe)?;
+    if apply {
+        prepare_npu_for_runtime_selection(&mut candidate, paths, ProgressFormat::Json)?;
+        candidate.save(config_path)?;
+    }
     println!(
         "{}",
         serde_json::to_string_pretty(
@@ -1498,7 +1730,7 @@ fn guided_setup(
     };
     match selected {
         0 => guided_full_setup(config_path, paths, operations, selector),
-        1 => guided_runtime(config_path, selector).map(|_| ()),
+        1 => guided_runtime(config_path, paths, selector).map(|_| ()),
         2 => guided_model(config_path, paths, operations, selector).map(|_| ()),
         3 => app_setup::print_checks(config_path, paths, false),
         _ => bail!("interactive setup returned an invalid choice"),
@@ -1625,6 +1857,7 @@ fn guided_full_setup_with_validator(
 
 fn guided_runtime(
     config_path: &Path,
+    paths: &AppPaths,
     selector: &mut impl SetupSelector,
 ) -> Result<Option<(Runtime, String)>> {
     let Some((runtime, device, library_dir)) = choose_runtime(config_path, selector)? else {
@@ -1633,9 +1866,12 @@ fn guided_runtime(
     };
     if runtime == Runtime::Openvino {
         let config = Config::load(config_path)?;
-        let compatible = omaspeak::catalog::model(&config.model.name).is_some_and(|model| {
-            model.openvino_capable && (!device.eq_ignore_ascii_case("npu") || model.npu_capable)
-        });
+        let installed = omaspeak::catalog::model(&config.model.name)
+            .is_some_and(|model| app_setup::model::verify(paths, model).is_ok());
+        let compatible = !installed
+            || omaspeak::catalog::model(&config.model.name).is_some_and(|model| {
+                model.openvino_capable && (!device.eq_ignore_ascii_case("npu") || model.npu_capable)
+            });
         if !compatible {
             bail!(
                 "model {} is not compatible with direct OpenVINO on {device}; run `omaspeak setup` and choose Full setup to select a compatible Supertonic model",
@@ -1650,7 +1886,7 @@ fn guided_runtime(
         ),
         MenuItem::available("Cancel", "Leave the current configuration unchanged."),
     ];
-    let candidate =
+    let mut candidate =
         runtime_configuration_candidate(config_path, runtime, &device, library_dir.as_deref())?;
     let evidence = selector.probe_runtime(&candidate, config_path)?;
     let summary = format!(
@@ -1665,6 +1901,7 @@ fn guided_runtime(
         println!("Runtime setup cancelled; no changes were made.");
         return Ok(None);
     }
+    prepare_npu_for_runtime_selection(&mut candidate, paths, ProgressFormat::Human)?;
     candidate.save(config_path)?;
     println!("Runtime configured: {} on {device}", runtime_name(runtime));
     Ok(Some((runtime, device)))
@@ -2131,6 +2368,7 @@ fn guided_model(
     let mut config = app_setup::ensure_config(config_path)?;
     spec.activate(&mut config);
     config.model.voice = voice.id;
+    prepare_npu_for_setup(&mut config, paths, ProgressFormat::Human)?;
     config.save(config_path)?;
     println!(
         "Active model: {} ({})",
@@ -2324,8 +2562,39 @@ fn setup_all(
     service_is_active: impl FnOnce() -> bool,
     reload_service: impl FnOnce(bool) -> Result<bool>,
 ) -> Result<()> {
+    setup_all_with_validator(
+        config_path,
+        paths,
+        operations,
+        model,
+        voice,
+        archive,
+        accepted_license,
+        progress_format,
+        install_launcher,
+        service_is_active,
+        reload_service,
+        validate_runtime_configuration,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn setup_all_with_validator(
+    config_path: &Path,
+    paths: &AppPaths,
+    operations: &impl ModelSetupOperations,
+    model: &str,
+    voice: Option<i32>,
+    archive: Option<&Path>,
+    accepted_license: Option<&str>,
+    progress_format: ProgressFormat,
+    install_launcher: impl FnOnce(&AppPaths) -> Result<PathBuf>,
+    service_is_active: impl FnOnce() -> bool,
+    reload_service: impl FnOnce(bool) -> Result<bool>,
+    validate_runtime: impl FnOnce(&Config, &Path, bool) -> Result<()>,
+) -> Result<()> {
     let config = Config::load(config_path)?;
-    validate_runtime_configuration(&config, config_path, false)?;
+    validate_runtime(&config, config_path, false)?;
     setup_all_with_config(
         config,
         config_path,
@@ -2346,6 +2615,42 @@ fn setup_all(
 
 #[allow(clippy::too_many_arguments)]
 fn setup_all_with_config(
+    config: Config,
+    config_path: &Path,
+    paths: &AppPaths,
+    operations: &impl ModelSetupOperations,
+    model: &str,
+    voice: Option<i32>,
+    archive: Option<&Path>,
+    accepted_license: Option<&str>,
+    progress_format: ProgressFormat,
+    install_launcher: impl FnOnce(&AppPaths) -> Result<PathBuf>,
+    service_is_active: impl FnOnce() -> bool,
+    reload_service: impl FnOnce(bool) -> Result<bool>,
+    check_human: impl FnOnce(&Path, &AppPaths) -> Result<()>,
+    check_json: impl FnOnce(&Path, &AppPaths) -> Result<()>,
+) -> Result<()> {
+    setup_all_with_config_and_preparer(
+        config,
+        config_path,
+        paths,
+        operations,
+        model,
+        voice,
+        archive,
+        accepted_license,
+        progress_format,
+        install_launcher,
+        service_is_active,
+        reload_service,
+        check_human,
+        check_json,
+        prepare_npu_for_setup,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn setup_all_with_config_and_preparer(
     mut config: Config,
     config_path: &Path,
     paths: &AppPaths,
@@ -2360,6 +2665,7 @@ fn setup_all_with_config(
     reload_service: impl FnOnce(bool) -> Result<bool>,
     check_human: impl FnOnce(&Path, &AppPaths) -> Result<()>,
     check_json: impl FnOnce(&Path, &AppPaths) -> Result<()>,
+    prepare_npu: impl FnOnce(&mut Config, &AppPaths, ProgressFormat) -> Result<()>,
 ) -> Result<()> {
     let spec = operations.resolve(model)?;
     if let Some(voice) = voice
@@ -2376,6 +2682,7 @@ fn setup_all_with_config(
         if let Some(voice) = voice {
             config.model.voice = voice;
         }
+        prepare_npu(&mut config, paths, progress_format)?;
         config.save(config_path)?;
         let launcher = install_launcher(paths)?;
         match progress_format {
@@ -2529,6 +2836,7 @@ fn setup_model(
         operations.verify(paths, spec)?;
         let mut config = app_setup::ensure_config(config_path)?;
         spec.activate(&mut config);
+        prepare_npu_for_setup(&mut config, paths, progress_format)?;
         config.save(config_path)?;
         println!("active model: {}", spec.id);
         return Ok(());
@@ -2555,6 +2863,7 @@ fn setup_model(
         if !no_activate {
             let mut config = app_setup::ensure_config(config_path)?;
             spec.activate(&mut config);
+            prepare_npu_for_setup(&mut config, paths, progress_format)?;
             config.save(config_path)?;
         }
         match progress_format {

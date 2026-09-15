@@ -1,0 +1,146 @@
+{
+  "default-cpu": {
+    "cold-import": {
+      "process_elapsed_seconds": 0.86667,
+      "model_load_milliseconds": 432,
+      "p50_synthesis_milliseconds": 394.44111,
+      "p95_synthesis_milliseconds": 394.44111,
+      "p50_real_time_factor": 0.1211163614774366,
+      "backend": {
+        "effective_runtime": "default",
+        "fallback_used": false,
+        "kind": "onnxruntime",
+        "model": "supertonic-3-npu",
+        "placement_evidence": "runtime-loaded ONNX Runtime CPU engine initialized",
+        "placement_verified": true,
+        "requested_device": "cpu",
+        "requested_runtime": "default"
+      }
+    },
+    "hot": {
+      "process_elapsed_seconds": 3.39313,
+      "model_load_milliseconds": 477,
+      "p50_synthesis_milliseconds": 395.769777,
+      "p95_synthesis_milliseconds": 406.055895,
+      "p50_real_time_factor": 0.12152433952175135,
+      "backend": {
+        "effective_runtime": "default",
+        "fallback_used": false,
+        "kind": "onnxruntime",
+        "model": "supertonic-3-npu",
+        "placement_evidence": "runtime-loaded ONNX Runtime CPU engine initialized",
+        "placement_verified": true,
+        "requested_device": "cpu",
+        "requested_runtime": "default"
+      }
+    }
+  },
+  "openvino-cpu": {
+    "cold-import": {
+      "process_elapsed_seconds": 2.111486,
+      "model_load_milliseconds": 44,
+      "p50_synthesis_milliseconds": 1979.462795,
+      "p95_synthesis_milliseconds": 1979.462795,
+      "p50_real_time_factor": 0.6078102036837818,
+      "backend": {
+        "effective_runtime": "openvino",
+        "fallback_used": false,
+        "kind": "openvino",
+        "model": "supertonic-3-npu",
+        "placement_evidence": "OpenVINO EXECUTION_DEVICES matched the requested device for every compiled graph",
+        "placement_verified": true,
+        "requested_device": "cpu",
+        "requested_runtime": "openvino"
+      }
+    },
+    "hot": {
+      "process_elapsed_seconds": 3.374525,
+      "model_load_milliseconds": 51,
+      "p50_synthesis_milliseconds": 324.342032,
+      "p95_synthesis_milliseconds": 326.839847,
+      "p50_real_time_factor": 0.09959186756684238,
+      "backend": {
+        "effective_runtime": "openvino",
+        "fallback_used": false,
+        "kind": "openvino",
+        "model": "supertonic-3-npu",
+        "placement_evidence": "OpenVINO EXECUTION_DEVICES matched the requested device for every compiled graph",
+        "placement_verified": true,
+        "requested_device": "cpu",
+        "requested_runtime": "openvino"
+      }
+    }
+  },
+  "openvino-gpu": {
+    "cold-import": {
+      "process_elapsed_seconds": 10.729641,
+      "model_load_milliseconds": 50,
+      "p50_synthesis_milliseconds": 10357.915911,
+      "p95_synthesis_milliseconds": 10357.915911,
+      "p50_real_time_factor": 3.1804826013940786,
+      "backend": {
+        "effective_runtime": "openvino",
+        "fallback_used": false,
+        "kind": "openvino",
+        "model": "supertonic-3-npu",
+        "placement_evidence": "OpenVINO EXECUTION_DEVICES matched the requested device for every compiled graph",
+        "placement_verified": true,
+        "requested_device": "gpu",
+        "requested_runtime": "openvino"
+      }
+    },
+    "hot": {
+      "process_elapsed_seconds": 4.840978,
+      "model_load_milliseconds": 108,
+      "p50_synthesis_milliseconds": 131.626727,
+      "p95_synthesis_milliseconds": 195.026166,
+      "p50_real_time_factor": 0.040417060603606614,
+      "backend": {
+        "effective_runtime": "openvino",
+        "fallback_used": false,
+        "kind": "openvino",
+        "model": "supertonic-3-npu",
+        "placement_evidence": "OpenVINO EXECUTION_DEVICES matched the requested device for every compiled graph",
+        "placement_verified": true,
+        "requested_device": "gpu",
+        "requested_runtime": "openvino"
+      }
+    }
+  },
+  "openvino-npu": {
+    "cold-import": {
+      "process_elapsed_seconds": 2.289021,
+      "model_load_milliseconds": 350,
+      "p50_synthesis_milliseconds": 1818.847187,
+      "p95_synthesis_milliseconds": 1818.847187,
+      "p50_real_time_factor": 0.5621594638289833,
+      "backend": {
+        "effective_runtime": "openvino",
+        "fallback_used": false,
+        "kind": "openvino",
+        "model": "supertonic-3-npu",
+        "placement_evidence": "OpenVINO EXECUTION_DEVICES matched the requested device for every compiled graph",
+        "placement_verified": true,
+        "requested_device": "npu",
+        "requested_runtime": "openvino"
+      }
+    },
+    "hot": {
+      "process_elapsed_seconds": 2.614661,
+      "model_load_milliseconds": 275,
+      "p50_synthesis_milliseconds": 100.461553,
+      "p95_synthesis_milliseconds": 111.72300200000001,
+      "p50_real_time_factor": 0.0310501141456844,
+      "backend": {
+        "effective_runtime": "openvino",
+        "fallback_used": false,
+        "kind": "openvino",
+        "model": "supertonic-3-npu",
+        "placement_evidence": "OpenVINO EXECUTION_DEVICES matched the requested device for every compiled graph",
+        "placement_verified": true,
+        "requested_device": "npu",
+        "requested_runtime": "openvino"
+      }
+    }
+  }
+}

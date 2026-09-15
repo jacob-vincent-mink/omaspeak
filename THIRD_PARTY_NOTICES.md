@@ -3,12 +3,6 @@
 The MIT license in `LICENSE` applies to Omaspeak's project-authored source. It
 does not relicense the components and model files described below.
 
-## Omarchy-derived mark
-
-The open corner frame in `assets/omaspeak-mark*.svg` is adapted from the
-[Omarchy](https://github.com/basecamp/omarchy) icon, copyright David Heinemeier
-Hansson, under the MIT License. See `licenses/OMARCHY-LICENSE`.
-
 ## Supertonic reference code
 
 Portions of `src/supertonic.rs` are adapted from the Supertonic reference

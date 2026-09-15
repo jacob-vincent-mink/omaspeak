@@ -9,6 +9,7 @@ fn fixture(name: &str) -> (std::path::PathBuf, AppPaths) {
     let paths = AppPaths {
         config_file: root.join("config/omaspeak/config.toml"),
         data_dir: root.join("data/omaspeak"),
+        cache_dir: root.join("cache/omaspeak"),
         state_dir: root.join("state/omaspeak"),
         runtime_dir: root.join("run/omaspeak"),
     };
@@ -186,6 +187,64 @@ fn injected_checks_cover_healthy_runtime_device_and_engine_boundaries() {
 }
 
 #[test]
+fn checks_require_a_valid_compiled_cache_for_an_active_npu() {
+    let (root, paths) = fixture("npu-cache-check");
+    let model = root.join("custom-npu-model");
+    fs::create_dir_all(&model).unwrap();
+    let mut config = Config::default();
+    config.backend.runtime = crate::backend::Runtime::Openvino;
+    config.backend.device = "npu".into();
+    config.model.name = "custom".into();
+    config.model.directory = model.display().to_string();
+    for name in [
+        &config.model.duration_predictor,
+        &config.model.text_encoder,
+        &config.model.vector_estimator,
+        &config.model.vocoder,
+        &config.model.tts_json,
+        &config.model.unicode_indexer,
+    ] {
+        fs::write(model.join(name), name.as_bytes()).unwrap();
+    }
+    let mut voice = [1_i64; 6]
+        .into_iter()
+        .flat_map(i64::to_le_bytes)
+        .collect::<Vec<_>>();
+    voice.extend([0.0_f32, 0.0].into_iter().flat_map(f32::to_le_bytes));
+    fs::write(model.join(&config.model.voice_style), voice).unwrap();
+    config.save(&paths.config_file).unwrap();
+    let ready_probe = |_: &_, _: &_| crate::runtime_inventory::Probe {
+        loadable: true,
+        device_accessible: true,
+        ready: true,
+        ..Default::default()
+    };
+    let checks = checks_with(&paths.config_file, &paths, ready_probe);
+    assert!(
+        checks
+            .iter()
+            .any(|check| check.name == "npu-cache" && !check.ok)
+    );
+
+    let directory = crate::supertonic::npu_cache_directory(&config, &paths).unwrap();
+    fs::create_dir_all(&directory).unwrap();
+    for index in 0..crate::supertonic::NPU_COMPILED_MODELS {
+        fs::write(
+            directory.join(format!("compiled-{index}.blob")),
+            b"compiled",
+        )
+        .unwrap();
+    }
+    crate::supertonic::write_npu_cache_manifest(&config, &paths, &directory).unwrap();
+    let checks = checks_with(&paths.config_file, &paths, ready_probe);
+    assert!(
+        checks
+            .iter()
+            .any(|check| check.name == "npu-cache" && check.ok)
+    );
+}
+
+#[test]
 fn environment_checks_cover_audio_launcher_and_optional_service_states() {
     let (_, paths) = fixture("environment-states");
     let service = systemd::service_path(&paths);
@@ -225,7 +284,10 @@ fn environment_checks_cover_audio_launcher_and_optional_service_states() {
         let mut result = Vec::new();
         append_environment_checks(&mut result, &paths, environment);
         assert_eq!(result.len(), 3);
-        assert_eq!(result[0].ok, environment.audio_available);
+        assert!(result[0].ok);
+        if !environment.audio_available {
+            assert!(result[0].detail.contains("optional"));
+        }
         assert_eq!(result[1].ok, environment.launcher_installed);
         assert!(result[2].detail.contains(expected));
     }

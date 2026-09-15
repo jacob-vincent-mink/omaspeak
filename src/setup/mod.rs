@@ -155,6 +155,28 @@ fn checks_with(
             ));
         }
     }
+    let npu_cache = crate::supertonic::npu_cache_state(&config, paths);
+    if npu_cache.required {
+        if npu_cache.ready {
+            result.push(ok(
+                "npu-cache",
+                format!(
+                    "{} at {}",
+                    npu_cache.detail,
+                    npu_cache
+                        .directory
+                        .as_deref()
+                        .map_or_else(|| "(unknown)".into(), |path| path.display().to_string())
+                ),
+            ));
+        } else {
+            result.push(fail(
+                "npu-cache",
+                npu_cache.detail,
+                "rerun model or full setup to compile every supported Intel NPU shape before synthesis",
+            ));
+        }
+    }
     match runtime_probe.ready {
         true => {
             result.push(ok(
@@ -198,10 +220,9 @@ fn append_environment_checks(
     result.push(if environment.audio_available {
         ok("audio", "pw-play or aplay is available")
     } else {
-        fail(
+        ok(
             "audio",
-            "no playback command found",
-            "install PipeWire tools or ALSA utilities; --no-play still works",
+            "no playback command found (optional; WAV output and --no-play remain available)",
         )
     });
     let launcher = menu::launcher_path(paths);

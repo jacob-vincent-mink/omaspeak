@@ -10,6 +10,7 @@ fn fixture(name: &str) -> (Config, AppPaths) {
     let paths = AppPaths {
         config_file: root.join("config.toml"),
         data_dir: root.join("data"),
+        cache_dir: root.join("cache"),
         state_dir: root.join("state"),
         runtime_dir: root.join("run"),
     };

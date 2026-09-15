@@ -1,0 +1,17 @@
+# Changelog
+
+## Unreleased
+
+## 0.0.1-rc - 2026-09-14
+
+- Added local Supertonic 3 speech synthesis with ten selectable speaker styles.
+- Added on-demand synthesis, a persistent daemon, WAV output, and JSON benchmarks.
+- Added guided and scriptable setup for models, runtimes, and diagnostics.
+- Added one runtime-neutral executable with packaged CPU support and external
+  direct OpenVINO and ONNX Runtime CUDA selection.
+- Added setup-time compilation and cross-process verification of the fixed
+  12-graph Intel NPU cache plan.
+- Added Intel CPU, iGPU, NPU, and NVIDIA GB10 validation evidence.
+
+Known limits: the release artifact targets Linux x86-64 with glibc 2.34 or
+newer, and accelerator stacks are external.

@@ -5,6 +5,7 @@ fn derives_runtime_files() {
     let paths = AppPaths {
         config_file: "/cfg/omaspeak/config.toml".into(),
         data_dir: "/data/omaspeak".into(),
+        cache_dir: "/cache/omaspeak".into(),
         state_dir: "/state/omaspeak".into(),
         runtime_dir: "/run/omaspeak".into(),
     };
@@ -22,6 +23,7 @@ fn discovery_honors_xdg_and_has_stable_fallbacks() {
             "HOME" => Some("/home/test".into()),
             "XDG_CONFIG_HOME" => Some("/cfg".into()),
             "XDG_DATA_HOME" => Some("/data".into()),
+            "XDG_CACHE_HOME" => Some("/cache".into()),
             "XDG_STATE_HOME" => Some("/state".into()),
             "XDG_RUNTIME_DIR" => Some("/run".into()),
             _ => None,
@@ -33,6 +35,7 @@ fn discovery_honors_xdg_and_has_stable_fallbacks() {
         PathBuf::from("/cfg/omaspeak/config.toml")
     );
     assert_eq!(custom.data_dir, PathBuf::from("/data/omaspeak"));
+    assert_eq!(custom.cache_dir, PathBuf::from("/cache/omaspeak"));
     assert_eq!(custom.state_dir, PathBuf::from("/state/omaspeak"));
     assert_eq!(custom.runtime_dir, PathBuf::from("/run/omaspeak"));
 
@@ -47,6 +50,10 @@ fn discovery_honors_xdg_and_has_stable_fallbacks() {
     assert_eq!(
         home_defaults.data_dir,
         PathBuf::from("/home/test/.local/share/omaspeak")
+    );
+    assert_eq!(
+        home_defaults.cache_dir,
+        PathBuf::from("/home/test/.cache/omaspeak")
     );
     assert_eq!(
         home_defaults.state_dir,

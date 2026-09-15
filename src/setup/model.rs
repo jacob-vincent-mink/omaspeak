@@ -36,6 +36,10 @@ pub fn verify(paths: &AppPaths, spec: &ModelSpec) -> Result<()> {
     verify_directory(&model_directory(paths, spec), spec)
 }
 
+pub fn verify_at(directory: &Path, spec: &ModelSpec) -> Result<()> {
+    verify_directory(directory, spec)
+}
+
 pub fn install(
     paths: &AppPaths,
     spec: &ModelSpec,

@@ -2,6 +2,101 @@ use super::*;
 use std::fs;
 
 #[test]
+fn production_npu_cache_entry_point_skips_non_npu_configurations() {
+    let root = env::temp_dir().join(format!("omaspeak-runtime-npu-skip-{}", std::process::id()));
+    let paths = crate::paths::AppPaths {
+        config_file: root.join("config.toml"),
+        data_dir: root.join("data"),
+        cache_dir: root.join("cache"),
+        state_dir: root.join("state"),
+        runtime_dir: root.join("run"),
+    };
+    let mut config = Config::default();
+    assert!(prepare_npu_cache(&mut config, &paths).unwrap().is_none());
+    config.backend.runtime = Runtime::Openvino;
+    config.backend.device = "cpu".into();
+    assert!(prepare_npu_cache(&mut config, &paths).unwrap().is_none());
+}
+
+#[test]
+fn npu_child_orchestration_forwards_resolved_runtime_and_cache_policy() {
+    let root = env::temp_dir().join(format!("omaspeak-runtime-npu-child-{}", std::process::id()));
+    let paths = crate::paths::AppPaths {
+        config_file: root.join("config.toml"),
+        data_dir: root.join("data"),
+        cache_dir: root.join("cache"),
+        state_dir: root.join("state"),
+        runtime_dir: root.join("run"),
+    };
+    let cache_dir = root.join("compiled");
+    let request = NpuPreparationRequest {
+        config: Config::default(),
+        paths: paths.clone(),
+        cache_dir: cache_dir.clone(),
+        require_cache_hits: true,
+    };
+    let runtime_paths = runtime::OpenvinoRuntimePaths {
+        library: root.join("libopenvino_c.so"),
+        plugins: root.join("plugins.xml"),
+    };
+    let result = npu_child_with(
+        request,
+        |backend, path| {
+            assert_eq!(backend.runtime, Runtime::Default);
+            assert_eq!(path, paths.config_file);
+            Ok(runtime_paths.clone())
+        },
+        |_, actual_paths, runtime, actual_cache, require_hits| {
+            assert_eq!(actual_paths.config_file, paths.config_file);
+            assert_eq!(runtime.library, runtime_paths.library);
+            assert_eq!(actual_cache, cache_dir);
+            assert!(require_hits);
+            Ok(crate::supertonic::NpuNativePreparation {
+                compiled_models: crate::supertonic::NPU_COMPILED_MODELS,
+                cache_blobs: Vec::new(),
+                loaded_from_cache_required: true,
+            })
+        },
+    )
+    .unwrap();
+    assert!(result.loaded_from_cache_required);
+
+    let error = npu_child_with(
+        NpuPreparationRequest {
+            config: Config::default(),
+            paths,
+            cache_dir,
+            require_cache_hits: false,
+        },
+        |_, _| bail!("injected resolution failure"),
+        |_, _, _, _, _| unreachable!(),
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("resolution failure"));
+}
+
+#[test]
+fn production_npu_child_rejects_a_non_npu_request_before_model_execution() {
+    let root = env::temp_dir().join(format!(
+        "omaspeak-runtime-production-child-{}",
+        std::process::id()
+    ));
+    let request = NpuPreparationRequest {
+        config: Config::default(),
+        paths: crate::paths::AppPaths {
+            config_file: root.join("config.toml"),
+            data_dir: root.join("data"),
+            cache_dir: root.join("cache"),
+            state_dir: root.join("state"),
+            runtime_dir: root.join("run"),
+        },
+        cache_dir: root.join("compiled"),
+        require_cache_hits: false,
+    };
+    assert!(npu_child(request).is_err());
+}
+
+#[test]
 fn initialized_ort_core_cannot_silently_change_during_reload() {
     let core = test_ort_library();
     if !core.is_file() {
@@ -58,6 +153,244 @@ fn candidate_transactions_preserve_bytes_until_successful_apply() {
     };
     assert!(!probe(&missing, &root.join("absent/config.toml")).ready);
     assert!(!root.join("absent").exists());
+}
+
+fn npu_cache_fixture(name: &str) -> (Config, crate::paths::AppPaths) {
+    let root = env::temp_dir().join(format!(
+        "omaspeak-npu-cache-transaction-{}-{name}",
+        std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&root);
+    let paths = crate::paths::AppPaths {
+        config_file: root.join("config/config.toml"),
+        data_dir: root.join("data"),
+        cache_dir: root.join("cache"),
+        state_dir: root.join("state"),
+        runtime_dir: root.join("run"),
+    };
+    let mut config = Config::default();
+    config.backend.runtime = Runtime::Openvino;
+    config.backend.device = "npu".into();
+    let model = config.model_directory(&paths);
+    fs::create_dir_all(&model).unwrap();
+    for file in [
+        &config.model.duration_predictor,
+        &config.model.text_encoder,
+        &config.model.vector_estimator,
+        &config.model.vocoder,
+        &config.model.tts_json,
+        &config.model.unicode_indexer,
+        &config.model.voice_style,
+    ] {
+        fs::write(model.join(file), file.as_bytes()).unwrap();
+    }
+    (config, paths)
+}
+
+fn fake_npu_blobs(cache_dir: &Path) -> anyhow::Result<Vec<PathBuf>> {
+    fs::create_dir_all(cache_dir.join("nested"))?;
+    let mut blobs = Vec::new();
+    for index in 0..crate::supertonic::NPU_COMPILED_MODELS {
+        let relative = PathBuf::from(format!("nested/model-{index}.blob"));
+        fs::write(cache_dir.join(&relative), b"compiled")?;
+        blobs.push(relative);
+    }
+    Ok(blobs)
+}
+
+fn add_fake_npu_blobs(cache_dir: &Path, start: usize, end: usize) -> anyhow::Result<Vec<PathBuf>> {
+    fs::create_dir_all(cache_dir.join("nested"))?;
+    for index in start..end {
+        fs::write(
+            cache_dir.join(format!("nested/model-{index}.blob")),
+            b"compiled",
+        )?;
+    }
+    Ok((0..end)
+        .map(|index| PathBuf::from(format!("nested/model-{index}.blob")))
+        .collect())
+}
+
+#[test]
+fn npu_cache_transaction_verifies_cache_hits_and_restores_previous_data_on_failure() {
+    let (config, paths) = npu_cache_fixture("rollback");
+    let target = crate::supertonic::npu_cache_directory(&config, &paths).unwrap();
+    fs::create_dir_all(&target).unwrap();
+    fs::write(target.join("keep"), b"previous cache").unwrap();
+    let calls = std::cell::RefCell::new(Vec::new());
+    let error = prepare_npu_cache_with(&config, &paths, |request| {
+        calls.borrow_mut().push(request.require_cache_hits);
+        if request.require_cache_hits {
+            bail!("injected cross-process cache miss");
+        }
+        let cache_blobs = fake_npu_blobs(&request.cache_dir)?;
+        Ok(crate::supertonic::NpuNativePreparation {
+            compiled_models: 12,
+            cache_blobs,
+            loaded_from_cache_required: false,
+        })
+    })
+    .unwrap_err();
+    assert!(format!("{error:#}").contains("cache miss"));
+    assert_eq!(&*calls.borrow(), &[false, true]);
+    assert_eq!(fs::read(target.join("keep")).unwrap(), b"previous cache");
+    assert!(!target.join("omaspeak-npu-cache.json").exists());
+    assert!(
+        fs::read_dir(target.parent().unwrap())
+            .unwrap()
+            .all(|entry| !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with('.'))
+    );
+}
+
+#[test]
+fn npu_cache_transaction_publishes_only_after_build_and_cache_hit_verification() {
+    let (config, paths) = npu_cache_fixture("success");
+    let calls = std::cell::RefCell::new(Vec::new());
+    let state = prepare_npu_cache_with(&config, &paths, |request| {
+        calls.borrow_mut().push(request.require_cache_hits);
+        if !request.require_cache_hits {
+            let _ = fake_npu_blobs(&request.cache_dir)?;
+        } else {
+            assert!(request.cache_dir.join("omaspeak-npu-cache.json").is_file());
+            assert!(request.cache_dir.join("nested/model-0.blob").is_file());
+        }
+        Ok(crate::supertonic::NpuNativePreparation {
+            compiled_models: 12,
+            cache_blobs: (0..crate::supertonic::NPU_COMPILED_MODELS)
+                .map(|index| PathBuf::from(format!("nested/model-{index}.blob")))
+                .collect(),
+            loaded_from_cache_required: request.require_cache_hits,
+        })
+    })
+    .unwrap();
+    assert!(state.ready, "{}", state.detail);
+    assert_eq!(&*calls.borrow(), &[false, true]);
+}
+
+#[test]
+fn npu_cache_transaction_reenters_a_partial_static_plan_before_publication() {
+    let (config, paths) = npu_cache_fixture("multi-pass");
+    let calls = std::cell::RefCell::new(Vec::new());
+    let state = prepare_npu_cache_with(&config, &paths, |request| {
+        calls.borrow_mut().push(request.require_cache_hits);
+        let pass = calls.borrow().len();
+        let cache_blobs = if request.require_cache_hits {
+            crate::supertonic::cache_blobs(&request.cache_dir)?
+        } else if pass == 1 {
+            add_fake_npu_blobs(&request.cache_dir, 0, 5)?
+        } else {
+            add_fake_npu_blobs(
+                &request.cache_dir,
+                5,
+                crate::supertonic::NPU_COMPILED_MODELS,
+            )?
+        };
+        Ok(crate::supertonic::NpuNativePreparation {
+            compiled_models: crate::supertonic::NPU_COMPILED_MODELS,
+            cache_blobs,
+            loaded_from_cache_required: request.require_cache_hits,
+        })
+    })
+    .unwrap();
+    assert!(state.ready, "{}", state.detail);
+    assert_eq!(&*calls.borrow(), &[false, false, true]);
+    assert_eq!(state.blobs.len(), crate::supertonic::NPU_COMPILED_MODELS);
+}
+
+#[test]
+fn npu_cache_transaction_revalidates_an_existing_ready_cache() {
+    let (config, paths) = npu_cache_fixture("ready-idempotent");
+    let target = crate::supertonic::npu_cache_directory(&config, &paths).unwrap();
+    fake_npu_blobs(&target).unwrap();
+    crate::supertonic::write_npu_cache_manifest(&config, &paths, &target).unwrap();
+    let calls = std::cell::Cell::new(0);
+    let state = prepare_npu_cache_with(&config, &paths, |request| {
+        calls.set(calls.get() + 1);
+        assert!(request.require_cache_hits);
+        Ok(crate::supertonic::NpuNativePreparation {
+            compiled_models: crate::supertonic::NPU_COMPILED_MODELS,
+            cache_blobs: crate::supertonic::cache_blobs(&request.cache_dir)?,
+            loaded_from_cache_required: true,
+        })
+    })
+    .unwrap();
+    assert!(state.ready);
+    assert_eq!(calls.get(), 1);
+}
+
+#[test]
+fn npu_cache_transaction_rejects_bad_child_reports_and_exhausted_persistence() {
+    for (name, compiled_models, cache_blobs, expected) in [
+        (
+            "wrong-keys",
+            11,
+            vec![PathBuf::from("one.blob")],
+            "graph-shape keys",
+        ),
+        ("no-blobs", 12, Vec::new(), "returned 0 compiled-model"),
+    ] {
+        let (config, paths) = npu_cache_fixture(name);
+        let error = prepare_npu_cache_with(&config, &paths, |_| {
+            Ok(crate::supertonic::NpuNativePreparation {
+                compiled_models,
+                cache_blobs: cache_blobs.clone(),
+                loaded_from_cache_required: false,
+            })
+        })
+        .unwrap_err();
+        assert!(format!("{error:#}").contains(expected));
+    }
+
+    let (config, paths) = npu_cache_fixture("exhausted");
+    let calls = std::cell::Cell::new(0);
+    let error = prepare_npu_cache_with(&config, &paths, |request| {
+        calls.set(calls.get() + 1);
+        let cache_blobs = add_fake_npu_blobs(&request.cache_dir, 0, 1)?;
+        Ok(crate::supertonic::NpuNativePreparation {
+            compiled_models: crate::supertonic::NPU_COMPILED_MODELS,
+            cache_blobs,
+            loaded_from_cache_required: false,
+        })
+    })
+    .unwrap_err();
+    assert_eq!(calls.get(), 5);
+    assert!(format!("{error:#}").contains("after 5 complete static-plan passes"));
+}
+
+#[test]
+fn npu_cache_transaction_atomically_replaces_an_invalid_previous_directory() {
+    let (config, paths) = npu_cache_fixture("replace-invalid");
+    let target = crate::supertonic::npu_cache_directory(&config, &paths).unwrap();
+    fs::create_dir_all(&target).unwrap();
+    fs::write(target.join("stale"), b"old").unwrap();
+    let state = prepare_npu_cache_with(&config, &paths, |request| {
+        let cache_blobs = if request.require_cache_hits {
+            crate::supertonic::cache_blobs(&request.cache_dir)?
+        } else {
+            fake_npu_blobs(&request.cache_dir)?
+        };
+        Ok(crate::supertonic::NpuNativePreparation {
+            compiled_models: crate::supertonic::NPU_COMPILED_MODELS,
+            cache_blobs,
+            loaded_from_cache_required: request.require_cache_hits,
+        })
+    })
+    .unwrap();
+    assert!(state.ready);
+    assert!(!target.join("stale").exists());
+    assert!(
+        fs::read_dir(target.parent().unwrap())
+            .unwrap()
+            .all(|entry| !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with('.'))
+    );
 }
 
 #[test]

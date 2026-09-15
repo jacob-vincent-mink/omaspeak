@@ -2,7 +2,7 @@
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="assets/omaspeak-mark.svg">
     <source media="(prefers-color-scheme: light)" srcset="assets/omaspeak-mark-on-light.svg">
-    <img alt="Omaspeak: a speaker and sound waves inside the Omarchy frame" src="assets/omaspeak-mark-on-light.svg" width="160">
+    <img alt="Omaspeak: a stylized speaker with sound waves" src="assets/omaspeak-mark-on-light.svg" width="160">
   </picture>
 </p>
 
@@ -12,12 +12,40 @@ Omaspeak is a local Supertonic text-to-speech CLI and hot-model daemon written
 in Rust, with model-reported sample rates, selectable voices, WAV output,
 optional PipeWire/ALSA playback, stdin, JSON status, and config mutation.
 
+## Install
+
+The 0.0.1-rc release supports Linux x86-64 with glibc 2.34 or newer. It ships one
+executable plus a ready-to-use CPU runtime. Download the archive and
+`SHA256SUMS.txt` from the
+[GitHub release](https://github.com/jacob-vincent-mink/omaspeak/releases/tag/v0.0.1-rc),
+then verify, unpack, and configure it:
+
+```bash
+sha256sum --check --ignore-missing SHA256SUMS.txt
+tar -xJf omaspeak-0.0.1-rc-linux-x86_64.tar.xz
+cd omaspeak-0.0.1-rc-linux-x86_64
+./omaspeak setup all --accept-license OpenRAIL-M
+./omaspeak say "Installation complete" --no-play --out test.wav
+```
+
+Move the application to its final location before setup because a desktop
+launcher or an explicitly requested service records the executable path. See
+[INSTALL.md](INSTALL.md) for a per-user installation, source builds, and
+external OpenVINO or CUDA setup.
+[ACCELERATOR_SETUP.md](ACCELERATOR_SETUP.md) gives complete Intel iGPU/NPU and
+NVIDIA CUDA recipes.
+
 ## Build
 
 ```bash
 cargo build --release
 cargo test
 ```
+
+Run the source build as `target/release/omaspeak`. Building requires stable
+Rust. The release archive supplies the native CPU library; a source checkout
+requires a compatible external ONNX Runtime or a copied release `lib/`
+directory.
 
 Omaspeak does not link ONNX Runtime or OpenVINO into the executable. Every
 build supports CPU, OpenVINO, and CUDA. Build the same runtime-neutral
@@ -55,9 +83,9 @@ Use the arrow keys and Enter to choose `Full setup`, `Runtime`, `Model`, or
 `Check`. Full setup walks through the runtime, compatible device, and model,
 then shows a summary before it changes the config, downloads model assets, or
 installs the desktop launcher. It does not install, enable, or start a service.
-If the daemon is already active, setup safely restarts it after Apply so it
-loads the new configuration; an inactive service remains inactive. The runtime
-and model flows can also be opened directly:
+Full setup safely restarts an already active service after Apply so it loads
+the new configuration; an inactive service remains inactive. Focused runtime
+and model setup saves the selection without managing the service:
 
 ```bash
 omaspeak setup runtime   # choose a runtime/device and optionally point at its native bundle
@@ -94,6 +122,7 @@ omaspeak setup model --list                 # catalog models, license status, an
 omaspeak setup model --download supertonic-3-int8 --accept-license OpenRAIL-M
 omaspeak setup model --download supertonic-3-npu --accept-license OpenRAIL-M
 omaspeak setup model --verify supertonic-3-int8       # re-verify an installed model
+omaspeak setup cache --prepare             # compile and verify the selected NPU cache plan
 omaspeak setup check                        # verify config, model metadata, runtime/device, audio, launcher; report optional service
 omaspeak setup systemd                      # explicitly install, enable, and start the systemd user service
 omaspeak setup runtime --json               # read-only runtime/device inventory with paths, evidence, and remediation
@@ -213,7 +242,7 @@ omaspeak say --voice 2 "Testing another speaker" --no-play --out voice-2.wav
 Standalone synthesis loads a model for the request:
 
 ```bash
-omaspeak say "Hello Omarchy" --no-play --out hello.wav
+omaspeak say "Hello from Omaspeak" --no-play --out hello.wav
 printf '%s' 'Text from stdin' | omaspeak say --no-play
 ```
 
@@ -221,21 +250,28 @@ For repeatable file-only measurements, load the engine once and write every
 warmup and measured synthesis without playback:
 
 ```bash
-omaspeak benchmark --text "Hello Omarchy" --out-dir benchmark \
+omaspeak benchmark --text "Hello from Omaspeak" --out-dir benchmark \
   --warmup 2 --iterations 10 > benchmark.json
 
 # Benchmark a specific speaker without changing the configured default.
-omaspeak benchmark --text "Hello Omarchy" --voice 4 --out-dir voice-4 \
+omaspeak benchmark --text "Hello from Omaspeak" --voice 4 --out-dir voice-4 \
   --warmup 2 --iterations 10 > voice-4.json
 ```
 
 The JSON includes model load time, every output path and synthesis/wall timing,
 audio duration, real-time factor, and p50/p95 summaries.
 
-The daemon loads once and serializes requests through one inference engine:
+When no daemon is listening, `say` loads the model for that request and exits.
+For repeated synthesis, start the daemon in one terminal; it loads once and
+serializes requests through one inference engine:
 
 ```bash
 omaspeak daemon
+```
+
+Use a second terminal for control and synthesis commands:
+
+```bash
 omaspeak status --json
 omaspeak say "The hot model serves this request."
 omaspeak stop
@@ -288,7 +324,10 @@ its common `runtime/lib/intel64[/Release]` layouts for the C API library and
 plugin catalog. The backend verifies that the selected physical device is
 available, specializes each graph to the request's concrete tensor shapes, and
 checks `EXECUTION_DEVICES` after compilation. OpenVINO's compiled-model cache
-lives below `$XDG_STATE_HOME/omaspeak/cache/openvino/<device>/`.
+lives below `$XDG_CACHE_HOME/omaspeak/openvino/`. NPU setup prepares and
+verifies a fixed 12-blob shape plan before activation; normal NPU synthesis
+refuses an absent or mismatched cache instead of compiling on the first
+request. See [ACCELERATOR_SETUP.md](ACCELERATOR_SETUP.md).
 
 Entries in `[backend.options]` are passed through as OpenVINO properties for
 the selected device. `CACHE_DIR` and `INFERENCE_NUM_THREADS` are managed by

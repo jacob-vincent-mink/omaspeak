@@ -1,0 +1,41 @@
+{
+  "backend": {
+    "effective_runtime": "default",
+    "fallback_used": false,
+    "kind": "onnxruntime",
+    "model": "supertonic-3-npu",
+    "placement_evidence": "runtime-loaded ONNX Runtime CPU engine initialized",
+    "placement_verified": true,
+    "requested_device": "cpu",
+    "requested_runtime": "default"
+  },
+  "benchmark": "omaspeak-file-synthesis",
+  "iterations": [
+    {
+      "audio_duration_milliseconds": 2802.426304,
+      "elapsed_milliseconds": 349.988576,
+      "iteration": 1,
+      "output": "/tmp/omaspeak-direct-openvino-matrix-work/audio/default-cpu-cold/iteration-0001.wav",
+      "real_time_factor": 0.12476610196704749,
+      "sample_rate": 44100,
+      "samples": 123587,
+      "synthesis_milliseconds": 349.647806
+    }
+  ],
+  "measured_iterations": 1,
+  "model_load_milliseconds": 396,
+  "out_dir": "/tmp/omaspeak-direct-openvino-matrix-work/audio/default-cpu-cold",
+  "schema_version": 1,
+  "summary": {
+    "p50_elapsed_milliseconds": 349.988576,
+    "p50_real_time_factor": 0.12476610196704749,
+    "p50_synthesis_milliseconds": 349.647806,
+    "p95_elapsed_milliseconds": 349.988576,
+    "p95_real_time_factor": 0.12476610196704749,
+    "p95_synthesis_milliseconds": 349.647806,
+    "samples": 1
+  },
+  "text": "Omaspeak now supports Supertonic.",
+  "voice": 0,
+  "warmup_iterations": 0
+}

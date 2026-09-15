@@ -60,9 +60,7 @@ jobs:
           version=$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)
           if [[ "${GITHUB_REF_TYPE:-}" == tag ]]; then
             tag_version=${GITHUB_REF_NAME#v}
-            tag_base=${tag_version%%-rc*}
-            cargo_base=${version%%-rc*}
-            [[ "${tag_base}" == "${cargo_base}" ]] || {
+            [[ "${tag_version}" == "${version}" ]] || {
               echo "Cargo.toml version ${version} does not match tag ${GITHUB_REF_NAME}" >&2
               exit 1
             }
@@ -80,9 +78,10 @@ jobs:
             "dist/${package}/licenses/ONNX-RUNTIME-THIRD-PARTY-NOTICES"
           cp LICENSE "dist/${package}/licenses/OMASPEAK-LICENSE"
           cp THIRD_PARTY_NOTICES.md "dist/${package}/licenses/OMASPEAK-THIRD-PARTY-NOTICES"
-          cp licenses/OMARCHY-LICENSE "dist/${package}/licenses/OMARCHY-LICENSE"
           cp licenses/SUPERTONIC-CODE-LICENSE "dist/${package}/licenses/SUPERTONIC-CODE-LICENSE"
           cp RUNTIME.md "dist/${package}/RUNTIME.md"
+          cp README.md INSTALL.md ACCELERATOR_SETUP.md CHANGELOG.md RELEASE_NOTES.md DEMO.md config.example.toml "dist/${package}/"
+          cp -a assets benchmarks packaging "dist/${package}/"
           tar -C dist -cJf "dist/${package}.tar.xz" "${package}"
           (cd dist && sha256sum "${package}.tar.xz" > SHA256SUMS.txt)
           echo "name=${package}" >> "${GITHUB_OUTPUT}"
@@ -91,8 +90,19 @@ jobs:
         run: |
           set -euo pipefail
           package='${{ steps.package.outputs.name }}'
-          binary="dist/${package}/omaspeak"
-          "${binary}" --version
+          smoke_root="${RUNNER_TEMP}/${package}-smoke"
+          mkdir -p "${smoke_root}"
+          tar -C "${smoke_root}" -xJf "dist/${package}.tar.xz"
+          binary="${smoke_root}/${package}/omaspeak"
+          for document in README.md INSTALL.md ACCELERATOR_SETUP.md CHANGELOG.md RELEASE_NOTES.md DEMO.md config.example.toml RUNTIME.md; do
+            test -s "${smoke_root}/${package}/${document}"
+          done
+          test -s "${smoke_root}/${package}/assets/omaspeak-mark.svg"
+          test -s "${smoke_root}/${package}/benchmarks/cuda-gb10-2026-09-14.md"
+          test -s "${smoke_root}/${package}/packaging/systemd/omaspeak.service"
+          expected_version="${package#omaspeak-}"
+          expected_version="${expected_version%-linux-x86_64}"
+          [[ "$("${binary}" --version)" == "omaspeak ${expected_version}" ]]
           "${binary}" setup runtime --json > /tmp/runtime.json
           python3 - <<'PY'
           import json
@@ -129,13 +139,12 @@ jobs:
             esac
           done < <(find "dist/${package}" -name '*.so*' -print0)
           licenses="dist/${package}/licenses"
-          [[ $(find "${licenses}" -maxdepth 1 -type f | wc -l) == 7 ]]
+          [[ $(find "${licenses}" -maxdepth 1 -type f | wc -l) == 6 ]]
           cmp "${OMA_ORT_ROOT}/LICENSE" "${licenses}/ONNX-RUNTIME-LICENSE"
           cmp "${OMA_ORT_ROOT}/ThirdPartyNotices.txt" \
             "${licenses}/ONNX-RUNTIME-THIRD-PARTY-NOTICES"
           cmp LICENSE "${licenses}/OMASPEAK-LICENSE"
           cmp THIRD_PARTY_NOTICES.md "${licenses}/OMASPEAK-THIRD-PARTY-NOTICES"
-          cmp licenses/OMARCHY-LICENSE "${licenses}/OMARCHY-LICENSE"
           cmp licenses/SUPERTONIC-CODE-LICENSE "${licenses}/SUPERTONIC-CODE-LICENSE"
           test -s "${licenses}/RUST-DEPENDENCIES.txt"
           LIB="${lib}" python3 - <<'PY'
@@ -161,6 +170,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           prerelease: ${{ contains(github.ref_name, '-rc') }}
+          body_path: RELEASE_NOTES.md
           files: |
             dist/${{ steps.package.outputs.name }}.tar.xz
             dist/SHA256SUMS.txt

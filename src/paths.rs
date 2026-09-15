@@ -1,10 +1,12 @@
+use serde::{Deserialize, Serialize};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct AppPaths {
     pub config_file: PathBuf,
     pub data_dir: PathBuf,
+    pub cache_dir: PathBuf,
     pub state_dir: PathBuf,
     pub runtime_dir: PathBuf,
 }
@@ -24,6 +26,9 @@ impl AppPaths {
         let data = variable("XDG_DATA_HOME")
             .map(PathBuf::from)
             .unwrap_or_else(|| home.join(".local/share"));
+        let cache = variable("XDG_CACHE_HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| home.join(".cache"));
         let state = variable("XDG_STATE_HOME")
             .map(PathBuf::from)
             .unwrap_or_else(|| home.join(".local/state"));
@@ -37,6 +42,7 @@ impl AppPaths {
         Self {
             config_file: config.join("omaspeak/config.toml"),
             data_dir: data.join("omaspeak"),
+            cache_dir: cache.join("omaspeak"),
             state_dir: state.join("omaspeak"),
             runtime_dir: runtime.join("omaspeak"),
         }

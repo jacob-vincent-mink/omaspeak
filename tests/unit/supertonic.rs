@@ -17,6 +17,7 @@ fn paths(root: &Path) -> AppPaths {
     AppPaths {
         config_file: root.join("config/config.toml"),
         data_dir: root.join("data"),
+        cache_dir: root.join("cache"),
         state_dir: root.join("state"),
         runtime_dir: root.join("run"),
     }
@@ -309,6 +310,294 @@ fn fixed_seed_generation_runs_all_graphs_and_inserts_chunk_silence() {
         .unwrap();
     assert_eq!(audio.len(), 50);
     assert!(audio[20..30].iter().all(|sample| *sample == 0.0));
+}
+
+#[derive(Default)]
+struct NpuShapePipeline {
+    calls: Vec<(Graph, Vec<NamedTensor>)>,
+    duration: f32,
+}
+
+impl ModelPipeline for NpuShapePipeline {
+    fn run(
+        &mut self,
+        graph: Graph,
+        inputs: Vec<NamedTensor>,
+        output: &'static str,
+    ) -> Result<NamedTensor> {
+        self.calls.push((graph, inputs.clone()));
+        match graph {
+            Graph::DurationPredictor => NamedTensor::f32(output, [1], vec![self.duration]),
+            Graph::TextEncoder => {
+                NamedTensor::f32(output, [1, 2, NPU_TEXT_BUCKET], vec![0.25; 640])
+            }
+            Graph::VectorEstimator => {
+                let shape = inputs[0].shape.clone();
+                let len = inputs[0].clone().into_f32()?.1.len();
+                NamedTensor::f32(output, shape, vec![7.0; len])
+            }
+            Graph::Vocoder => NamedTensor::f32(output, [1, 1, 4096], vec![0.5; 4096]),
+        }
+    }
+}
+
+#[test]
+fn npu_generation_uses_only_prepared_shapes_masks_padding_and_trims_audio() {
+    assert_eq!(npu_latent_bucket(1).unwrap(), 32);
+    assert_eq!(npu_latent_bucket(32).unwrap(), 32);
+    assert_eq!(npu_latent_bucket(33).unwrap(), 64);
+    assert_eq!(npu_latent_bucket(512).unwrap(), 512);
+    assert!(npu_latent_bucket(513).is_err());
+
+    let frontend = frontend();
+    let mut pipeline = NpuShapePipeline {
+        duration: 0.2,
+        ..Default::default()
+    };
+    let audio = frontend
+        .generate_npu(&mut pipeline, "hello", 1.0, 0)
+        .unwrap();
+    assert_eq!(audio.len(), 20);
+
+    for (graph, inputs) in &pipeline.calls {
+        match graph {
+            Graph::DurationPredictor | Graph::TextEncoder => {
+                assert_eq!(inputs[0].shape, [1, NPU_TEXT_BUCKET]);
+                let mask = inputs
+                    .iter()
+                    .find(|input| input.name == "text_mask")
+                    .unwrap();
+                assert_eq!(mask.shape, [1, 1, NPU_TEXT_BUCKET]);
+                let (_, mask) = mask.clone().into_f32().unwrap();
+                assert!(mask.contains(&1.0));
+                assert_eq!(mask.last(), Some(&0.0));
+            }
+            Graph::VectorEstimator => {
+                assert_eq!(inputs[0].shape, [1, 4, 32]);
+                let (_, latent) = inputs[0].clone().into_f32().unwrap();
+                for channel in 0..4 {
+                    assert!(
+                        latent[channel * 32 + 5..(channel + 1) * 32]
+                            .iter()
+                            .all(|value| *value == 0.0)
+                    );
+                }
+                let mask = inputs
+                    .iter()
+                    .find(|input| input.name == "latent_mask")
+                    .unwrap()
+                    .clone()
+                    .into_f32()
+                    .unwrap()
+                    .1;
+                assert_eq!(&mask[..5], &[1.0; 5]);
+                assert!(mask[5..].iter().all(|value| *value == 0.0));
+            }
+            Graph::Vocoder => {
+                assert_eq!(inputs[0].shape, [1, 4, 32]);
+                let (_, latent) = inputs[0].clone().into_f32().unwrap();
+                for channel in 0..4 {
+                    assert!(
+                        latent[channel * 32 + 5..(channel + 1) * 32]
+                            .iter()
+                            .all(|value| *value == 0.0)
+                    );
+                }
+            }
+        }
+    }
+    assert_eq!(
+        pipeline
+            .calls
+            .iter()
+            .filter(|(graph, _)| *graph == Graph::VectorEstimator)
+            .count(),
+        frontend.steps as usize
+    );
+}
+
+#[test]
+fn npu_generation_rejects_inputs_outside_the_prepared_shape_plan() {
+    let frontend = frontend();
+    let mut too_long = NpuShapePipeline {
+        duration: 25.0,
+        ..Default::default()
+    };
+    let error = frontend
+        .generate_npu(&mut too_long, "hello", 1.0, 0)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("prepared Intel NPU limit"), "{error}");
+    assert!(
+        !too_long
+            .calls
+            .iter()
+            .any(|(graph, _)| *graph == Graph::VectorEstimator)
+    );
+
+    let mut expanded = NpuShapePipeline {
+        duration: 0.2,
+        ..Default::default()
+    };
+    let error = frontend
+        .generate_npu(&mut expanded, &"@".repeat(300), 1.0, 0)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("normalized text chunk"), "{error}");
+    assert!(expanded.calls.is_empty());
+}
+
+#[test]
+fn npu_cache_manifest_is_fingerprinted_and_requires_every_recorded_blob() {
+    let root = temp("npu-cache-manifest");
+    let (mut config, app_paths) = write_compact_assets(&root);
+    config.backend.runtime = Runtime::Openvino;
+    config.backend.device = "npu".into();
+    let runtime = root.join("runtime");
+    fs::create_dir_all(&runtime).unwrap();
+    let library = runtime.join("libopenvino_c.so");
+    let plugins = runtime.join("plugins.xml");
+    fs::write(&library, b"runtime-a").unwrap();
+    fs::write(&plugins, b"<ie/>").unwrap();
+    config.backend.openvino_library = Some(library.clone());
+    config.backend.openvino_plugins = Some(plugins);
+    let original_fingerprint = npu_cache_fingerprint(&config, &app_paths).unwrap();
+    config
+        .backend
+        .options
+        .insert("NPU_PLATFORM".into(), "5010".into());
+    assert_ne!(
+        npu_cache_fingerprint(&config, &app_paths).unwrap(),
+        original_fingerprint
+    );
+    config.backend.options.clear();
+    config.model.language = "ja".into();
+    config.model.steps = 2;
+    assert_eq!(
+        npu_cache_fingerprint(&config, &app_paths).unwrap(),
+        original_fingerprint,
+        "language and diffusion-step values change tensor contents but not compiled shapes"
+    );
+    config.model.language = "en".into();
+    config.model.steps = 5;
+    fs::write(&library, b"runtime-b").unwrap();
+    assert_ne!(
+        npu_cache_fingerprint(&config, &app_paths).unwrap(),
+        original_fingerprint
+    );
+    fs::write(&library, b"runtime-a").unwrap();
+    let model_file = config
+        .model_directory(&app_paths)
+        .join(&config.model.duration_predictor);
+    let original_model = fs::read(&model_file).unwrap();
+    fs::write(&model_file, vec![b'x'; original_model.len()]).unwrap();
+    assert_ne!(
+        npu_cache_fingerprint(&config, &app_paths).unwrap(),
+        original_fingerprint
+    );
+    fs::write(&model_file, original_model).unwrap();
+    let directory = npu_cache_directory(&config, &app_paths).unwrap();
+    assert!(directory.starts_with(app_paths.cache_dir.join("openvino/npu/static-v1")));
+    fs::create_dir_all(directory.join("nested")).unwrap();
+    for index in 0..NPU_COMPILED_MODELS {
+        fs::write(
+            directory.join(format!("nested/model-{index}.blob")),
+            b"compiled",
+        )
+        .unwrap();
+    }
+    let blobs = write_npu_cache_manifest(&config, &app_paths, &directory).unwrap();
+    assert_eq!(blobs.len(), NPU_COMPILED_MODELS);
+    let state = npu_cache_state(&config, &app_paths);
+    assert!(state.required && state.ready, "{}", state.detail);
+    assert_eq!(state.blobs.len(), NPU_COMPILED_MODELS);
+
+    fs::remove_file(directory.join("nested/model-0.blob")).unwrap();
+    let state = npu_cache_state(&config, &app_paths);
+    assert!(state.required && !state.ready);
+    assert!(
+        state
+            .detail
+            .contains("missing or empty compiled-model blobs")
+    );
+}
+
+#[test]
+fn npu_cache_manifest_rejects_shape_path_and_directory_integrity_failures() {
+    let root = temp("npu-cache-integrity-errors");
+    let (mut config, app_paths) = write_compact_assets(&root);
+    config.backend.runtime = Runtime::Openvino;
+    config.backend.device = "npu".into();
+    let runtime = root.join("runtime");
+    fs::create_dir_all(&runtime).unwrap();
+    config.backend.openvino_library = Some(runtime.join("libopenvino_c.so"));
+    config.backend.openvino_plugins = Some(runtime.join("plugins.xml"));
+    fs::write(
+        config.backend.openvino_library.as_ref().unwrap(),
+        b"runtime",
+    )
+    .unwrap();
+    fs::write(config.backend.openvino_plugins.as_ref().unwrap(), b"<ie/>").unwrap();
+    let directory = npu_cache_directory(&config, &app_paths).unwrap();
+    fs::create_dir_all(&directory).unwrap();
+    for index in 0..NPU_COMPILED_MODELS {
+        fs::write(directory.join(format!("model-{index}.blob")), b"compiled").unwrap();
+    }
+    write_npu_cache_manifest(&config, &app_paths, &directory).unwrap();
+    let manifest_path = directory.join(NPU_MANIFEST);
+    let original = fs::read(&manifest_path).unwrap();
+
+    let write_variant = |update: &dyn Fn(&mut serde_json::Value)| {
+        let mut value: serde_json::Value = serde_json::from_slice(&original).unwrap();
+        update(&mut value);
+        fs::write(&manifest_path, serde_json::to_vec_pretty(&value).unwrap()).unwrap();
+        npu_cache_state(&config, &app_paths)
+    };
+    let state = write_variant(&|value| value["schema"] = 999.into());
+    assert!(state.detail.contains("does not match"));
+    let state = write_variant(&|value| {
+        value["blobs"].as_array_mut().unwrap().pop();
+    });
+    assert!(state.detail.contains("records 11"));
+    let state = write_variant(&|value| value["blobs"][0] = "../escape.blob".into());
+    assert!(state.detail.contains("unsafe compiled-model path"));
+    let state = write_variant(&|value| value["blobs"][0] = value["blobs"][1].clone());
+    assert!(state.detail.contains("duplicate compiled-model blobs"));
+
+    fs::write(&manifest_path, &original).unwrap();
+    fs::write(directory.join("model-0.blob"), b"").unwrap();
+    let state = npu_cache_state(&config, &app_paths);
+    assert!(state.detail.contains("missing or empty"));
+    fs::write(directory.join("model-0.blob"), b"compiled").unwrap();
+    fs::write(directory.join("extra.blob"), b"compiled").unwrap();
+    let state = npu_cache_state(&config, &app_paths);
+    assert!(state.detail.contains("does not exactly match"));
+
+    fs::remove_file(directory.join("extra.blob")).unwrap();
+    fs::remove_file(directory.join("model-11.blob")).unwrap();
+    assert!(write_npu_cache_manifest(&config, &app_paths, &directory).is_err());
+    fs::write(directory.join("model-11.blob"), b"").unwrap();
+    assert!(write_npu_cache_manifest(&config, &app_paths, &directory).is_err());
+
+    let mut cpu = config;
+    cpu.backend.device = "cpu".into();
+    assert!(npu_cache_state(&cpu, &app_paths).ready);
+    assert!(npu_cache_fingerprint(&cpu, &app_paths).is_err());
+}
+
+#[test]
+fn npu_backend_refuses_on_demand_compilation_without_setup_manifest() {
+    let root = temp("npu-cache-required");
+    let (mut config, app_paths) = write_compact_assets(&root);
+    config.backend.runtime = Runtime::Openvino;
+    config.backend.device = "npu".into();
+    let error = DirectOpenvinoBackend::create_with(&config, &app_paths, |_, _, _, _| {
+        unreachable!("pipeline creation must not run before cache validation")
+    })
+    .err()
+    .unwrap()
+    .to_string();
+    assert!(error.contains("setup cache --prepare"), "{error}");
 }
 
 #[test]
@@ -936,6 +1225,155 @@ struct FakeOpenvinoGraph {
     fail_device_query: bool,
 }
 
+struct StaticPlanCompiler;
+
+struct StaticPlanGraph {
+    graph: Graph,
+    input_shape: Vec<i64>,
+}
+
+impl OpenvinoCompiler for StaticPlanCompiler {
+    fn compile(
+        &mut self,
+        graph: Graph,
+        _: &[u8],
+        inputs: &[NamedTensor],
+    ) -> Result<Box<dyn OpenvinoGraph>> {
+        Ok(Box::new(StaticPlanGraph {
+            graph,
+            input_shape: inputs[0].shape.clone(),
+        }))
+    }
+}
+
+impl OpenvinoGraph for StaticPlanGraph {
+    fn execution_devices(&self) -> Result<String> {
+        Ok("NPU".into())
+    }
+
+    fn run(&mut self, _: Graph, _: Vec<NamedTensor>, output: &'static str) -> Result<NamedTensor> {
+        match self.graph {
+            Graph::DurationPredictor => NamedTensor::f32(output, [1], vec![0.2]),
+            Graph::TextEncoder => NamedTensor::f32(output, [1, 2, NPU_TEXT_BUCKET], vec![0.0; 640]),
+            Graph::VectorEstimator => NamedTensor::f32(
+                output,
+                self.input_shape.clone(),
+                vec![0.0; self.input_shape.iter().product::<i64>() as usize],
+            ),
+            Graph::Vocoder => NamedTensor::f32(output, [1, 1, 1], vec![0.0]),
+        }
+    }
+}
+
+#[test]
+fn npu_preparation_compiles_the_exact_static_graph_shape_plan() {
+    let root = temp("static-npu-plan");
+    let model = root.join("model.onnx");
+    fs::write(&model, b"model fixture").unwrap();
+    let mut pipeline = OpenvinoPipeline {
+        device: "NPU".into(),
+        graphs: [
+            Graph::DurationPredictor,
+            Graph::TextEncoder,
+            Graph::VectorEstimator,
+            Graph::Vocoder,
+        ]
+        .into_iter()
+        .map(|graph| (graph, model.clone()))
+        .collect(),
+        compiler: Box::new(StaticPlanCompiler),
+        compiled: HashMap::new(),
+        require_cache_hits: false,
+    };
+    pipeline.prepare_npu_static_shapes(&frontend()).unwrap();
+    assert_eq!(pipeline.compiled.len(), NPU_COMPILED_MODELS);
+    let mut graph_shapes = pipeline
+        .compiled
+        .keys()
+        .map(|key| (key.graph, key.input_shapes[0].clone()))
+        .collect::<Vec<_>>();
+    graph_shapes.sort_by_key(|(graph, shape)| (graph.name(), shape.clone()));
+    assert!(graph_shapes.contains(&(Graph::DurationPredictor, vec![1, NPU_TEXT_BUCKET])));
+    assert!(graph_shapes.contains(&(Graph::TextEncoder, vec![1, NPU_TEXT_BUCKET])));
+    for bucket in NPU_LATENT_BUCKETS {
+        assert!(graph_shapes.contains(&(Graph::VectorEstimator, vec![1, 4, *bucket])));
+        assert!(graph_shapes.contains(&(Graph::Vocoder, vec![1, 4, *bucket])));
+    }
+}
+
+#[test]
+fn native_npu_preparation_contract_validates_plan_and_persisted_blobs_without_ffi() {
+    let root = temp("native-npu-contract");
+    let cache = root.join("cache");
+    fs::create_dir_all(&cache).unwrap();
+    let mut config = Config::default();
+    let skipped = prepare_npu_cache_native_with(&config, &cache, false, || {
+        unreachable!("a non-NPU configuration must fail before compilation")
+    })
+    .unwrap_err();
+    assert!(skipped.to_string().contains("non-NPU"));
+
+    config.backend.runtime = Runtime::Openvino;
+    config.backend.device = "npu".into();
+    let compile_error = prepare_npu_cache_native_with(&config, &cache, false, || {
+        bail!("injected static-plan failure")
+    })
+    .unwrap_err();
+    assert!(compile_error.to_string().contains("static-plan failure"));
+    let wrong_count = prepare_npu_cache_native_with(&config, &cache, false, || Ok(11)).unwrap_err();
+    assert!(wrong_count.to_string().contains("expected 12"));
+    let empty = prepare_npu_cache_native_with(&config, &cache, false, || Ok(NPU_COMPILED_MODELS))
+        .unwrap_err();
+    assert!(empty.to_string().contains("did not persist"));
+
+    let nested = cache.join("device");
+    fs::create_dir_all(&nested).unwrap();
+    for index in 0..NPU_COMPILED_MODELS {
+        fs::write(nested.join(format!("compiled-{index}.blob")), b"cache").unwrap();
+    }
+    let result =
+        prepare_npu_cache_native_with(&config, &cache, true, || Ok(NPU_COMPILED_MODELS)).unwrap();
+    assert_eq!(result.compiled_models, NPU_COMPILED_MODELS);
+    assert_eq!(result.cache_blobs.len(), NPU_COMPILED_MODELS);
+    assert!(result.loaded_from_cache_required);
+}
+
+#[test]
+fn openvino_cache_hit_contract_and_static_shape_errors_are_injected_safely() {
+    let root = temp("cache-hit-contract");
+    let model = root.join("model.onnx");
+    fs::write(&model, b"model fixture").unwrap();
+    let graph = FakeOpenvinoGraph {
+        actual_device: "NPU".into(),
+        fail_device_query: false,
+    };
+    assert!(!graph.loaded_from_cache().unwrap());
+
+    let mut pipeline = OpenvinoPipeline {
+        device: "NPU".into(),
+        graphs: HashMap::from([(Graph::Vocoder, model)]),
+        compiler: Box::new(FakeOpenvinoCompiler {
+            compilations: Arc::new(AtomicUsize::new(0)),
+            actual_device: "NPU".into(),
+            fail: false,
+            fail_device_query: false,
+        }),
+        compiled: HashMap::new(),
+        require_cache_hits: true,
+    };
+    let error = pipeline
+        .run(
+            Graph::Vocoder,
+            vec![NamedTensor::f32("latent", [1, 4, 32], vec![0.0; 128]).unwrap()],
+            "wav_tts",
+        )
+        .unwrap_err();
+    assert!(error.to_string().contains("did not load the prepared"));
+
+    assert_eq!(split_sentences(""), vec![String::new()]);
+    assert_eq!(split_long_piece("a bb cccc", 4), vec!["a bb", "cccc"]);
+}
+
 impl OpenvinoCompiler for FakeOpenvinoCompiler {
     fn compile(
         &mut self,
@@ -1251,6 +1689,7 @@ fn fake_openvino_pipeline(
             fail_device_query,
         }),
         compiled: HashMap::new(),
+        require_cache_hits: false,
     }
 }
 
@@ -1576,13 +2015,23 @@ fn direct_backends_use_injected_runtime_pipelines_without_native_libraries() {
 
     config.backend.runtime = Runtime::Openvino;
     config.backend.device = "npu".into();
+    let prepared_cache = npu_cache_directory(&config, &app_paths).unwrap();
+    fs::create_dir_all(&prepared_cache).unwrap();
+    for index in 0..NPU_COMPILED_MODELS {
+        fs::write(
+            prepared_cache.join(format!("fixture-{index}.blob")),
+            b"compiled",
+        )
+        .unwrap();
+    }
+    write_npu_cache_manifest(&config, &app_paths, &prepared_cache).unwrap();
     let openvino = DirectOpenvinoBackend::create_with(
         &config,
         &app_paths,
         |frontend, graphs, device, cache_dir| {
             assert_eq!(graphs.len(), 4);
             assert_eq!(device, "npu");
-            assert!(cache_dir.ends_with("cache/openvino/npu"));
+            assert_eq!(cache_dir, prepared_cache);
             Ok((frontend, Box::new(FakePipeline::successful())))
         },
     )

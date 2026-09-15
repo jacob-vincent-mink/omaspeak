@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     env,
     ffi::CStr,
+    fs,
     path::{Path, PathBuf},
 };
 #[cfg(not(test))]
@@ -34,6 +35,48 @@ pub struct Evidence {
     pub provider_registration: bool,
     pub available_devices: Vec<String>,
     pub selected_device: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct NpuPreparationRequest {
+    pub config: Config,
+    pub paths: crate::paths::AppPaths,
+    pub cache_dir: PathBuf,
+    pub require_cache_hits: bool,
+}
+
+pub fn npu_child(
+    request: NpuPreparationRequest,
+) -> Result<crate::supertonic::NpuNativePreparation> {
+    npu_child_with(
+        request,
+        |config, path| {
+            let locations = runtime::discover(config, path);
+            runtime::resolve_openvino_runtime(config, path, &locations)
+        },
+        crate::supertonic::prepare_npu_cache_native,
+    )
+}
+
+fn npu_child_with(
+    request: NpuPreparationRequest,
+    resolve_runtime: impl FnOnce(&BackendConfig, &Path) -> Result<runtime::OpenvinoRuntimePaths>,
+    prepare: impl FnOnce(
+        &Config,
+        &crate::paths::AppPaths,
+        runtime::OpenvinoRuntimePaths,
+        &Path,
+        bool,
+    ) -> Result<crate::supertonic::NpuNativePreparation>,
+) -> Result<crate::supertonic::NpuNativePreparation> {
+    let runtime = resolve_runtime(&request.config.backend, &request.paths.config_file)?;
+    prepare(
+        &request.config,
+        &request.paths,
+        runtime,
+        &request.cache_dir,
+        request.require_cache_hits,
+    )
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -292,6 +335,213 @@ fn isolated(config: &BackendConfig) -> Result<Probe> {
             bail!("native probe terminated: {}", output.status);
         }
         serde_json::from_slice(&output.stdout).context("read isolated probe evidence")
+    }
+}
+
+pub fn prepare_npu_cache(
+    config: &mut Config,
+    paths: &crate::paths::AppPaths,
+) -> Result<Option<crate::supertonic::NpuCacheState>> {
+    if !crate::supertonic::uses_static_npu_shapes(config) {
+        return Ok(None);
+    }
+    config.backend = resolve(&config.backend, &paths.config_file);
+    prepare_npu_cache_with(config, paths, run_npu_preparation_child).map(Some)
+}
+
+fn prepare_npu_cache_with(
+    config: &Config,
+    paths: &crate::paths::AppPaths,
+    mut invoke: impl FnMut(&NpuPreparationRequest) -> Result<crate::supertonic::NpuNativePreparation>,
+) -> Result<crate::supertonic::NpuCacheState> {
+    let validate_report = |report: crate::supertonic::NpuNativePreparation,
+                           exact_blobs: bool|
+     -> Result<()> {
+        if report.compiled_models != crate::supertonic::NPU_COMPILED_MODELS {
+            bail!(
+                "NPU preparation covered {} compiled graph-shape keys; expected {}",
+                report.compiled_models,
+                crate::supertonic::NPU_COMPILED_MODELS
+            );
+        }
+        if report.cache_blobs.is_empty()
+            || (exact_blobs && report.cache_blobs.len() != crate::supertonic::NPU_COMPILED_MODELS)
+        {
+            bail!(
+                "NPU preparation returned {} compiled-model cache blobs; expected {}",
+                report.cache_blobs.len(),
+                crate::supertonic::NPU_COMPILED_MODELS
+            );
+        }
+        Ok(())
+    };
+    let target = crate::supertonic::npu_cache_directory(config, paths)?;
+    if crate::supertonic::npu_cache_state(config, paths).ready {
+        validate_report(
+            invoke(&NpuPreparationRequest {
+                config: config.clone(),
+                paths: paths.clone(),
+                cache_dir: target.clone(),
+                require_cache_hits: true,
+            })?,
+            true,
+        )
+        .context("verify prepared OpenVINO NPU cache in an isolated process")?;
+        return Ok(crate::supertonic::npu_cache_state(config, paths));
+    }
+
+    let parent = target.parent().context("NPU cache target has no parent")?;
+    fs::create_dir_all(parent)
+        .with_context(|| format!("create NPU cache directory {}", parent.display()))?;
+    let nonce = format!(
+        "{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    );
+    let staging = parent.join(format!(".prepare-{nonce}"));
+    let backup = parent.join(format!(".backup-{nonce}"));
+    fs::create_dir(&staging)
+        .with_context(|| format!("create staging NPU cache {}", staging.display()))?;
+
+    let prepared = (|| -> Result<()> {
+        // Some OpenVINO NPU releases persist only a subset of newly compiled
+        // blobs before a compiler process exits. Re-entering the same complete
+        // static plan imports the blobs already present and fills the missing
+        // keys. Keep this bounded and require the exact plan before publishing.
+        for attempt in 1..=5 {
+            validate_report(
+                invoke(&NpuPreparationRequest {
+                    config: config.clone(),
+                    paths: paths.clone(),
+                    cache_dir: staging.clone(),
+                    require_cache_hits: false,
+                })?,
+                false,
+            )
+            .with_context(|| {
+                format!("compile OpenVINO models for Intel NPU (pass {attempt} of 5)")
+            })?;
+            let count = crate::supertonic::cache_blobs(&staging)?.len();
+            if count == crate::supertonic::NPU_COMPILED_MODELS {
+                break;
+            }
+            if attempt == 5 {
+                bail!(
+                    "OpenVINO persisted {count} of {} required NPU cache blobs after 5 complete static-plan passes",
+                    crate::supertonic::NPU_COMPILED_MODELS
+                );
+            }
+        }
+        crate::supertonic::write_npu_cache_manifest(config, paths, &staging)?;
+
+        let had_previous = target.exists();
+        if had_previous {
+            fs::rename(&target, &backup).with_context(|| {
+                format!(
+                    "move previous NPU cache {} to {}",
+                    target.display(),
+                    backup.display()
+                )
+            })?;
+        }
+        if let Err(error) = fs::rename(&staging, &target) {
+            if had_previous {
+                fs::rename(&backup, &target).with_context(|| {
+                    format!(
+                        "restore previous NPU cache {} after install failed: {error}",
+                        target.display()
+                    )
+                })?;
+            }
+            return Err(error)
+                .with_context(|| format!("install prepared NPU cache at {}", target.display()));
+        }
+
+        let verification = invoke(&NpuPreparationRequest {
+            config: config.clone(),
+            paths: paths.clone(),
+            cache_dir: target.clone(),
+            require_cache_hits: true,
+        })
+        .and_then(|report| validate_report(report, true))
+        .context("verify OpenVINO loads every prepared NPU model from cache");
+        if let Err(error) = verification {
+            let rollback = (|| -> Result<()> {
+                fs::remove_dir_all(&target)
+                    .with_context(|| format!("remove rejected NPU cache {}", target.display()))?;
+                if had_previous {
+                    fs::rename(&backup, &target).with_context(|| {
+                        format!("restore previous NPU cache {}", target.display())
+                    })?;
+                }
+                Ok(())
+            })();
+            if let Err(rollback_error) = rollback {
+                return Err(error.context(format!(
+                    "NPU cache rollback also failed: {rollback_error:#}"
+                )));
+            }
+            return Err(error);
+        }
+        if had_previous {
+            fs::remove_dir_all(&backup)
+                .with_context(|| format!("remove superseded NPU cache {}", backup.display()))?;
+        }
+        Ok(())
+    })();
+    if let Err(error) = prepared {
+        if staging.exists()
+            && let Err(cleanup_error) = fs::remove_dir_all(&staging)
+        {
+            return Err(error.context(format!(
+                "partial NPU cache cleanup also failed: {cleanup_error}"
+            )));
+        }
+        return Err(error);
+    }
+    let state = crate::supertonic::npu_cache_state(config, paths);
+    if !state.ready {
+        bail!("prepared NPU cache failed validation: {}", state.detail);
+    }
+    Ok(state)
+}
+
+fn run_npu_preparation_child(
+    request: &NpuPreparationRequest,
+) -> Result<crate::supertonic::NpuNativePreparation> {
+    #[cfg(test)]
+    return npu_child(request.clone());
+
+    #[cfg(not(test))]
+    {
+        let executable = env::current_exe().context("locate Omaspeak executable")?;
+        let loader_path = env::join_paths(&request.config.backend.library_dirs)?;
+        let mut child = Command::new(executable)
+            .arg("__npu-precompile")
+            .arg(serde_json::to_string(request)?)
+            .env("LD_LIBRARY_PATH", loader_path)
+            .env("ORT_DISABLE_TELEMETRY", "1")
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit())
+            .spawn()
+            .context("start isolated NPU cache preparation")?;
+        let start = Instant::now();
+        while child.try_wait()?.is_none() {
+            if start.elapsed() > Duration::from_secs(30 * 60) {
+                child.kill()?;
+                child.wait()?;
+                bail!("NPU cache preparation timed out after 30 minutes");
+            }
+            thread::sleep(Duration::from_millis(50));
+        }
+        let output = child.wait_with_output()?;
+        if !output.status.success() {
+            bail!("NPU cache preparation terminated: {}", output.status);
+        }
+        serde_json::from_slice(&output.stdout).context("read isolated NPU preparation evidence")
     }
 }
 

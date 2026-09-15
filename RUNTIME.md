@@ -18,3 +18,6 @@ cancellation leave config unchanged; ambient LD_LIBRARY_PATH is never saved.
 
 Install models separately with explicit OpenRAIL-M acceptance. Only
 `omaspeak setup systemd` installs or starts the optional user service.
+
+See `ACCELERATOR_SETUP.md` for tested Arch/Omarchy Intel packages, NPU
+setup-time cache preparation, and an official ONNX Runtime CUDA bundle recipe.
