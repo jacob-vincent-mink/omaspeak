@@ -1,6 +1,6 @@
 # Accelerator setup
 
-Omaspeak 0.0.1-rc.1 ships one runtime-neutral executable and a small default CPU
+Omaspeak 0.0.1-rc.2 ships one runtime-neutral executable and a small default CPU
 ONNX Runtime. Acceleration is optional. Setup discovers and validates native
 libraries already installed by the user; it never downloads or installs an
 OpenVINO, CUDA, or driver package.

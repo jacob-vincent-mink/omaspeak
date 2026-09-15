@@ -14,16 +14,16 @@ optional PipeWire/ALSA playback, stdin, JSON status, and config mutation.
 
 ## Install
 
-The 0.0.1-rc.1 release supports Linux x86-64 and aarch64 with glibc 2.35 or newer. It ships one
+The 0.0.1-rc.2 release supports Linux x86-64 and aarch64 with glibc 2.35 or newer. It ships one
 executable plus a ready-to-use CPU runtime. Download the archive and
 `SHA256SUMS.txt` from the
-[GitHub release](https://github.com/jacob-vincent-mink/omaspeak/releases/tag/v0.0.1-rc.1),
+[GitHub release](https://github.com/jacob-vincent-mink/omaspeak/releases/tag/v0.0.1-rc.2),
 then verify, unpack, and configure it:
 
 ```bash
 sha256sum --check --ignore-missing SHA256SUMS.txt
-tar -xJf omaspeak-0.0.1-rc.1-linux-x86_64.tar.xz
-cd omaspeak-0.0.1-rc.1-linux-x86_64
+tar -xJf omaspeak-0.0.1-rc.2-linux-x86_64.tar.xz
+cd omaspeak-0.0.1-rc.2-linux-x86_64
 ./omaspeak setup all --accept-license OpenRAIL-M
 ./omaspeak say "Installation complete" --no-play --out test.wav
 ```

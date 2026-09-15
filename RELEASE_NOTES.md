@@ -1,4 +1,4 @@
-# Omaspeak 0.0.1-rc.1
+# Omaspeak 0.0.1-rc.2
 
 This release candidate provides local Supertonic 3 speech synthesis with ten
 speaker styles, WAV output, on-demand execution, a hot-model daemon, JSON
@@ -6,6 +6,9 @@ benchmarks, and guided setup. Linux x86-64 and aarch64 archives include the
 default CPU runtime. The same executable can use an externally installed direct
 OpenVINO runtime or the standalone ONNX Runtime CUDA Plugin EP selected during
 setup.
+
+This release candidate supersedes 0.0.1-rc.1 and updates rustls to 0.23.45
+to address RUSTSEC-2026-0285.
 
 Intel NPU setup prepares and verifies a fixed 12-graph cache before activation;
 normal synthesis requires those cache hits and will not compile an unprepared

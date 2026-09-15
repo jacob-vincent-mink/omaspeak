@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.0.1-rc.2 - 2026-09-15
+
+- Updated rustls to 0.23.45 to address RUSTSEC-2026-0285. This release
+  candidate supersedes 0.0.1-rc.1.
+
 ## 0.0.1-rc.1 - 2026-09-14
 
 - Updated the packaged CPU core to ONNX Runtime 1.30.0 and switched CUDA setup

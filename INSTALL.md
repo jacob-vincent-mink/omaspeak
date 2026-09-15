@@ -9,14 +9,14 @@ artifacts for macOS or Windows.
 
 ## Release archive
 
-Download `omaspeak-0.0.1-rc.1-linux-x86_64.tar.xz` and `SHA256SUMS.txt` from the
-[v0.0.1-rc.1 release](https://github.com/jacob-vincent-mink/omaspeak/releases/tag/v0.0.1-rc.1),
+Download `omaspeak-0.0.1-rc.2-linux-x86_64.tar.xz` and `SHA256SUMS.txt` from the
+[v0.0.1-rc.2 release](https://github.com/jacob-vincent-mink/omaspeak/releases/tag/v0.0.1-rc.2),
 then verify and unpack it:
 
 ```bash
 sha256sum --check --ignore-missing SHA256SUMS.txt
-tar -xJf omaspeak-0.0.1-rc.1-linux-x86_64.tar.xz
-cd omaspeak-0.0.1-rc.1-linux-x86_64
+tar -xJf omaspeak-0.0.1-rc.2-linux-x86_64.tar.xz
+cd omaspeak-0.0.1-rc.2-linux-x86_64
 ./omaspeak --version
 ```
 
