@@ -2,6 +2,7 @@
 
 use std::fs;
 use std::io::{BufRead, BufReader, IsTerminal, Read, Write};
+use std::os::fd::AsRawFd;
 use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};
 use std::os::unix::net::{UnixListener, UnixStream};
 #[cfg(target_os = "linux")]
@@ -681,7 +682,7 @@ fn serve_daemon(
     paths: &AppPaths,
     interrupted: Arc<AtomicBool>,
 ) -> Result<()> {
-    let socket = prepare_daemon_socket(paths)?;
+    let (socket, _startup_lock) = prepare_daemon_socket(paths)?;
     let listener = UnixListener::bind(&socket)
         .with_context(|| format!("bind daemon socket {}", socket.display()))?;
     fs::set_permissions(&socket, fs::Permissions::from_mode(0o600))?;
@@ -770,15 +771,37 @@ fn finish_daemon_with(
     serve_result
 }
 
-fn prepare_daemon_socket(paths: &AppPaths) -> Result<PathBuf> {
+fn prepare_daemon_socket(paths: &AppPaths) -> Result<(PathBuf, fs::File)> {
     fs::create_dir_all(&paths.runtime_dir)?;
     fs::set_permissions(&paths.runtime_dir, fs::Permissions::from_mode(0o700))?;
     fs::create_dir_all(&paths.state_dir)?;
+    let lock_path = paths.runtime_dir.join("daemon.lock");
+    let startup_lock = fs::OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .truncate(false)
+        .open(&lock_path)
+        .with_context(|| format!("open daemon lock {}", lock_path.display()))?;
+    fs::set_permissions(&lock_path, fs::Permissions::from_mode(0o600))?;
+    // Keep this advisory lock for the daemon's lifetime. It serializes stale
+    // socket cleanup with binding, so an inode that is unlinked and then reused
+    // cannot make one daemon remove another daemon's socket.
+    if unsafe { libc::flock(startup_lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
+        let error = std::io::Error::last_os_error();
+        if error.kind() == std::io::ErrorKind::WouldBlock {
+            bail!(
+                "daemon is already running or starting at {}",
+                paths.socket().display()
+            );
+        }
+        return Err(error).with_context(|| format!("lock daemon startup {}", lock_path.display()));
+    }
     let socket = paths.socket();
     if connect_daemon(&socket)?.is_some() {
         bail!("daemon is already running at {}", socket.display());
     }
-    Ok(socket)
+    Ok((socket, startup_lock))
 }
 
 fn serve_requests<S: Read + Write>(

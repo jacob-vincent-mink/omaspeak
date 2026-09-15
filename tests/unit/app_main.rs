@@ -2171,7 +2171,7 @@ fn daemon_socket_preparation_creates_private_dirs_and_preserves_non_socket_paths
 
     let root = sandbox();
     let paths = paths(&root);
-    let socket = prepare_daemon_socket(&paths).unwrap();
+    let (socket, startup_lock) = prepare_daemon_socket(&paths).unwrap();
     assert_eq!(socket, paths.socket());
     assert!(paths.state_dir.is_dir());
     assert_eq!(
@@ -2182,6 +2182,22 @@ fn daemon_socket_preparation_creates_private_dirs_and_preserves_non_socket_paths
             & 0o777,
         0o700
     );
+    assert_eq!(
+        fs::metadata(paths.runtime_dir.join("daemon.lock"))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777,
+        0o600
+    );
+
+    let contention = prepare_daemon_socket(&paths).unwrap_err();
+    assert!(
+        contention
+            .to_string()
+            .contains("already running or starting")
+    );
+    drop(startup_lock);
 
     fs::write(&socket, b"stale").unwrap();
     assert!(prepare_daemon_socket(&paths).is_err());
@@ -3563,11 +3579,11 @@ fn daemon_socket_identity_and_already_running_guards_are_race_safe() {
             .to_string()
             .contains("already running")
     );
-    drop(first);
     fs::remove_file(&socket).unwrap();
     let second = UnixListener::bind(&socket).unwrap();
     let changed = remove_stale_socket(&socket, &old).unwrap_err();
     assert!(changed.to_string().contains("changed while checking"));
+    drop(first);
     drop(second);
     fs::remove_file(&socket).unwrap();
 
