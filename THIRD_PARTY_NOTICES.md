@@ -7,14 +7,17 @@ relicense the components or models below.
 
 Linux releases include a pinned, stripped audio.cpp shared library built from
 commit `e9ff20042ec85af960a720368c6927cda19ad65f`. audio.cpp is Apache-2.0.
-Release archives include its license and the license of every third-party
-component statically linked into that provider, including ggml, sentencepiece,
-libyaml, cJSON, and cpp-httplib where present in the pinned source build.
-The pinned audio.cpp tree also compiles tokenizer sources derived from
-llama.cpp into its runtime archive. The Supertonic-only final shared library
-does not retain their symbols after static archive extraction, but releases
-conservatively include llama.cpp's MIT license as
-`LLAMA-CPP-LICENSE`.
+The final Supertonic provider retains audio.cpp, ggml, cJSON, libyaml, and
+BSD-3-Clause PocketFFT-derived FFT code. Its exact in-source FFT notice is
+included as `POCKETFFT-LICENSE`.
+
+The audio.cpp build graph also contains sentencepiece and its bundled
+third-party sources, plus tokenizer sources derived from llama.cpp. Link-map and
+symbol inspection of the Supertonic-only provider found no object code retained
+from those static archives. The package nevertheless carries the source-tree
+licenses collected during the pinned build and conservatively includes
+llama.cpp's MIT license as `LLAMA-CPP-LICENSE`. Native model management is
+disabled, so cpp-httplib is neither compiled into nor shipped with the provider.
 
 ## Supertonic reference code
 

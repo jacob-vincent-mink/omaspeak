@@ -7,7 +7,8 @@ This candidate introduces the greenfield native-provider architecture:
 - direct OpenVINO remains available for Intel CPU, GPU, and NPU;
 - guided setup discovers exact provider paths and requires model-backed
   file-only proof before final activation;
-- NPU model-cache compilation happens during setup;
+- NPU model-cache compilation and a fresh-process cache-hit proof happen during
+  setup, using OpenVINO's standard cache for the validated 256-frame plan;
 - ordinary setup does not install or start a systemd service;
 - the Rust executable has no load-time dependency on an inference runtime.
 

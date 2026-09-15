@@ -34,7 +34,6 @@ jobs:
           build="${RUNNER_TEMP}/audio.cpp-build"
           git clone --filter=blob:none https://github.com/0xShug0/audio.cpp.git "${source}"
           git -C "${source}" checkout "${AUDIOCPP_COMMIT}"
-          git -C "${source}" submodule update --init --recursive
           provider=$(./scripts/build-default-audiocpp-provider.sh "${source}" "${build}")
           strip --strip-unneeded "${provider}"
           echo "AUDIOCPP_SOURCE=${source}" >> "${GITHUB_ENV}"
@@ -48,5 +47,6 @@ jobs:
           set -euo pipefail
           ! rg -i 'onnxruntime|libsherpa|sherpa-onnx' Cargo.toml Cargo.lock src tests scripts README.md INSTALL.md ACCELERATOR_SETUP.md RUNTIME.md config.example.toml
           ! readelf -d "${OMASPEAK_TEST_AUDIOCPP_LIBRARY}" | grep -Ei 'onnxruntime|sherpa'
+          test -s licenses/POCKETFFT-LICENSE
       - name: Coverage
         run: cargo llvm-cov --all-targets --locked --fail-under-lines 90.01 -- --test-threads=1

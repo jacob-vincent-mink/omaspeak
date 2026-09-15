@@ -54,7 +54,6 @@ jobs:
           build="${RUNNER_TEMP}/audio.cpp-build"
           git clone --filter=blob:none https://github.com/0xShug0/audio.cpp.git "${source}"
           git -C "${source}" checkout "${AUDIOCPP_COMMIT}"
-          git -C "${source}" submodule update --init --recursive
           provider=$(./scripts/build-default-audiocpp-provider.sh "${source}" "${build}")
           strip --strip-unneeded "${provider}"
           test "$(git -C "${source}" rev-parse HEAD)" = "${AUDIOCPP_COMMIT}"
@@ -100,6 +99,7 @@ jobs:
           cp THIRD_PARTY_NOTICES.md "${root}/licenses/OMASPEAK-THIRD-PARTY-NOTICES"
           cp licenses/SUPERTONIC-CODE-LICENSE "${root}/licenses/SUPERTONIC-CODE-LICENSE"
           cp licenses/LLAMA-CPP-LICENSE "${root}/licenses/LLAMA-CPP-LICENSE"
+          cp licenses/POCKETFFT-LICENSE "${root}/licenses/POCKETFFT-LICENSE"
           cp README.md INSTALL.md ACCELERATOR_SETUP.md RUNTIME.md CHANGELOG.md RELEASE_NOTES.md DEMO.md config.example.toml "${root}/"
           cp -a assets benchmarks packaging "${root}/"
           tar -C dist -cJf "dist/${package}.tar.xz" "${package}"
@@ -117,11 +117,15 @@ jobs:
           expected_version="${expected_version%-linux-${PACKAGE_ARCH}}"
           [[ "$("${binary}" --version)" == "omaspeak ${expected_version}" ]]
           [[ "$(readelf -d "${provider}" | sed -n 's/.*Library soname: \[\([^]]*\)\].*/\1/p')" == "libaudiocpp.so.0" ]]
+          test "$(find "${root}/lib" -maxdepth 1 -type f | wc -l)" -eq 1
+          test "$(find "${root}/lib" -maxdepth 1 -type l | wc -l)" -eq 2
           test -L "${root}/lib/libaudiocpp.so.0"
           test -L "${root}/lib/libaudiocpp.so"
           for symbol in audiocpp_abi_version audiocpp_registry_create audiocpp_model_load audiocpp_session_create audiocpp_session_run audiocpp_result_audio; do
             nm -D --defined-only "${provider}" | grep "${symbol}@@AUDIOCPP_0" >/dev/null
           done
+          ! nm -D --defined-only --format=posix "${provider}" | awk '$1 != "AUDIOCPP_0" && $1 !~ /^audiocpp_/ { print; rejected=1 } END { exit !rejected }'
+          ! find "${root}" -type f \( -name 'audiocpp_cli' -o -name 'audiocpp_server' -o -name 'audiocpp_gguf' -o -name 'audiocpp_model_manager' \) | grep .
           if readelf -d "${binary}" | grep -Ei 'NEEDED.*(audiocpp|onnxruntime|sherpa|openvino|cuda|cudnn|hip|vulkan)'; then
             echo "release executable has a forbidden inference-runtime dependency" >&2
             exit 1
@@ -133,6 +137,7 @@ jobs:
           test -s "${root}/licenses/AUDIOCPP-THIRD-PARTY/external/sentencepiece/LICENSE"
           test -s "${root}/licenses/AUDIOCPP-THIRD-PARTY/external/sentencepiece/third_party/protobuf-lite/LICENSE"
           test -s "${root}/licenses/LLAMA-CPP-LICENSE"
+          test -s "${root}/licenses/POCKETFFT-LICENSE"
           test "$(find "${root}/licenses/AUDIOCPP-THIRD-PARTY" -type f | wc -l)" -ge 10
           export XDG_CONFIG_HOME="${RUNNER_TEMP}/omaspeak-release/config"
           export XDG_DATA_HOME="${RUNNER_TEMP}/omaspeak-release/data"
@@ -162,7 +167,7 @@ jobs:
           export XDG_CACHE_HOME="${RUNNER_TEMP}/omaspeak-smoke/cache"
           export XDG_RUNTIME_DIR="${RUNNER_TEMP}/omaspeak-smoke/run"
           mkdir -p "${XDG_RUNTIME_DIR}"
-          "${binary}" setup model --download supertonic-3-gguf --accept-license OpenRAIL-M
+          "${binary}" setup model --model supertonic-3-gguf --accept-license OpenRAIL-M
           "${binary}" say --no-play --out "${RUNNER_TEMP}/omaspeak-smoke.wav" "Release file only proof."
           test -s "${RUNNER_TEMP}/omaspeak-smoke.wav"
 

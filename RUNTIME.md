@@ -16,7 +16,8 @@ vendor software.
 
 OpenVINO is a separate direct provider. Omaspeak loads the external OpenVINO C
 API and plugins manifest, owns the Supertonic pre/post-processing, and keeps
-NPU compilation in setup.
+NPU compilation in setup. NPU persistence uses OpenVINO's standard `CACHE_DIR`
+mechanism, followed by a fresh-process cache-hit proof before activation.
 
 Search order is:
 

@@ -3215,7 +3215,10 @@ fn npu_cache_progress_orchestration_handles_formats_skip_and_missing_state() {
                 fingerprint: Some("fixture".into()),
                 directory: Some(expected.clone()),
                 blobs: Vec::new(),
-                detail: "12 prepared OpenVINO cache blobs".into(),
+                detail: format!(
+                    "{} prepared OpenVINO cache blobs",
+                    omaspeak::supertonic::NPU_COMPILED_MODELS
+                ),
             }))
         })
         .unwrap();

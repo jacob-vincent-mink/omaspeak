@@ -437,9 +437,8 @@ fn run_with_paths_and_prepare(
         TopCommand::NpuPrecompile { request } => {
             #[cfg(not(test))]
             omaspeak::audio_cpp::disable_core_dumps()?;
-            let result = omaspeak::runtime_inventory::npu_child(serde_json::from_str(&request)?);
-            println!("{}", serde_json::to_string(&result?)?);
-            Ok(())
+            let result = omaspeak::runtime_inventory::npu_child(serde_json::from_str(&request)?)?;
+            omaspeak::runtime_inventory::write_npu_preparation_result(&result)
         }
         TopCommand::Daemon => run_daemon(&config_path, paths),
         TopCommand::Status { json } => print_status(&config_path, paths, json),

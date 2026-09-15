@@ -346,8 +346,8 @@ fn npu_generation_uses_only_prepared_shapes_masks_padding_and_trims_audio() {
     assert_eq!(npu_latent_bucket(1).unwrap(), 32);
     assert_eq!(npu_latent_bucket(32).unwrap(), 32);
     assert_eq!(npu_latent_bucket(33).unwrap(), 64);
-    assert_eq!(npu_latent_bucket(512).unwrap(), 512);
-    assert!(npu_latent_bucket(513).is_err());
+    assert_eq!(npu_latent_bucket(256).unwrap(), 256);
+    assert!(npu_latent_bucket(257).is_err());
 
     let frontend = frontend();
     let mut pipeline = NpuShapePipeline {
@@ -445,6 +445,27 @@ fn npu_generation_rejects_inputs_outside_the_prepared_shape_plan() {
         .to_string();
     assert!(error.contains("normalized text chunk"), "{error}");
     assert!(expanded.calls.is_empty());
+}
+
+#[test]
+fn npu_generation_uses_a_shorter_device_safe_chunk_budget() {
+    for (language, text) in [("en", "word ".repeat(40)), ("ja", "あ".repeat(100))] {
+        let mut frontend = frontend();
+        frontend.language = language.into();
+        let mut pipeline = NpuShapePipeline {
+            duration: 0.2,
+            ..Default::default()
+        };
+        frontend.generate_npu(&mut pipeline, &text, 1.0, 0).unwrap();
+        assert!(
+            pipeline
+                .calls
+                .iter()
+                .filter(|(graph, _)| *graph == Graph::DurationPredictor)
+                .count()
+                >= 2
+        );
+    }
 }
 
 #[test]
@@ -558,7 +579,11 @@ fn npu_cache_manifest_rejects_shape_path_and_directory_integrity_failures() {
     let state = write_variant(&|value| {
         value["blobs"].as_array_mut().unwrap().pop();
     });
-    assert!(state.detail.contains("records 11"));
+    assert!(
+        state
+            .detail
+            .contains(&format!("records {}", NPU_COMPILED_MODELS - 1))
+    );
     let state = write_variant(&|value| value["blobs"][0] = "../escape.blob".into());
     assert!(state.detail.contains("unsafe compiled-model path"));
     let state = write_variant(&|value| value["blobs"][0] = value["blobs"][1].clone());
@@ -574,9 +599,10 @@ fn npu_cache_manifest_rejects_shape_path_and_directory_integrity_failures() {
     assert!(state.detail.contains("does not exactly match"));
 
     fs::remove_file(directory.join("extra.blob")).unwrap();
-    fs::remove_file(directory.join("model-11.blob")).unwrap();
+    let last_blob = directory.join(format!("model-{}.blob", NPU_COMPILED_MODELS - 1));
+    fs::remove_file(&last_blob).unwrap();
     assert!(write_npu_cache_manifest(&config, &app_paths, &directory).is_err());
-    fs::write(directory.join("model-11.blob"), b"").unwrap();
+    fs::write(last_blob, b"").unwrap();
     assert!(write_npu_cache_manifest(&config, &app_paths, &directory).is_err());
 
     let mut cpu = config;
@@ -831,10 +857,10 @@ fn openvino_runtime_plans_validate_devices_and_properties_without_loading_librar
     let (_, npu_properties) =
         openvino_execution_plan("npu", &available, &cache, 1, &BTreeMap::new()).unwrap();
     assert!(
-        !npu_properties
+        npu_properties
             .iter()
-            .any(|property| matches!(property, OpenvinoProperty::CacheDir(_))),
-        "NPU persistence uses explicit compiled-model export/import"
+            .any(|property| matches!(property, OpenvinoProperty::CacheDir(value) if value == cache.to_str().unwrap())),
+        "NPU persistence uses OpenVINO's device-neutral compiled-model cache"
     );
     for managed in ["CACHE_DIR", "INFERENCE_NUM_THREADS"] {
         assert!(
@@ -891,29 +917,6 @@ impl OpenvinoGraph for DefaultContractGraph {
 
     fn run(&mut self, _: Graph, _: Vec<NamedTensor>, output: &'static str) -> Result<NamedTensor> {
         NamedTensor::f32(output, [1], vec![0.0])
-    }
-}
-
-struct DefaultContractCompileApi;
-
-impl OpenvinoCompileApi for DefaultContractCompileApi {
-    type Model = Vec<u8>;
-    type Shape = Vec<i64>;
-
-    fn read_model(&mut self, bytes: &[u8]) -> Result<Self::Model> {
-        Ok(bytes.to_vec())
-    }
-
-    fn shape(&self, dimensions: &[i64]) -> Result<Self::Shape> {
-        Ok(dimensions.to_vec())
-    }
-
-    fn reshape(&self, _: &mut Self::Model, _: Vec<(&str, Self::Shape)>) -> Result<()> {
-        Ok(())
-    }
-
-    fn compile(&mut self, _: &Self::Model, _: &str) -> Result<Box<dyn OpenvinoGraph>> {
-        Ok(Box::new(DefaultContractGraph))
     }
 }
 
@@ -1088,8 +1091,14 @@ fn native_npu_preparation_contract_validates_plan_and_persisted_blobs_without_ff
     })
     .unwrap_err();
     assert!(compile_error.to_string().contains("static-plan failure"));
-    let wrong_count = prepare_npu_cache_native_with(&config, &cache, false, || Ok(11)).unwrap_err();
-    assert!(wrong_count.to_string().contains("expected 12"));
+    let wrong_count =
+        prepare_npu_cache_native_with(&config, &cache, false, || Ok(NPU_COMPILED_MODELS - 1))
+            .unwrap_err();
+    assert!(
+        wrong_count
+            .to_string()
+            .contains(&format!("expected {NPU_COMPILED_MODELS}"))
+    );
     let empty = prepare_npu_cache_native_with(&config, &cache, false, || Ok(NPU_COMPILED_MODELS))
         .unwrap_err();
     assert!(empty.to_string().contains("did not persist"));
@@ -1172,10 +1181,6 @@ impl OpenvinoGraph for FakeOpenvinoGraph {
     fn run(&mut self, _: Graph, _: Vec<NamedTensor>, output: &'static str) -> Result<NamedTensor> {
         NamedTensor::f32(output, [1, 2], vec![0.25, -0.25])
     }
-
-    fn export(&self, path: &Path) -> Result<()> {
-        fs::write(path, b"compiled fixture").map_err(Into::into)
-    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1229,17 +1234,6 @@ impl OpenvinoCompileApi for FakeCompileApi {
         Ok(())
     }
 
-    fn import(&mut self, content: &[u8], device: &str) -> Result<Box<dyn OpenvinoGraph>> {
-        self.events
-            .lock()
-            .unwrap()
-            .push(format!("import:{device}:{}", content.len()));
-        Ok(Box::new(FakeOpenvinoGraph {
-            actual_device: device.into(),
-            fail_device_query: false,
-        }))
-    }
-
     fn compile(&mut self, model: &Self::Model, device: &str) -> Result<Box<dyn OpenvinoGraph>> {
         assert_eq!(model, b"model fixture");
         self.events
@@ -1257,7 +1251,7 @@ impl OpenvinoCompileApi for FakeCompileApi {
 }
 
 #[test]
-fn openvino_npu_compiler_exports_then_imports_the_stable_shape_blob() {
+fn openvino_npu_compiler_delegates_cache_management_to_openvino() {
     let inputs = [NamedTensor::f32("latent", [1, 4, 32], vec![0.0; 128]).unwrap()];
     let cache_dir = temp("npu-explicit-export-import");
     fs::create_dir_all(&cache_dir).unwrap();
@@ -1268,58 +1262,26 @@ fn openvino_npu_compiler_exports_then_imports_the_stable_shape_blob() {
             events: events.clone(),
         },
         device: "NPU".into(),
-        cache_dir: cache_dir.clone(),
     };
 
     compiler
         .compile(Graph::Vocoder, b"model fixture", &inputs)
         .unwrap();
-    let blob = cache_dir.join(format!(
-        "{}.blob",
-        openvino_cache_blob_id(Graph::Vocoder, &inputs)
-    ));
-    assert_eq!(fs::read(&blob).unwrap(), b"compiled fixture");
+    assert!(cache_blobs(&cache_dir).unwrap().is_empty());
+    assert!(events.lock().unwrap().contains(&"compile:NPU".into()));
 
     events.lock().unwrap().clear();
     compiler
         .compile(Graph::Vocoder, b"model fixture", &inputs)
         .unwrap();
     let events = events.lock().unwrap();
-    assert!(events.contains(&"import:NPU:16".into()));
-    assert!(!events.contains(&"compile:NPU".into()));
+    assert!(events.contains(&"compile:NPU".into()));
 }
 
 #[test]
-fn compiled_model_contracts_fail_explicitly_and_publish_atomically() {
+fn compiled_model_default_does_not_claim_cache_hit() {
     let graph = DefaultContractGraph;
-    assert!(graph.export(Path::new("unused.blob")).is_err());
-
-    let mut default_api = DefaultContractCompileApi;
-    assert!(default_api.import(b"compiled", "NPU").is_err());
-
-    let inputs = [NamedTensor::f32("latent", [1, 4, 32], vec![0.0; 128]).unwrap()];
-    let cache_dir = temp("npu-publish-collision");
-    fs::create_dir_all(&cache_dir).unwrap();
-    let blob = cache_dir.join(format!(
-        "{}.blob",
-        openvino_cache_blob_id(Graph::Vocoder, &inputs)
-    ));
-    fs::create_dir_all(&blob).unwrap();
-    fs::write(blob.join("keep"), b"existing data").unwrap();
-    let mut compiler = OpenvinoCompilerAdapter {
-        api: FakeCompileApi {
-            failure: None,
-            events: Arc::new(Mutex::new(Vec::new())),
-        },
-        device: "NPU".into(),
-        cache_dir,
-    };
-    let error = compiler
-        .compile(Graph::Vocoder, b"model fixture", &inputs)
-        .err()
-        .expect("a directory may not be replaced by the compiled-model blob");
-    assert!(error.to_string().contains("publish compiled vocoder"));
-    assert_eq!(fs::read(blob.join("keep")).unwrap(), b"existing data");
+    assert!(!graph.loaded_from_cache().unwrap());
 }
 
 #[test]
@@ -1335,7 +1297,6 @@ fn openvino_compiler_adapter_specializes_every_input_and_contextualizes_api_fail
             events: events.clone(),
         },
         device: "CPU".into(),
-        cache_dir: temp("compiler-adapter-cache"),
     };
     let graph = compiler
         .compile(Graph::Vocoder, b"model fixture", &inputs)
@@ -1364,7 +1325,6 @@ fn openvino_compiler_adapter_specializes_every_input_and_contextualizes_api_fail
                 events: Arc::new(Mutex::new(Vec::new())),
             },
             device: "CPU".into(),
-            cache_dir: temp("compiler-adapter-failure-cache"),
         };
         let error = compiler
             .compile(Graph::Vocoder, b"model fixture", &inputs)
@@ -1428,7 +1388,7 @@ impl OpenvinoRuntimeApi for FakeRuntimeApi {
         Ok(())
     }
 
-    fn compiler(&mut self, _: Self::Core, device: String, _: PathBuf) -> Box<dyn OpenvinoCompiler> {
+    fn compiler(&mut self, _: Self::Core, device: String) -> Box<dyn OpenvinoCompiler> {
         Box::new(FakeOpenvinoCompiler {
             compilations: Arc::new(AtomicUsize::new(0)),
             actual_device: device,

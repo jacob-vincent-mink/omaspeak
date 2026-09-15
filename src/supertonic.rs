@@ -37,8 +37,10 @@ const LANGUAGES: &[&str] = &[
 const MAX_LATENT_LENGTH: i64 = 10_000;
 const MIN_DURATION_SECONDS: f32 = 0.1;
 pub const NPU_TEXT_BUCKET: i64 = 320;
-pub const NPU_LATENT_BUCKETS: &[i64] = &[32, 64, 128, 256, 512];
+pub const NPU_LATENT_BUCKETS: &[i64] = &[32, 64, 128, 256];
 pub const NPU_COMPILED_MODELS: usize = 2 + 2 * NPU_LATENT_BUCKETS.len();
+const NPU_MAX_CHUNK_CHARS: usize = 160;
+const NPU_MAX_CJK_CHUNK_CHARS: usize = 80;
 const NPU_CACHE_SCHEMA: u32 = 1;
 const NPU_MANIFEST: &str = "omaspeak-npu-cache.json";
 
@@ -145,9 +147,6 @@ trait OpenvinoGraph: Send {
     fn loaded_from_cache(&self) -> Result<bool> {
         Ok(false)
     }
-    fn export(&self, _path: &Path) -> Result<()> {
-        bail!("compiled-model export is unavailable")
-    }
     fn run(
         &mut self,
         graph: Graph,
@@ -159,7 +158,6 @@ trait OpenvinoGraph: Send {
 struct OpenvinoCompilerAdapter<A> {
     api: A,
     device: String,
-    cache_dir: PathBuf,
 }
 
 trait OpenvinoCompileApi: Send {
@@ -169,15 +167,12 @@ trait OpenvinoCompileApi: Send {
     fn read_model(&mut self, bytes: &[u8]) -> Result<Self::Model>;
     fn shape(&self, dimensions: &[i64]) -> Result<Self::Shape>;
     fn reshape(&self, model: &mut Self::Model, shapes: Vec<(&str, Self::Shape)>) -> Result<()>;
-    fn import(&mut self, _content: &[u8], _device: &str) -> Result<Box<dyn OpenvinoGraph>> {
-        bail!("compiled-model import is unavailable")
-    }
     fn compile(&mut self, model: &Self::Model, device: &str) -> Result<Box<dyn OpenvinoGraph>>;
 }
 
 struct NativeOpenvinoCompileApi(Core);
 
-struct NativeOpenvinoGraph(CompiledModel, bool);
+struct NativeOpenvinoGraph(CompiledModel);
 
 trait OpenvinoRequestFactory {
     fn create_request(&mut self) -> Result<Box<dyn OpenvinoRequest>>;
@@ -219,12 +214,7 @@ trait OpenvinoRuntimeApi {
         device: &str,
         property: &OpenvinoProperty,
     ) -> Result<()>;
-    fn compiler(
-        &mut self,
-        core: Self::Core,
-        device: String,
-        cache_dir: PathBuf,
-    ) -> Box<dyn OpenvinoCompiler>;
+    fn compiler(&mut self, core: Self::Core, device: String) -> Box<dyn OpenvinoCompiler>;
 }
 
 struct NativeOpenvinoRuntimeApi;
@@ -252,12 +242,14 @@ fn openvino_execution_plan(
         );
     }
     let mut properties = Vec::new();
-    if device != "NPU" {
-        let cache = cache_dir
-            .to_str()
-            .context("OpenVINO cache path is not valid UTF-8")?;
-        properties.push(OpenvinoProperty::CacheDir(cache.into()));
-    }
+    // OpenVINO's device-neutral cache is the supported NPU cache mechanism.
+    // Let Core own export/import and verify LOADED_FROM_CACHE in a fresh child;
+    // direct CompiledModel export can report success while producing an empty
+    // blob with some NPU driver/compiler combinations.
+    let cache = cache_dir
+        .to_str()
+        .context("OpenVINO cache path is not valid UTF-8")?;
+    properties.push(OpenvinoProperty::CacheDir(cache.into()));
     if device == "CPU" {
         properties.push(OpenvinoProperty::InferenceNumThreads(threads.to_string()));
     }
@@ -326,7 +318,7 @@ impl OpenvinoPipeline {
                 .with_context(|| context)?;
         }
         Ok(Self {
-            compiler: api.compiler(core, device.clone(), cache_dir.to_owned()),
+            compiler: api.compiler(core, device.clone()),
             device,
             graphs,
             compiled: HashMap::new(),
@@ -427,16 +419,10 @@ impl OpenvinoRuntimeApi for NativeOpenvinoRuntimeApi {
             .map_err(Into::into)
     }
 
-    fn compiler(
-        &mut self,
-        core: Self::Core,
-        device: String,
-        cache_dir: PathBuf,
-    ) -> Box<dyn OpenvinoCompiler> {
+    fn compiler(&mut self, core: Self::Core, device: String) -> Box<dyn OpenvinoCompiler> {
         Box::new(OpenvinoCompilerAdapter {
             api: NativeOpenvinoCompileApi(core),
             device,
-            cache_dir,
         })
     }
 }
@@ -459,41 +445,13 @@ impl<A: OpenvinoCompileApi> OpenvinoCompiler for OpenvinoCompilerAdapter<A> {
         self.api
             .reshape(&mut model, shapes)
             .with_context(|| format!("specialize {} input shapes", graph.name()))?;
-        if self.device.eq_ignore_ascii_case("npu") {
-            let path = self
-                .cache_dir
-                .join(format!("{}.blob", openvino_cache_blob_id(graph, inputs)));
-            if path.is_file() {
-                let content = fs::read(&path)
-                    .with_context(|| format!("read compiled NPU model {}", path.display()))?;
-                return self
-                    .api
-                    .import(&content, &self.device)
-                    .with_context(|| format!("import compiled {} NPU model", graph.name()));
-            }
-            let compiled = self
-                .api
-                .compile(&model, &self.device)
-                .with_context(|| format!("compile {} for {}", graph.name(), self.device))?;
-            let temporary = path.with_extension(format!("blob.{}.tmp", std::process::id()));
-            compiled
-                .export(&temporary)
-                .with_context(|| format!("export compiled {} NPU model", graph.name()))?;
-            fs::rename(&temporary, &path).with_context(|| {
-                format!(
-                    "publish compiled {} NPU model {}",
-                    graph.name(),
-                    path.display()
-                )
-            })?;
-            return Ok(compiled);
-        }
         self.api
             .compile(&model, &self.device)
             .with_context(|| format!("compile {} for {}", graph.name(), self.device))
     }
 }
 
+#[cfg(test)]
 fn openvino_cache_blob_id(graph: Graph, inputs: &[NamedTensor]) -> u64 {
     let mut hasher = Sha256::new();
     hasher.update(graph.name().as_bytes());
@@ -533,17 +491,9 @@ impl OpenvinoCompileApi for NativeOpenvinoCompileApi {
         model.reshape(&shapes).map_err(Into::into)
     }
 
-    fn import(&mut self, content: &[u8], device: &str) -> Result<Box<dyn OpenvinoGraph>> {
-        Ok(Box::new(NativeOpenvinoGraph(
-            self.0.import_model(content, DeviceType::from(device))?,
-            true,
-        )))
-    }
-
     fn compile(&mut self, model: &Self::Model, device: &str) -> Result<Box<dyn OpenvinoGraph>> {
         Ok(Box::new(NativeOpenvinoGraph(
             self.0.compile_model(model, DeviceType::from(device))?,
-            false,
         )))
     }
 }
@@ -557,9 +507,6 @@ impl OpenvinoGraph for NativeOpenvinoGraph {
     }
 
     fn loaded_from_cache(&self) -> Result<bool> {
-        if self.1 {
-            return Ok(true);
-        }
         let value = self
             .0
             .get_property(&PropertyKey::Other(Cow::Borrowed("LOADED_FROM_CACHE")))
@@ -568,15 +515,6 @@ impl OpenvinoGraph for NativeOpenvinoGraph {
             value.trim().to_ascii_uppercase().as_str(),
             "YES" | "TRUE" | "1"
         ))
-    }
-
-    fn export(&self, path: &Path) -> Result<()> {
-        self.0
-            .export_model(
-                path.to_str()
-                    .context("compiled-model path is not valid UTF-8")?,
-            )
-            .map_err(Into::into)
     }
 
     fn run(
@@ -1322,7 +1260,13 @@ impl SupertonicFrontend {
         voice: i32,
         shapes: SynthesisShapes,
     ) -> Result<Vec<f32>> {
-        let max_len = if matches!(self.language.as_str(), "ko" | "ja") {
+        let max_len = if shapes == SynthesisShapes::NpuStatic {
+            if matches!(self.language.as_str(), "ko" | "ja") {
+                NPU_MAX_CJK_CHUNK_CHARS
+            } else {
+                NPU_MAX_CHUNK_CHARS
+            }
+        } else if matches!(self.language.as_str(), "ko" | "ja") {
             120
         } else {
             300

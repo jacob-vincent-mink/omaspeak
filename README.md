@@ -142,9 +142,8 @@ A source build does not silently install or bundle a provider. To build the
 same pinned CPU provider used by releases:
 
 ```bash
-git clone --recursive https://github.com/0xShug0/audio.cpp /tmp/audio.cpp
+git clone https://github.com/0xShug0/audio.cpp /tmp/audio.cpp
 git -C /tmp/audio.cpp checkout e9ff20042ec85af960a720368c6927cda19ad65f
-git -C /tmp/audio.cpp submodule update --init --recursive
 ./scripts/build-default-audiocpp-provider.sh /tmp/audio.cpp /tmp/audio.cpp-build
 ```
 
@@ -169,7 +168,8 @@ and [RUNTIME.md](RUNTIME.md) for the full contracts.
 
 ## License
 
-Omaspeak source is MIT licensed. The packaged audio.cpp provider is Apache-2.0
-and retains all statically linked third-party licenses. Supertonic model weights
-are OpenRAIL-M and are not included in the source or release archive. See
+Omaspeak source is MIT licensed. The packaged audio.cpp provider is Apache-2.0,
+and the release includes notices for all code retained in it, including the
+BSD-3-Clause PocketFFT-derived FFT. Supertonic model weights are OpenRAIL-M and
+are not included in the source or release archive. See
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

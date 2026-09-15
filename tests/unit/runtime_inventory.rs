@@ -13,6 +13,10 @@ fn captured_shell(script: &str) -> ChildOutput {
     collect_child_output(child, Duration::from_secs(2)).unwrap()
 }
 
+fn framed_npu_report() -> &'static str {
+    r#"printf 'native stdout diagnostic\nOMASPEAK_NPU_PREPARATION_V1_BEGIN\n%s\nOMASPEAK_NPU_PREPARATION_V1_END\ntrailing native output' '{"compiled_models":10,"cache_blobs":["model.blob"],"loaded_from_cache_required":true}'"#
+}
+
 fn temp(name: &str) -> PathBuf {
     static NEXT: AtomicUsize = AtomicUsize::new(0);
     let path = std::env::temp_dir().join(format!(
@@ -260,24 +264,38 @@ fn evidence_defaults_do_not_claim_inference_or_devices() {
 
 #[test]
 fn npu_child_capture_preserves_diagnostics_and_bounds_execution() {
-    let success = captured_shell(
-        r#"printf '%s' '{"compiled_models":12,"cache_blobs":["model.blob"],"loaded_from_cache_required":true}'; printf 'benign native diagnostic' >&2"#,
-    );
+    let success = captured_shell(&format!(
+        "{}; printf 'benign native diagnostic' >&2",
+        framed_npu_report()
+    ));
     assert_eq!(success.stderr, b"benign native diagnostic");
     let report = decode_npu_preparation(success).unwrap();
-    assert_eq!(report.compiled_models, 12);
+    assert_eq!(report.compiled_models, 10);
     assert_eq!(report.cache_blobs, [PathBuf::from("model.blob")]);
     assert!(report.loaded_from_cache_required);
 
     let failure = captured_shell("printf 'provider failed' >&2; exit 7");
     let error = decode_npu_preparation(failure).unwrap_err().to_string();
     assert!(error.contains("exit status: 7"));
-    assert!(error.contains("provider failed"));
+    assert!(error.contains("native stderr: provider failed"));
 
     let malformed = captured_shell("printf 'not-json'; printf 'parse context' >&2");
     let error = decode_npu_preparation(malformed).unwrap_err().to_string();
+    assert!(error.contains("returned no result frame"));
+    assert!(error.contains("native stdout: not-json"));
+    assert!(error.contains("native stderr: parse context"));
+
+    let malformed = captured_shell(
+        "printf 'OMASPEAK_NPU_PREPARATION_V1_BEGIN\\nnot-json\\nOMASPEAK_NPU_PREPARATION_V1_END\\n'",
+    );
+    let error = decode_npu_preparation(malformed).unwrap_err().to_string();
     assert!(error.contains("read isolated NPU preparation evidence"));
-    assert!(error.contains("parse context"));
+
+    let incomplete =
+        captured_shell("printf 'before\\nOMASPEAK_NPU_PREPARATION_V1_BEGIN\\nnot-finished'");
+    let error = decode_npu_preparation(incomplete).unwrap_err().to_string();
+    assert!(error.contains("incomplete result frame"));
+    assert!(error.contains("native stdout: before"));
 
     let child = std::process::Command::new("sleep")
         .arg("0.1")

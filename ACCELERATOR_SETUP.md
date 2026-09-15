@@ -48,8 +48,12 @@ omaspeak setup model --model supertonic-3-int8 \
 
 For NPU use `supertonic-3-npu`, whose pinned file set includes the official
 FP32 vector estimator. Setup verifies each file hash and compiles the fixed
-shape plan into the Omaspeak cache. You can inspect or repeat that explicit
-step with:
+shape plan through OpenVINO's standard `CACHE_DIR` mechanism, then starts a
+fresh child and requires every graph to report a cache hit. The prepared latent
+buckets stop at 256 frames (about 17.8 seconds of 44.1 kHz output). Omaspeak
+uses shorter 160-character chunks, or 80 for Japanese and Korean, on NPU and
+rejects a predicted chunk over that duration with the supported limit in the
+error. You can inspect or repeat the explicit preparation step with:
 
 ```bash
 omaspeak setup cache

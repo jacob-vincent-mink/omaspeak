@@ -7,7 +7,7 @@ use crate::{
 };
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
-use std::io::Read;
+use std::io::{Read, Write};
 use std::process::{Child, ExitStatus};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -42,6 +42,9 @@ pub struct NpuPreparationRequest {
     pub cache_dir: PathBuf,
     pub require_cache_hits: bool,
 }
+
+const NPU_RESULT_BEGIN: &[u8] = b"OMASPEAK_NPU_PREPARATION_V1_BEGIN\n";
+const NPU_RESULT_END: &[u8] = b"\nOMASPEAK_NPU_PREPARATION_V1_END\n";
 
 pub fn npu_child(
     request: NpuPreparationRequest,
@@ -582,25 +585,64 @@ fn collect_child_output(mut child: Child, timeout: Duration) -> Result<ChildOutp
 }
 
 fn decode_npu_preparation(output: ChildOutput) -> Result<crate::supertonic::NpuNativePreparation> {
-    let detail = String::from_utf8_lossy(&output.stderr);
+    let diagnostics = child_diagnostics(&output);
     if !output.status.success() {
         bail!(
             "NPU cache preparation terminated: {}{}",
             output.status,
-            if detail.trim().is_empty() {
+            if diagnostics.is_empty() {
                 String::new()
             } else {
-                format!(": {}", detail.trim())
+                format!(": {diagnostics}")
             }
         );
     }
-    serde_json::from_slice(&output.stdout).with_context(|| {
-        if detail.trim().is_empty() {
-            "read isolated NPU preparation evidence".into()
-        } else {
-            format!("read isolated NPU preparation evidence: {}", detail.trim())
-        }
-    })
+    let start = output
+        .stdout
+        .windows(NPU_RESULT_BEGIN.len())
+        .rposition(|candidate| candidate == NPU_RESULT_BEGIN)
+        .map(|offset| offset + NPU_RESULT_BEGIN.len())
+        .with_context(|| format!("NPU cache preparation returned no result frame{diagnostics}"))?;
+    let remainder = &output.stdout[start..];
+    let end = remainder
+        .windows(NPU_RESULT_END.len())
+        .position(|candidate| candidate == NPU_RESULT_END)
+        .with_context(|| {
+            format!("NPU cache preparation returned an incomplete result frame{diagnostics}")
+        })?;
+    serde_json::from_slice(&remainder[..end])
+        .with_context(|| format!("read isolated NPU preparation evidence{diagnostics}"))
+}
+
+fn child_diagnostics(output: &ChildOutput) -> String {
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let before_frame = stdout
+        .rfind(std::str::from_utf8(NPU_RESULT_BEGIN).expect("result marker is UTF-8"))
+        .map_or(stdout.as_ref(), |offset| &stdout[..offset]);
+    let stdout = before_frame.trim();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stderr = stderr.trim();
+    match (stdout.is_empty(), stderr.is_empty()) {
+        (true, true) => String::new(),
+        (false, true) => format!("; native stdout: {stdout}"),
+        (true, false) => format!("; native stderr: {stderr}"),
+        (false, false) => format!("; native stdout: {stdout}; native stderr: {stderr}"),
+    }
+}
+
+/// Write the hidden-child result as a framed record after native libraries have
+/// finished their work. OpenVINO and its plugins may also write to stdout, so
+/// stdout cannot itself be treated as a JSON transport.
+pub fn write_npu_preparation_result(
+    result: &crate::supertonic::NpuNativePreparation,
+) -> Result<()> {
+    let json = serde_json::to_vec(result)?;
+    let stdout = std::io::stdout();
+    let mut stdout = stdout.lock();
+    stdout.write_all(NPU_RESULT_BEGIN)?;
+    stdout.write_all(&json)?;
+    stdout.write_all(NPU_RESULT_END)?;
+    stdout.flush().context("flush NPU preparation result")
 }
 
 pub fn child(config: &BackendConfig) -> Probe {
