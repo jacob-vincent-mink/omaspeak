@@ -227,7 +227,7 @@ fn checks_with(
         ));
     }
     if config.backend.runtime == crate::backend::Runtime::Openvino {
-        if runtime_probe.device_accessible {
+        if runtime_probe.device_accessible == Some(true) {
             result.push(ok(
                 "device",
                 format!(
@@ -443,7 +443,11 @@ pub fn print_runtime(config_path: &Path, json: bool) -> Result<()> {
                 state.discovered,
                 state.configured,
                 state.probe.loadable,
-                state.probe.device_accessible,
+                match state.probe.device_accessible {
+                    Some(true) => "yes",
+                    Some(false) => "no",
+                    None => "unverified",
+                },
                 state.probe.ready,
                 state.source
             );

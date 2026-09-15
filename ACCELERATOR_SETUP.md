@@ -20,6 +20,38 @@ omaspeak setup runtime --runtime hip --device gpu --device-id 0 --dir /path/to/p
 guided setup asks for the same value. The exact backend and device ID are sent
 to audio.cpp when Omaspeak creates the worker session.
 
+To build a compatible provider from the revision used by Omaspeak releases:
+
+```bash
+git clone https://github.com/0xShug0/audio.cpp /tmp/audio.cpp
+git -C /tmp/audio.cpp checkout e9ff20042ec85af960a720368c6927cda19ad65f
+
+# Choose exactly one of these backend flags.
+backend_flag=-DENGINE_ENABLE_CUDA=ON       # NVIDIA CUDA 12 or newer
+# backend_flag=-DENGINE_ENABLE_VULKAN=ON   # Vulkan SDK and loader
+# backend_flag=-DENGINE_ENABLE_HIP=ON       # AMD ROCm/HIP
+
+cmake -S /tmp/audio.cpp -B /tmp/audio.cpp-build \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DAUDIOCPP_BUILD_C_API=ON \
+  -DAUDIOCPP_DEPLOYMENT_BUILD=OFF \
+  -DAUDIOCPP_MODEL_SET=custom \
+  -DAUDIOCPP_MODELS=supertonic \
+  -DENGINE_BUILD_EXAMPLES=OFF \
+  -DENGINE_BUILD_TESTS=OFF \
+  -DENGINE_BUILD_EXTENDED_TESTS=OFF \
+  -DENGINE_BUILD_MODEL_TESTS=OFF \
+  "$backend_flag"
+cmake --build /tmp/audio.cpp-build --parallel --target audiocpp
+```
+
+For a local CUDA build, add `-DCMAKE_CUDA_ARCHITECTURES=native` to reduce build
+time. Omit it when building a provider for other GPU generations. audio.cpp's
+[Linux build guide](https://github.com/0xShug0/audio.cpp/blob/e9ff20042ec85af960a720368c6927cda19ad65f/docs/build/linux.md)
+documents toolkit selection and architecture values. The resulting provider is
+under `/tmp/audio.cpp-build/bin`; select that directory with the matching
+`omaspeak setup runtime` command above.
+
 ABI loading alone is not placement proof. With an installed GGUF model, setup
 creates a real Supertonic session and writes a file-only synthesis before it
 saves the candidate. Without a model it reports an ABI-only result and tells
@@ -35,6 +67,14 @@ omaspeak setup runtime --runtime openvino --device cpu --dir /opt/intel/openvino
 omaspeak setup runtime --runtime openvino --device gpu --dir /opt/intel/openvino --apply
 omaspeak setup runtime --runtime openvino --device npu --dir /opt/intel/openvino --apply
 ```
+
+The directory can be an official archive root such as `/opt/intel/openvino_2026`
+or a system prefix such as `/usr`; setup locates the runtime library and plugin
+manifest beneath the prefix and stores their exact paths. Intel documents the
+[Linux OpenVINO archive installation](https://docs.openvino.ai/2026/get-started/install-openvino/install-openvino-archive-linux.html),
+[GPU driver setup](https://docs.openvino.ai/2026/get-started/install-openvino/configurations/configurations-intel-gpu.html),
+and [NPU driver setup](https://docs.openvino.ai/2026/get-started/install-openvino/configurations/configurations-intel-npu.html).
+Omaspeak only validates those components; it never installs them.
 
 Direct OpenVINO consumes the official archived Supertonic graph and metadata
 files. Normal setup downloads every required file directly from the pinned
@@ -68,3 +108,15 @@ Inference on NPU fails with an actionable error if the prepared cache is absent
 or no longer matches the model/runtime identity. Accelerator validation is
 machine-specific; `omaspeak setup runtime --json`, `omaspeak setup check`, and
 `omaspeak benchmark` provide the evidence to retain for a proof run.
+
+Keep validation file-only:
+
+```bash
+omaspeak setup check
+omaspeak say --no-play --out /tmp/omaspeak-accelerator.wav \
+  "Accelerator placement proof."
+omaspeak benchmark --text "Warm accelerator benchmark." \
+  --out-dir /tmp/omaspeak-benchmark
+```
+
+`benchmark` writes WAV files and JSON; it does not open a playback device.

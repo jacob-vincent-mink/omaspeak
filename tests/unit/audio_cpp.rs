@@ -301,6 +301,22 @@ fn native_paths_are_explicit_existing_files_and_relative_models_stay_contained()
             config_dir.canonicalize().unwrap()
         ]
     );
+    let environment_dependency = root.join("environment-dependencies");
+    fs::create_dir_all(&environment_dependency).unwrap();
+    assert_eq!(
+        resolve_library_dirs_with(
+            &config,
+            &paths.config_file,
+            &config_dir.join("libaudiocpp.so").canonicalize().unwrap(),
+            std::slice::from_ref(&environment_dependency)
+        )
+        .unwrap(),
+        [
+            dependency_dir.canonicalize().unwrap(),
+            environment_dependency.canonicalize().unwrap(),
+            config_dir.canonicalize().unwrap()
+        ]
+    );
     assert_eq!(
         resolve_model_file(&config, &paths).unwrap(),
         model_dir.join("model.gguf").canonicalize().unwrap()

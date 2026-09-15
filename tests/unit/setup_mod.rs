@@ -178,6 +178,20 @@ fn human_runtime_catalog_reports_complete_provider_and_missing_directories() {
         .push(root.join("missing-directory"));
     config.save(&paths.config_file).unwrap();
     print_runtime(&paths.config_file, false).unwrap();
+
+    let openvino = root.join("openvino");
+    fs::create_dir_all(&openvino).unwrap();
+    fs::write(openvino.join("libopenvino_c.so"), b"not a native library").unwrap();
+    fs::write(openvino.join("plugins.xml"), b"<ie/>").unwrap();
+    config.backend.kind = "supertonic".into();
+    config.backend.runtime = crate::backend::Runtime::Openvino;
+    config.backend.device = "cpu".into();
+    config.backend.library = None;
+    config.backend.library_dirs.clear();
+    config.backend.openvino_library = Some(openvino.join("libopenvino_c.so"));
+    config.backend.openvino_plugins = Some(openvino.join("plugins.xml"));
+    config.save(&paths.config_file).unwrap();
+    print_runtime(&paths.config_file, false).unwrap();
 }
 
 #[test]
@@ -257,7 +271,7 @@ fn injected_checks_cover_healthy_runtime_device_and_engine_boundaries() {
         &paths,
         |_, _| crate::runtime_inventory::Probe {
             loadable: true,
-            device_accessible: true,
+            device_accessible: Some(true),
             ready: true,
             ..Default::default()
         },
@@ -289,7 +303,7 @@ fn injected_checks_cover_healthy_runtime_device_and_engine_boundaries() {
         &paths,
         |_, _| crate::runtime_inventory::Probe {
             loadable: true,
-            device_accessible: true,
+            device_accessible: Some(true),
             ready: true,
             ..Default::default()
         },
@@ -329,7 +343,7 @@ fn checks_require_a_valid_compiled_cache_for_an_active_npu() {
     config.save(&paths.config_file).unwrap();
     let ready_probe = |_: &_, _: &_| crate::runtime_inventory::Probe {
         loadable: true,
-        device_accessible: true,
+        device_accessible: Some(true),
         ready: true,
         ..Default::default()
     };

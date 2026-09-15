@@ -1,5 +1,5 @@
 use super::*;
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::VecDeque;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -126,7 +126,7 @@ impl SetupSelector for ScriptedSelector {
         Ok(omaspeak::runtime_inventory::Probe {
             ready: true,
             loadable: true,
-            device_accessible: true,
+            device_accessible: Some(true),
             ..Default::default()
         })
     }
@@ -1440,11 +1440,11 @@ fn config_snapshot_restore_handles_missing_existing_and_unreadable_paths() {
     let path = root.join("nested/config.toml");
 
     assert!(config_snapshot(&path).unwrap().is_none());
-    restore_config_snapshot(&path, Some(b"original")).unwrap();
+    restore_snapshot(&path, Some(b"original"), "toml.tmp").unwrap();
     assert_eq!(config_snapshot(&path).unwrap().unwrap(), b"original");
 
     fs::write(path.with_extension("toml.tmp"), b"partial").unwrap();
-    restore_config_snapshot(&path, None).unwrap();
+    restore_snapshot(&path, None, "toml.tmp").unwrap();
     assert!(!path.exists());
     assert!(!path.with_extension("toml.tmp").exists());
 
@@ -2017,61 +2017,6 @@ fn guided_runtime_cancel_at_apply_leaves_configuration_untouched() {
     assert_eq!(fs::read_to_string(&paths.config_file).unwrap(), original);
 }
 
-fn runtime_report(
-    runtime: Runtime,
-    loadable: bool,
-    device_accessible: Option<bool>,
-) -> omaspeak::runtime::LibraryPathReport {
-    let name = runtime_name(runtime);
-    omaspeak::runtime::LibraryPathReport {
-        configured_library_dirs: Vec::new(),
-        environment_library_dirs: Vec::new(),
-        package_library_dirs: Vec::new(),
-        effective_library_dirs: Vec::new(),
-        missing_library_dirs: Vec::new(),
-        audiocpp_library: None,
-        openvino_library: None,
-        openvino_plugins: None,
-        runtime_loadable: BTreeMap::from([(name, loadable)]),
-        runtime_probe_errors: if loadable {
-            BTreeMap::new()
-        } else {
-            BTreeMap::from([(name, "injected ABI failure".into())])
-        },
-        runtime_device_accessible: match device_accessible {
-            Some(accessible) => BTreeMap::from([(name, accessible)]),
-            None => BTreeMap::new(),
-        },
-        device_probe_errors: if device_accessible == Some(false) {
-            BTreeMap::from([(name, "injected device failure".into())])
-        } else {
-            BTreeMap::new()
-        },
-        remediation: Vec::new(),
-    }
-}
-
-#[test]
-fn runtime_report_validation_covers_abi_device_and_success_paths() {
-    let abi = validate_runtime_report(Runtime::Cuda, &runtime_report(Runtime::Cuda, false, None))
-        .unwrap_err();
-    assert!(abi.to_string().contains("injected ABI failure"));
-    assert!(abi.to_string().contains("configuration was not changed"));
-
-    let device = validate_runtime_report(
-        Runtime::Openvino,
-        &runtime_report(Runtime::Openvino, true, Some(false)),
-    )
-    .unwrap_err();
-    assert!(device.to_string().contains("injected device failure"));
-
-    validate_runtime_report(
-        Runtime::Openvino,
-        &runtime_report(Runtime::Openvino, true, Some(true)),
-    )
-    .unwrap();
-}
-
 #[test]
 fn guided_model_marks_active_installed_and_downloadable_models() {
     let root = sandbox();
@@ -2309,9 +2254,6 @@ fn runtime_catalog_covers_each_device_matrix_and_back_at_device_picker() {
         setup_path_list(&[PathBuf::from("/one"), PathBuf::from("/two")]),
         "/one:/two"
     );
-    assert_eq!(runtime_name(Runtime::Default), "default");
-    assert_eq!(runtime_name(Runtime::Openvino), "openvino");
-    assert_eq!(runtime_name(Runtime::Cuda), "cuda");
     assert_eq!(
         device_items(Runtime::Default)
             .iter()
@@ -2689,6 +2631,127 @@ fn setup_transaction_restores_existing_and_new_configs_on_late_failures() {
     assert_eq!(restart_attempts.get(), 2);
     assert_eq!(fs::read(&restart.config_file).unwrap(), original);
     assert_eq!(fs::read_to_string(launcher).unwrap(), "prior launcher");
+}
+
+#[test]
+fn setup_transaction_rejects_a_launcher_installed_outside_the_expected_path() {
+    let root = sandbox();
+    let paths = paths(&root);
+    let unexpected_launcher = root.join("unexpected.desktop");
+    let error = setup_all_with_config(
+        Config::default(),
+        &paths.config_file,
+        &paths,
+        &FakeModelOperations { installed: true },
+        "supertonic-3-openvino",
+        None,
+        None,
+        Some("OpenRAIL-M"),
+        ProgressFormat::Human,
+        |_| Ok(unexpected_launcher.clone()),
+        || false,
+        |_| unreachable!(),
+        |_, _| unreachable!(),
+        |_, _| unreachable!(),
+    )
+    .unwrap_err();
+
+    assert!(error.to_string().contains("expected"));
+    assert!(error.to_string().contains("unexpected.desktop"));
+    assert!(!paths.config_file.exists());
+    assert!(!app_setup::menu::launcher_path(&paths).exists());
+}
+
+#[test]
+fn setup_transaction_reports_concurrent_config_and_launcher_rollback_failures() {
+    for obstruct_config in [true, false] {
+        let root = sandbox();
+        let paths = paths(&root);
+        let launcher = app_setup::menu::launcher_path(&paths);
+        let error = setup_all_with_config(
+            Config::default(),
+            &paths.config_file,
+            &paths,
+            &FakeModelOperations { installed: true },
+            "supertonic-3-openvino",
+            None,
+            None,
+            Some("OpenRAIL-M"),
+            ProgressFormat::Human,
+            |paths| {
+                let path = app_setup::menu::launcher_path(paths);
+                fs::create_dir_all(path.parent().unwrap())?;
+                fs::write(&path, "new launcher")?;
+                Ok(path)
+            },
+            || false,
+            |_| unreachable!(),
+            |config, _| {
+                let obstructed = if obstruct_config { config } else { &launcher };
+                fs::remove_file(obstructed)?;
+                fs::create_dir(obstructed)?;
+                bail!("concurrent filesystem change")
+            },
+            |_, _| unreachable!(),
+        )
+        .unwrap_err();
+
+        let detail = format!("{error:#}");
+        assert!(detail.contains("concurrent filesystem change"));
+        assert!(detail.contains("setup rollback was incomplete"));
+        assert!(detail.contains(if obstruct_config {
+            "restore prior config"
+        } else {
+            "restore prior launcher"
+        }));
+    }
+}
+
+#[test]
+fn setup_transaction_reports_each_failed_service_restore_outcome() {
+    for restored_service_errors in [false, true] {
+        let root = sandbox();
+        let paths = paths(&root);
+        fs::create_dir_all(paths.config_file.parent().unwrap()).unwrap();
+        fs::write(&paths.config_file, "# original config\n").unwrap();
+        let restart_attempts = std::cell::Cell::new(0);
+        let error = setup_all_with_config(
+            Config::load(&paths.config_file).unwrap(),
+            &paths.config_file,
+            &paths,
+            &FakeModelOperations { installed: true },
+            "supertonic-3-openvino",
+            None,
+            None,
+            Some("OpenRAIL-M"),
+            ProgressFormat::Human,
+            |paths| Ok(app_setup::menu::launcher_path(paths)),
+            || true,
+            |_| {
+                restart_attempts.set(restart_attempts.get() + 1);
+                if restart_attempts.get() == 1 {
+                    bail!("initial restart failed")
+                } else if restored_service_errors {
+                    bail!("restored service restart failed")
+                } else {
+                    Ok(false)
+                }
+            },
+            |_, _| Ok(()),
+            |_, _| unreachable!(),
+        )
+        .unwrap_err();
+
+        let detail = format!("{error:#}");
+        assert!(detail.contains("initial restart failed"));
+        assert!(detail.contains("setup rollback was incomplete"));
+        assert!(detail.contains(if restored_service_errors {
+            "restored service restart failed"
+        } else {
+            "service remained inactive"
+        }));
+        assert_eq!(restart_attempts.get(), 2);
+    }
 }
 
 #[test]
@@ -3233,7 +3296,7 @@ fn noninteractive_runtime_setup_persists_selection_and_rejects_an_invalid_librar
         true,
         |_, _| omaspeak::runtime_inventory::Probe {
             loadable: true,
-            device_accessible: true,
+            device_accessible: Some(true),
             ready: true,
             evidence: omaspeak::runtime_inventory::Evidence {
                 versions: vec!["injected test runtime".into()],
@@ -3410,7 +3473,7 @@ fn noninteractive_npu_runtime_apply_defers_cache_on_a_clean_install() {
         true,
         |_, _| omaspeak::runtime_inventory::Probe {
             loadable: true,
-            device_accessible: true,
+            device_accessible: Some(true),
             ready: true,
             evidence: omaspeak::runtime_inventory::Evidence {
                 available_devices: vec!["NPU".into()],
@@ -3861,9 +3924,9 @@ fn setup_completion_and_snapshot_cleanup_cover_service_and_path_states() {
     }
 
     let nested = root.join("new/config.toml");
-    restore_config_snapshot(&nested, Some(b"[model]\nvoice = 2\n")).unwrap();
+    restore_snapshot(&nested, Some(b"[model]\nvoice = 2\n"), "toml.tmp").unwrap();
     assert!(nested.is_file());
-    restore_config_snapshot(&nested, None).unwrap();
+    restore_snapshot(&nested, None, "toml.tmp").unwrap();
     assert!(!nested.exists());
 }
 

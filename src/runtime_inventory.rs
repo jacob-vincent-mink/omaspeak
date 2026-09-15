@@ -19,7 +19,10 @@ use std::{
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Probe {
     pub loadable: bool,
-    pub device_accessible: bool,
+    /// Whether the selected device has been exercised. Native ABI discovery
+    /// alone cannot answer this for audio.cpp, so an unproved selection is
+    /// represented as `None` rather than the misleading value `false`.
+    pub device_accessible: Option<bool>,
     pub ready: bool,
     pub evidence: Evidence,
     pub errors: Vec<String>,
@@ -717,11 +720,11 @@ fn child_with(
             // model/session. Setup performs that proof with the selected GGUF.
             result.evidence.selected_device = Some(config.canonical_device()?);
             result.evidence.available_devices = vec![config.runtime.capability().into()];
-            result.device_accessible = false;
+            result.device_accessible = None;
             result.ready = true;
             return Ok(());
         }
-        result.device_accessible = true;
+        result.device_accessible = Some(true);
         result.ready = true;
         Ok(())
     })();

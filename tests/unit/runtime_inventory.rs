@@ -96,7 +96,7 @@ fn audio_child_reports_abi_only_until_model_proof() {
     );
     assert!(result.loadable);
     assert!(result.ready);
-    assert!(!result.device_accessible);
+    assert_eq!(result.device_accessible, None);
     assert!(!result.evidence.model_inference_verified);
     assert_eq!(result.evidence.provider_path, Some(library));
     assert_eq!(result.evidence.selected_device.as_deref(), Some("gpu"));
@@ -126,7 +126,8 @@ fn openvino_child_reports_selected_accessible_device() {
         },
         |_| unreachable!(),
     );
-    assert!(result.ready && result.loadable && result.device_accessible);
+    assert!(result.ready && result.loadable);
+    assert_eq!(result.device_accessible, Some(true));
     assert_eq!(result.evidence.selected_device.as_deref(), Some("NPU"));
     assert_eq!(result.evidence.available_devices, ["CPU", "NPU"]);
 }
@@ -279,6 +280,12 @@ fn npu_child_capture_preserves_diagnostics_and_bounds_execution() {
     assert!(error.contains("exit status: 7"));
     assert!(error.contains("native stderr: provider failed"));
 
+    let silent_failure = captured_shell("exit 9");
+    let error = decode_npu_preparation(silent_failure)
+        .unwrap_err()
+        .to_string();
+    assert!(error.ends_with("exit status: 9"));
+
     let malformed = captured_shell("printf 'not-json'; printf 'parse context' >&2");
     let error = decode_npu_preparation(malformed).unwrap_err().to_string();
     assert!(error.contains("returned no result frame"));
@@ -426,7 +433,7 @@ fn candidate_transactions_preserve_bytes_until_successful_apply() {
     let success = |_: &BackendConfig, _: &Path| Probe {
         ready: true,
         loadable: true,
-        device_accessible: true,
+        device_accessible: Some(true),
         ..Default::default()
     };
     apply_with(&candidate, &path, false, success).unwrap();

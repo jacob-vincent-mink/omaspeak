@@ -1252,10 +1252,22 @@ fn resolve_library_dirs(
     config_file: &Path,
     library: &Path,
 ) -> Result<Vec<PathBuf>> {
+    let environment =
+        crate::runtime::inspect(&config.backend, config_file).environment_library_dirs;
+    resolve_library_dirs_with(config, config_file, library, &environment)
+}
+
+fn resolve_library_dirs_with(
+    config: &Config,
+    config_file: &Path,
+    library: &Path,
+    environment: &[PathBuf],
+) -> Result<Vec<PathBuf>> {
     let base = config_file.parent().unwrap_or_else(|| Path::new("."));
     let mut canonical_base = None;
-    let mut directories = Vec::with_capacity(config.backend.library_dirs.len() + 1);
-    for configured in &config.backend.library_dirs {
+    let mut directories =
+        Vec::with_capacity(config.backend.library_dirs.len() + environment.len() + 1);
+    for configured in config.backend.library_dirs.iter().chain(environment) {
         let explicit_absolute = configured.is_absolute();
         let candidate = if explicit_absolute {
             configured.clone()

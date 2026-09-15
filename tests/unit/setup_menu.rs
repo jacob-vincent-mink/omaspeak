@@ -27,3 +27,18 @@ fn launcher_path_falls_back_and_uninstall_is_idempotent() {
     uninstall(&isolated).unwrap();
     assert!(!launcher.exists());
 }
+
+#[test]
+fn desktop_exec_path_escapes_field_codes_and_quoted_characters() {
+    assert_eq!(
+        quote_exec_path(Path::new("/opt/Oma Speak/$bin`x`%20\\omaspeak")).unwrap(),
+        "/opt/Oma Speak/\\\\$bin\\\\`x\\\\`%%20\\\\\\\\omaspeak"
+    );
+    assert!(quote_exec_path(Path::new("/opt/omaspeak=bad")).is_err());
+    assert!(quote_exec_path(Path::new("")).is_err());
+    assert!(quote_exec_path(Path::new("/opt/oma\nspeak")).is_err());
+    assert_eq!(
+        quote_exec_path(Path::new("/opt/ómaspeak")).unwrap(),
+        "/opt/ómaspeak"
+    );
+}

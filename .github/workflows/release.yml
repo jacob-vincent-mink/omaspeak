@@ -154,7 +154,7 @@ jobs:
           assert set(report["supported_capabilities"]) == {"cpu", "cuda", "vulkan", "hip", "openvino"}
           cpu = next(item for item in report["inventory"] if item["runtime"] == "default" and item["device"] == "cpu")
           assert cpu["loadable"] and cpu["ready"]
-          assert not cpu["device_accessible"] and not cpu["evidence"]["model_inference_verified"]
+          assert cpu["device_accessible"] is None and not cpu["evidence"]["model_inference_verified"]
           assert pathlib.Path(cpu["evidence"]["provider_path"]).resolve() == expected
           PY
 

@@ -15,6 +15,11 @@
 - Reworked guided and scriptable setup around exact provider discovery,
   ABI-only provisional setup, and model-backed file-only proof before final
   activation.
+- Made runtime evidence distinguish an ABI-only, unverified audio.cpp device
+  from an inaccessible device, and preserved every explicit
+  `OMASPEAK_LIBRARY_PATH` dependency directory in the supervised worker.
+- Fixed desktop setup launcher quoting for spaces, field codes, shell-reserved
+  characters, backslashes, and Unicode executable paths.
 - Removed the obsolete split runtime/plugin configuration and packaging.
 - Removed unused bzip2 and tar dependencies from model setup.
 - Framed NPU child results so native OpenVINO diagnostics cannot corrupt setup

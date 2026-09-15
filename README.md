@@ -4,7 +4,7 @@
 
 # Omaspeak
 
-Omaspeak is a local-first text-to-speech CLI and optional daemon. The default
+Omaspeak is a local-first Linux text-to-speech CLI and optional daemon. The default
 release uses Supertonic 3 GGUF through a small, package-owned audio.cpp CPU
 provider. Optional CUDA, Vulkan, HIP/ROCm, and direct OpenVINO providers are
 selected at setup time from software already installed by the user.
@@ -36,6 +36,13 @@ printf '%s' 'Piped input works too.' | omaspeak say --no-play --out /tmp/test.wa
 `setup all` installs the verified model and desktop settings launcher. It does
 not install or start a service. `say` starts inference on demand when no daemon
 is running.
+
+Browse the same runtime and model catalog without changing the machine:
+
+```bash
+omaspeak setup runtime
+omaspeak setup model --list
+```
 
 The Supertonic 3 GGUF conversion is supplied by the audio.cpp model repository
 at revision `09fe073ba154561f4474162e8bd4ab233a848eca`. The archived upstream
@@ -136,7 +143,7 @@ omaspeak setup systemd --status
 omaspeak setup systemd --uninstall
 ```
 
-Without that unit, every command still works on demand. If a daemon socket is
+Without that unit, speech commands still run inference on demand. If a daemon socket is
 stale or refuses a connection, `say` falls back to local inference.
 
 ## Build from source

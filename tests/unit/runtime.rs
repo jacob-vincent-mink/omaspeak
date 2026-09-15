@@ -22,7 +22,11 @@ fn finds_complete_audio_provider_and_natural_latest_version() {
         library_dirs: vec![root.clone()],
         ..Default::default()
     };
-    let report = inspect_with(&config, &root.join("config.toml"), None, None, None);
+    let report = inspect_with(
+        &config,
+        &root.join("config.toml"),
+        DiscoveryEnvironment::default(),
+    );
     assert_eq!(
         report.audiocpp_library.as_deref(),
         Some(root.join("libaudiocpp.so.10").as_path())
@@ -42,7 +46,11 @@ fn exact_audio_provider_and_missing_directories_are_reported() {
         library_dirs: vec![root.join("missing")],
         ..Default::default()
     };
-    let report = inspect_with(&config, &root.join("config.toml"), None, None, None);
+    let report = inspect_with(
+        &config,
+        &root.join("config.toml"),
+        DiscoveryEnvironment::default(),
+    );
     assert_eq!(
         report.audiocpp_library,
         Some(library.canonicalize().unwrap())
@@ -69,7 +77,11 @@ fn direct_openvino_requires_library_and_plugins() {
         library_dirs: vec![root.clone()],
         ..Default::default()
     };
-    let report = inspect_with(&config, &root.join("config.toml"), None, None, None);
+    let report = inspect_with(
+        &config,
+        &root.join("config.toml"),
+        DiscoveryEnvironment::default(),
+    );
     assert_eq!(report.runtime_loadable.get("openvino"), Some(&true));
     let resolved = resolve_openvino_runtime(&config, &root.join("config.toml"), &report).unwrap();
     assert_eq!(resolved.library, library.canonicalize().unwrap());
@@ -77,7 +89,11 @@ fn direct_openvino_requires_library_and_plugins() {
 
     fs::remove_file(&plugins).unwrap();
     config.openvino_plugins = Some(plugins);
-    let report = inspect_with(&config, &root.join("config.toml"), None, None, None);
+    let report = inspect_with(
+        &config,
+        &root.join("config.toml"),
+        DiscoveryEnvironment::default(),
+    );
     assert!(resolve_openvino_runtime(&config, &root.join("config.toml"), &report).is_err());
 }
 
@@ -93,9 +109,11 @@ fn package_and_environment_directories_are_visible() {
     let report = inspect_with(
         &BackendConfig::default(),
         &root.join("config.toml"),
-        Some(env.as_os_str().to_owned()),
-        None,
-        Some(&bin.join("omaspeak")),
+        DiscoveryEnvironment {
+            library_path: Some(env.as_os_str().to_owned()),
+            executable: Some(bin.join("omaspeak")),
+            ..Default::default()
+        },
     );
     assert_eq!(report.package_library_dirs, [lib.canonicalize().unwrap()]);
     assert_eq!(
@@ -108,7 +126,7 @@ fn package_and_environment_directories_are_visible() {
 #[test]
 fn loader_path_adds_app_owned_directories_once() {
     let root = temp("loader").canonicalize().unwrap();
-    let report = LibraryPathReport {
+    let mut report = LibraryPathReport {
         configured_library_dirs: vec![root.clone()],
         environment_library_dirs: Vec::new(),
         package_library_dirs: Vec::new(),
@@ -118,11 +136,9 @@ fn loader_path_adds_app_owned_directories_once() {
         openvino_library: None,
         openvino_plugins: None,
         runtime_loadable: BTreeMap::new(),
-        runtime_probe_errors: BTreeMap::new(),
-        runtime_device_accessible: BTreeMap::new(),
-        device_probe_errors: BTreeMap::new(),
         remediation: Vec::new(),
     };
+    report.runtime_loadable.insert("default", true);
     assert_eq!(
         augmented_loader_path_with(&report, None).unwrap(),
         Some(root.as_os_str().to_owned())
@@ -134,7 +150,13 @@ fn loader_path_adds_app_owned_directories_once() {
     );
     assert_eq!(
         effective_library_path(&report).unwrap(),
-        Some(root.into_os_string())
+        Some(root.clone().into_os_string())
+    );
+    assert!(report.remediation(Runtime::Default).is_none());
+    assert!(reexec_loader_path_with(&report, None, true).is_err());
+    assert_eq!(
+        reexec_loader_path_with(&report, Some(root.into_os_string()), true).unwrap(),
+        None
     );
 }
 
@@ -161,9 +183,6 @@ fn remediation_and_openvino_resolution_cover_each_incomplete_shape() {
         openvino_library: None,
         openvino_plugins: None,
         runtime_loadable: BTreeMap::new(),
-        runtime_probe_errors: BTreeMap::new(),
-        runtime_device_accessible: BTreeMap::new(),
-        device_probe_errors: BTreeMap::new(),
         remediation: Vec::new(),
     };
     for runtime in [
@@ -175,16 +194,6 @@ fn remediation_and_openvino_resolution_cover_each_incomplete_shape() {
     ] {
         assert!(!empty.remediation(runtime).unwrap().is_empty());
     }
-    let mut failed_probe = empty.clone();
-    failed_probe
-        .runtime_probe_errors
-        .insert("cuda", "bad CUDA provider".into());
-    assert!(
-        failed_probe
-            .remediation(Runtime::Cuda)
-            .unwrap()
-            .contains("bad CUDA provider")
-    );
     assert!(augmented_loader_path(&empty).unwrap().is_none());
     assert!(reexec_loader_path(&empty).unwrap().is_none());
 
@@ -226,9 +235,11 @@ fn discovery_helpers_cover_nested_openvino_and_empty_paths() {
     let report = inspect_with(
         &BackendConfig::default(),
         &root.join("config.toml"),
-        Some(OsString::new()),
-        None,
-        Some(&bin.join("omaspeak")),
+        DiscoveryEnvironment {
+            library_path: Some(OsString::new()),
+            executable: Some(bin.join("omaspeak")),
+            ..Default::default()
+        },
     );
     assert_eq!(
         report.package_library_dirs,

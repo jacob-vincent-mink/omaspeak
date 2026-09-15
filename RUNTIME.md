@@ -30,3 +30,9 @@ The ambient system loader remains responsible for a provider's dependencies.
 Runtime inventory reports exact paths and missing configured directories. The
 release executable itself must have no load-time dependency on any inference
 runtime or accelerator library.
+
+Runtime JSON distinguishes discovery from execution proof. For audio.cpp,
+`device_accessible` is `null` after an ABI-only probe because no model session
+has exercised the device yet. It becomes `true` only after setup completes a
+model-backed file-only synthesis. `model_inference_verified` records the same
+proof explicitly.

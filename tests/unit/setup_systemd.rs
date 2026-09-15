@@ -50,6 +50,8 @@ fn unit_escapes_every_systemd_exec_specifier_and_rejects_control_characters() {
     )
     .unwrap_err();
     assert!(error.to_string().contains("control character"));
+    let error = generate(Path::new(""), Path::new("/tmp/config.toml")).unwrap_err();
+    assert!(error.to_string().contains("executable path is empty"));
 }
 
 #[test]

@@ -29,10 +29,16 @@ pub struct LibraryPathReport {
     pub openvino_library: Option<PathBuf>,
     pub openvino_plugins: Option<PathBuf>,
     pub runtime_loadable: BTreeMap<&'static str, bool>,
-    pub runtime_probe_errors: BTreeMap<&'static str, String>,
-    pub runtime_device_accessible: BTreeMap<&'static str, bool>,
-    pub device_probe_errors: BTreeMap<&'static str, String>,
     pub remediation: Vec<String>,
+}
+
+#[derive(Default)]
+pub(crate) struct DiscoveryEnvironment {
+    pub library_path: Option<OsString>,
+    pub loader_path: Option<OsString>,
+    pub openvino_library: Option<OsString>,
+    pub openvino_plugins: Option<OsString>,
+    pub executable: Option<PathBuf>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -68,9 +74,6 @@ impl LibraryPathReport {
                 display_paths(&self.missing_library_dirs)
             ));
         }
-        if let Some(error) = self.runtime_probe_errors.get(runtime.name()) {
-            return Some(format!("provider validation failed: {error}"));
-        }
         Some(match runtime {
             Runtime::Openvino => format!(
                 "select a complete OpenVINO installation with backend.openvino_library and backend.openvino_plugins, or {OPENVINO_LIBRARY_ENV} and {OPENVINO_PLUGINS_ENV}"
@@ -94,18 +97,20 @@ pub fn discover(config: &BackendConfig, config_file: &Path) -> LibraryPathReport
     inspect_with(
         config,
         config_file,
-        env::var_os(LIBRARY_PATH_ENV),
-        env::var_os("LD_LIBRARY_PATH"),
-        env::current_exe().ok().as_deref(),
+        DiscoveryEnvironment {
+            library_path: env::var_os(LIBRARY_PATH_ENV),
+            loader_path: env::var_os("LD_LIBRARY_PATH"),
+            openvino_library: env::var_os(OPENVINO_LIBRARY_ENV),
+            openvino_plugins: env::var_os(OPENVINO_PLUGINS_ENV),
+            executable: env::current_exe().ok(),
+        },
     )
 }
 
-pub fn inspect_with(
+pub(crate) fn inspect_with(
     config: &BackendConfig,
     config_file: &Path,
-    environment: Option<OsString>,
-    loader_environment: Option<OsString>,
-    executable: Option<&Path>,
+    environment: DiscoveryEnvironment,
 ) -> LibraryPathReport {
     let config_base = config_file.parent().unwrap_or_else(|| Path::new("."));
     let configured_library_dirs = config
@@ -114,6 +119,7 @@ pub fn inspect_with(
         .map(|path| resolve(path, config_base))
         .collect::<Vec<_>>();
     let environment_library_dirs = environment
+        .library_path
         .as_deref()
         .filter(|value| !value.is_empty())
         .map(env::split_paths)
@@ -121,7 +127,7 @@ pub fn inspect_with(
         .flatten()
         .map(canonical_or)
         .collect::<Vec<_>>();
-    let package_library_dirs = package_library_dirs(executable);
+    let package_library_dirs = package_library_dirs(environment.executable.as_deref());
     let exact_files = [
         config
             .library
@@ -135,8 +141,8 @@ pub fn inspect_with(
             .openvino_plugins
             .as_deref()
             .map(|path| resolve(path, config_base)),
-        env::var_os(OPENVINO_LIBRARY_ENV).map(PathBuf::from),
-        env::var_os(OPENVINO_PLUGINS_ENV).map(PathBuf::from),
+        environment.openvino_library.as_ref().map(PathBuf::from),
+        environment.openvino_plugins.as_ref().map(PathBuf::from),
     ];
     let exact_dirs = exact_files
         .iter()
@@ -160,7 +166,8 @@ pub fn inspect_with(
             .chain(exact_dirs)
             .chain(package_library_dirs.iter().cloned()),
     );
-    let ambient = loader_environment
+    let ambient = environment
+        .loader_path
         .as_deref()
         .map(env::split_paths)
         .into_iter()
@@ -185,12 +192,12 @@ pub fn inspect_with(
         .openvino_library
         .as_deref()
         .map(|path| resolve(path, config_base))
-        .or_else(|| env::var_os(OPENVINO_LIBRARY_ENV).map(PathBuf::from));
+        .or_else(|| environment.openvino_library.map(PathBuf::from));
     let selected_plugins = config
         .openvino_plugins
         .as_deref()
         .map(|path| resolve(path, config_base))
-        .or_else(|| env::var_os(OPENVINO_PLUGINS_ENV).map(PathBuf::from));
+        .or_else(|| environment.openvino_plugins.map(PathBuf::from));
     let openvino_library =
         locate_library(selected_openvino.as_ref(), &search_dirs, "libopenvino_c.so");
     let openvino_plugins = locate_openvino_plugins(selected_plugins.as_ref(), &search_dirs);
@@ -232,9 +239,6 @@ pub fn inspect_with(
         openvino_library,
         openvino_plugins,
         runtime_loadable,
-        runtime_probe_errors: BTreeMap::new(),
-        runtime_device_accessible: BTreeMap::new(),
-        device_probe_errors: BTreeMap::new(),
         remediation,
     }
 }
@@ -255,7 +259,6 @@ pub(crate) fn resolve_openvino_runtime(
         .openvino_library
         .as_deref()
         .map(|path| resolve(path, base))
-        .or_else(|| env::var_os(OPENVINO_LIBRARY_ENV).map(PathBuf::from))
         .or_else(|| report.openvino_library.clone())
         .with_context(|| {
             format!(
@@ -272,7 +275,6 @@ pub(crate) fn resolve_openvino_runtime(
         .openvino_plugins
         .as_deref()
         .map(|path| resolve(path, base))
-        .or_else(|| env::var_os(OPENVINO_PLUGINS_ENV).map(PathBuf::from))
         .or_else(|| report.openvino_plugins.clone())
         .with_context(|| {
             format!(
@@ -398,8 +400,20 @@ pub fn augmented_loader_path(report: &LibraryPathReport) -> Result<Option<OsStri
 }
 
 pub fn reexec_loader_path(report: &LibraryPathReport) -> Result<Option<OsString>> {
-    let augmented = augmented_loader_path(report)?;
-    if env::var_os(REEXEC_SENTINEL).is_some() {
+    reexec_loader_path_with(
+        report,
+        env::var_os("LD_LIBRARY_PATH"),
+        env::var_os(REEXEC_SENTINEL).is_some(),
+    )
+}
+
+fn reexec_loader_path_with(
+    report: &LibraryPathReport,
+    loader_environment: Option<OsString>,
+    already_reexecuted: bool,
+) -> Result<Option<OsString>> {
+    let augmented = augmented_loader_path_with(report, loader_environment)?;
+    if already_reexecuted {
         if augmented.is_some() {
             bail!(
                 "{REEXEC_SENTINEL} is set but native provider directories are absent from LD_LIBRARY_PATH"

@@ -112,12 +112,52 @@ fn environment_provider_path_is_used_for_real_engine_loading() {
         .env("XDG_DATA_HOME", root.join("data"))
         .env("XDG_STATE_HOME", root.join("state"))
         .env("XDG_RUNTIME_DIR", root.join("run"))
-        .env("OMASPEAK_LIBRARY_PATH", provider_directory)
+        .env("OMASPEAK_LIBRARY_PATH", &provider_directory)
         .stdin(Stdio::null())
         .output()
         .unwrap();
     assert!(output.status.success(), "{}", stderr(&output));
     assert!(fs::read(wav).unwrap().starts_with(b"RIFF"));
+
+    let check = Command::new(env!("CARGO_BIN_EXE_omaspeak"))
+        .args(["setup", "check", "--json"])
+        .env("HOME", &root)
+        .env("XDG_CONFIG_HOME", root.join("config"))
+        .env("XDG_DATA_HOME", root.join("data"))
+        .env("XDG_STATE_HOME", root.join("state"))
+        .env("XDG_RUNTIME_DIR", root.join("run"))
+        .env("OMASPEAK_LIBRARY_PATH", &provider_directory)
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert!(check.status.success(), "{}", stderr(&check));
+    let report: serde_json::Value = serde_json::from_slice(&check.stdout).unwrap();
+    assert!(
+        report
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|item| item["ok"] == true)
+    );
+
+    let runtime = Command::new(env!("CARGO_BIN_EXE_omaspeak"))
+        .args(["setup", "runtime"])
+        .env("HOME", &root)
+        .env("XDG_CONFIG_HOME", root.join("config"))
+        .env("XDG_DATA_HOME", root.join("data"))
+        .env("XDG_STATE_HOME", root.join("state"))
+        .env("XDG_RUNTIME_DIR", root.join("run"))
+        .env("OMASPEAK_LIBRARY_PATH", &provider_directory)
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert!(runtime.status.success(), "{}", stderr(&runtime));
+    let catalog = stdout(&runtime);
+    assert!(catalog.contains("default / cpu:"));
+    assert!(catalog.contains("device_accessible=unverified"));
+    assert!(catalog.contains("runtime installed"));
+    assert!(catalog.contains("provider found; model-backed setup proves capability"));
+    assert!(catalog.contains(&provider_directory.display().to_string()));
 }
 
 #[cfg(target_os = "linux")]

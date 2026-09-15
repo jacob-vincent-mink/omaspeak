@@ -6,6 +6,7 @@ Extract the release archive without separating the executable from its `lib/`
 directory:
 
 ```bash
+sha256sum -c SHA256SUMS.txt
 tar -xf omaspeak-VERSION-linux-ARCH.tar.xz
 install -Dm755 omaspeak-VERSION-linux-ARCH/omaspeak ~/.local/bin/omaspeak
 mkdir -p ~/.local/lib/omaspeak
@@ -20,6 +21,13 @@ Run the keyboard-driven setup:
 
 ```bash
 omaspeak setup
+```
+
+To inspect the available models and detected runtimes first:
+
+```bash
+omaspeak setup model --list
+omaspeak setup runtime
 ```
 
 Or install the default model and launcher without a TUI:
@@ -54,7 +62,8 @@ omaspeak setup model --model supertonic-3-gguf --accept-license OpenRAIL-M
 
 `--model` is the readable alias for `--download` in model setup. `--source`
 accepts a pinned local file for a one-file model or the catalog directory layout
-for a multi-file model. Installation and activation are separate
+for a multi-file model. It does not bypass catalog size or SHA-256 checks.
+Installation and activation are separate
 commit points: if provider proof fails after verified files are installed,
 Omaspeak retains those files, leaves the active config unchanged, and tells you
 to configure the provider and retry with `omaspeak setup model --set MODEL`.

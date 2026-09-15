@@ -304,7 +304,7 @@ impl SetupSelector for TerminalSetupSelector {
             return Ok(omaspeak::runtime_inventory::Probe {
                 ready: true,
                 loadable: true,
-                device_accessible: true,
+                device_accessible: Some(true),
                 evidence: omaspeak::runtime_inventory::Evidence {
                     versions: vec![format!("audio.cpp provider {}", library.display())],
                     ..Default::default()
@@ -1768,7 +1768,7 @@ fn setup(command: Option<SetupCommand>, config_path: &Path, paths: &AppPaths) ->
                     Ok(())
                 })();
                 if let Err(error) = result {
-                    restore_config_snapshot(config_path, original.as_deref())?;
+                    restore_snapshot(config_path, original.as_deref(), "toml.tmp")?;
                     return Err(error);
                 }
                 Ok(())
@@ -1980,7 +1980,7 @@ fn apply_runtime_selection_with_provider_probe(
         omaspeak::runtime_inventory::Probe {
             ready: true,
             loadable: true,
-            device_accessible: false,
+            device_accessible: None,
             evidence: omaspeak::runtime_inventory::Evidence {
                 versions: vec![format!(
                     "audio.cpp provider ABI ready: {}",
@@ -2004,7 +2004,7 @@ fn apply_runtime_selection_with_provider_probe(
             prove_setup_synthesis(&candidate, paths).context(
                 "runtime candidate rejected by model-backed synthesis; config unchanged",
             )?;
-            evidence.device_accessible = true;
+            evidence.device_accessible = Some(true);
             evidence.ready = true;
             evidence.evidence.model_inference_verified = true;
         }
@@ -2168,7 +2168,7 @@ fn guided_full_setup_with_validator(
     ];
     let summary = format!(
         "Runtime: {} · Device: {} · Model: {} · Voice: {} (ID {}) · Service unit: unchanged (`omaspeak setup systemd` installs it)",
-        runtime_name(selection.runtime),
+        selection.runtime.name(),
         selection.device,
         model,
         voice.name,
@@ -2239,7 +2239,7 @@ fn guided_runtime(
     let evidence = selector.probe_runtime(&candidate, config_path)?;
     let summary = format!(
         "Runtime: {} · Device: {}{}\r\n{}",
-        runtime_name(selection.runtime),
+        selection.runtime.name(),
         selection.device,
         accelerator_device_suffix(selection.runtime, selection.device_id.unwrap_or_default()),
         serde_json::to_string_pretty(&json!({
@@ -2262,13 +2262,13 @@ fn guided_runtime(
     if model_installed {
         println!(
             "Runtime provider configured: {} on {}; file-only model proof passed.",
-            runtime_name(selection.runtime),
+            selection.runtime.name(),
             selection.device
         );
     } else {
         println!(
             "Runtime provider configured: {} on {}; provider ABI passed. Model setup must still run the file-only synthesis proof.",
-            runtime_name(selection.runtime),
+            selection.runtime.name(),
             selection.device
         );
     }
@@ -2368,7 +2368,7 @@ fn choose_runtime(
     let items: Vec<_> = devices.iter().map(|(_, item)| item.clone()).collect();
     let Some(selected) = selector.select(
         "Omaspeak device",
-        &format!("Choose the device for {}.", runtime_name(runtime)),
+        &format!("Choose the device for {}.", runtime.name()),
         &items,
         preferred,
     )?
@@ -2386,7 +2386,7 @@ fn choose_runtime(
             "Accelerator device index",
             &format!(
                 "Enter the zero-based GPU index for {}. Leave empty to use {default}.",
-                runtime_name(runtime)
+                runtime.name()
             ),
         )?
         else {
@@ -2599,32 +2599,6 @@ fn validate_runtime_configuration(
     .map(|_| ())
 }
 
-#[cfg(test)]
-fn validate_runtime_report(
-    runtime: Runtime,
-    report: &omaspeak::runtime::LibraryPathReport,
-) -> Result<()> {
-    let name = runtime_name(runtime);
-    if report.runtime_loadable.get(name) != Some(&true) {
-        let detail = report
-            .runtime_probe_errors
-            .get(name)
-            .cloned()
-            .or_else(|| report.remediation(runtime))
-            .unwrap_or_else(|| "runtime probe failed".into());
-        bail!("{name} runtime validation failed; configuration was not changed: {detail}");
-    }
-    if report.runtime_device_accessible.get(name) == Some(&false) {
-        let detail = report
-            .device_probe_errors
-            .get(name)
-            .cloned()
-            .unwrap_or_else(|| "selected device is not accessible".into());
-        bail!("{name} device validation failed; configuration was not changed: {detail}");
-    }
-    Ok(())
-}
-
 fn apply_runtime_directory(
     config: &mut Config,
     config_path: &Path,
@@ -2733,10 +2707,6 @@ fn directory_contains_shared_libraries(directory: &Path) -> bool {
                     .is_some_and(|name| name.contains(".so"))
         })
     })
-}
-
-fn runtime_name(runtime: Runtime) -> &'static str {
-    runtime.name()
 }
 
 fn guided_model(
@@ -3144,7 +3114,7 @@ fn setup_all_with_config_and_preparer(
     })();
     if let Err(error) = result {
         let mut rollback_failures = Vec::new();
-        let config_restored = match restore_config_snapshot(config_path, original.as_deref()) {
+        let config_restored = match restore_snapshot(config_path, original.as_deref(), "toml.tmp") {
             Ok(()) => true,
             Err(restore_error) => {
                 rollback_failures.push(format!(
@@ -3155,7 +3125,7 @@ fn setup_all_with_config_and_preparer(
             }
         };
         if let Err(restore_error) =
-            restore_launcher_snapshot(&launcher_path, original_launcher.as_deref())
+            restore_snapshot(&launcher_path, original_launcher.as_deref(), "tmp")
         {
             rollback_failures.push(format!(
                 "restore prior launcher {}: {restore_error:#}",
@@ -3249,30 +3219,8 @@ fn config_snapshot(path: &Path) -> Result<Option<Vec<u8>>> {
     }
 }
 
-fn restore_config_snapshot(path: &Path, bytes: Option<&[u8]>) -> Result<()> {
-    let temporary = path.with_extension("toml.tmp");
-    match bytes {
-        Some(bytes) => {
-            if let Some(parent) = path.parent() {
-                fs::create_dir_all(parent)?;
-            }
-            fs::write(&temporary, bytes)?;
-            fs::rename(&temporary, path)?;
-        }
-        None => {
-            if path.exists() {
-                fs::remove_file(path)?;
-            }
-            if temporary.exists() {
-                fs::remove_file(temporary)?;
-            }
-        }
-    }
-    Ok(())
-}
-
-fn restore_launcher_snapshot(path: &Path, bytes: Option<&[u8]>) -> Result<()> {
-    let temporary = path.with_extension("tmp");
+fn restore_snapshot(path: &Path, bytes: Option<&[u8]>, temporary_extension: &str) -> Result<()> {
+    let temporary = path.with_extension(temporary_extension);
     match bytes {
         Some(bytes) => {
             if let Some(parent) = path.parent() {
