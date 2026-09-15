@@ -76,8 +76,9 @@ enum TopCommand {
 #[derive(Args)]
 struct SayArgs {
     text: Option<String>,
+    /// Speaker name (for example F3) or numeric ID.
     #[arg(long)]
-    voice: Option<i32>,
+    voice: Option<String>,
     #[arg(long)]
     speed: Option<f32>,
     #[arg(long)]
@@ -98,7 +99,7 @@ struct BenchmarkArgs {
     iterations: u32,
     /// Override the configured model voice for this benchmark.
     #[arg(long)]
-    voice: Option<i32>,
+    voice: Option<String>,
 }
 
 #[derive(Subcommand)]
@@ -427,6 +428,54 @@ fn say(config_path: &Path, paths: &AppPaths, args: SayArgs) -> Result<()> {
     print_response(response)
 }
 
+fn resolve_voice(config: &Config, requested: Option<&str>) -> Result<i32> {
+    let Some(requested) = requested.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Ok(config.model.voice);
+    };
+    let spec = omaspeak::catalog::model(&config.model.name);
+    let voice = requested.parse::<i32>().ok().or_else(|| {
+        spec.and_then(|model| {
+            model
+                .voices
+                .iter()
+                .find(|voice| voice.name.eq_ignore_ascii_case(requested))
+                .map(|voice| voice.id)
+        })
+    });
+    let Some(voice) = voice else {
+        let choices = spec.map_or_else(
+            || "a numeric ID".to_owned(),
+            |model| {
+                model
+                    .voices
+                    .iter()
+                    .map(|voice| format!("{} ({})", voice.name, voice.id))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            },
+        );
+        bail!(
+            "unknown voice {requested:?} for model {}; choose {choices}",
+            config.model.name
+        );
+    };
+    if let Some(model) = spec
+        && !model.voices.iter().any(|candidate| candidate.id == voice)
+    {
+        bail!(
+            "voice {voice} is unavailable for model {}; choose {}",
+            model.id,
+            model
+                .voices
+                .iter()
+                .map(|candidate| format!("{} ({})", candidate.name, candidate.id))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+    }
+    Ok(voice)
+}
+
 fn build_say_request(
     config: &Config,
     paths: &AppPaths,
@@ -448,13 +497,14 @@ fn build_say_request(
         bail!("text exceeds {} bytes", config.daemon.max_text_bytes);
     }
     let output = args.out.unwrap_or_else(|| paths.state_dir.join("last.wav"));
+    let voice = resolve_voice(config, args.voice.as_deref())?;
     Ok(Request {
         protocol: 1,
         id: request_id(),
         command: Command::Say {
             text,
             speed: args.speed.unwrap_or(1.0),
-            voice: args.voice.unwrap_or(config.model.voice),
+            voice,
             output: Some(output.to_string_lossy().into_owned()),
             no_play: args.no_play,
         },
@@ -496,7 +546,7 @@ fn benchmark_with_engine(
     engine: &impl SpeechEngine,
     args: BenchmarkArgs,
 ) -> Result<()> {
-    let voice = args.voice.unwrap_or(config.model.voice);
+    let voice = resolve_voice(config, args.voice.as_deref())?;
     let iterations = benchmark_syntheses(
         &args.text,
         &args.out_dir,
@@ -505,7 +555,7 @@ fn benchmark_with_engine(
         |output| engine.synthesize(&args.text, 1.0, voice, output),
         Instant::now,
     )?;
-    let report = benchmark_report(config, engine, &args, iterations)?;
+    let report = benchmark_report(config, engine, &args, voice, iterations)?;
     println!("{}", serde_json::to_string_pretty(&report)?);
     Ok(())
 }
@@ -577,6 +627,7 @@ fn benchmark_report(
     config: &Config,
     engine: &impl SpeechEngine,
     args: &BenchmarkArgs,
+    voice: i32,
     iterations: Vec<BenchmarkIteration>,
 ) -> Result<Value> {
     let summary = benchmark_summary(&iterations);
@@ -584,7 +635,7 @@ fn benchmark_report(
         "schema_version": 1,
         "benchmark": "omaspeak-file-synthesis",
         "text": args.text,
-        "voice": args.voice.unwrap_or(config.model.voice),
+        "voice": voice,
         "out_dir": args.out_dir,
         "model_load_milliseconds": engine.load_milliseconds(),
         "warmup_iterations": args.warmup,

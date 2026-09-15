@@ -236,11 +236,12 @@ omaspeak voices --json
 ```
 
 Guided model setup asks for a default voice after the model choice. It can also
-be changed directly, while `say --voice` overrides it for one request:
+be changed directly, while `say --voice` overrides it for one request by name
+or numeric ID:
 
 ```bash
 omaspeak config set model.voice 7
-omaspeak say --voice 2 "Testing another speaker" --no-play --out voice-2.wav
+omaspeak say --voice F3 "Testing another speaker" --no-play --out voice-f3.wav
 ```
 
 ## Synthesis
@@ -260,7 +261,7 @@ omaspeak benchmark --text "Hello from Omaspeak" --out-dir benchmark \
   --warmup 2 --iterations 10 > benchmark.json
 
 # Benchmark a specific speaker without changing the configured default.
-omaspeak benchmark --text "Hello from Omaspeak" --voice 4 --out-dir voice-4 \
+omaspeak benchmark --text "Hello from Omaspeak" --voice F5 --out-dir voice-f5 \
   --warmup 2 --iterations 10 > voice-4.json
 ```
 

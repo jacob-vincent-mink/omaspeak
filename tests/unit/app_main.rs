@@ -871,7 +871,7 @@ fn benchmark_writes_deterministic_outputs_and_reports_timings() {
         fail: false,
         runtime: Runtime::Cuda,
     };
-    let report = benchmark_report(&Config::default(), &engine, &args, iterations).unwrap();
+    let report = benchmark_report(&Config::default(), &engine, &args, 0, iterations).unwrap();
     assert_eq!(report["schema_version"], 1);
     assert_eq!(report["benchmark"], "omaspeak-file-synthesis");
     assert_eq!(report["model_load_milliseconds"], 5);
@@ -1165,13 +1165,19 @@ fn say_request_supports_explicit_text_and_piped_stdin_defaults() {
     let paths = paths(&root);
     let mut config = Config::default();
     config.model.voice = 2;
+    assert_eq!(resolve_voice(&config, None).unwrap(), 2);
+    assert_eq!(resolve_voice(&config, Some("F3")).unwrap(), 7);
+    assert_eq!(resolve_voice(&config, Some("f3")).unwrap(), 7);
+    assert_eq!(resolve_voice(&config, Some("4")).unwrap(), 4);
+    assert!(resolve_voice(&config, Some("unknown")).is_err());
+    assert!(resolve_voice(&config, Some("99")).is_err());
     let expected_output = root.join("spoken.wav");
     let received = build_say_request(
         &config,
         &paths,
         SayArgs {
             text: Some("hello from the client".into()),
-            voice: Some(4),
+            voice: Some("4".into()),
             speed: Some(1.25),
             out: Some(expected_output),
             no_play: true,
@@ -2813,7 +2819,7 @@ fn filesystem_daemon_and_report_branches_need_no_native_runtime() {
         iterations: 0,
         voice: None,
     };
-    let report = benchmark_report(&Config::default(), &engine, &args, Vec::new()).unwrap();
+    let report = benchmark_report(&Config::default(), &engine, &args, 0, Vec::new()).unwrap();
     assert_eq!(report["backend"]["placement_verified"], true);
     assert!(
         report["backend"]["placement_evidence"]
@@ -2828,7 +2834,7 @@ fn filesystem_daemon_and_report_branches_need_no_native_runtime() {
     let mut openvino_config = Config::default();
     openvino_config.backend.runtime = Runtime::Openvino;
     openvino_config.backend.device = "gpu".into();
-    let report = benchmark_report(&openvino_config, &openvino, &args, Vec::new()).unwrap();
+    let report = benchmark_report(&openvino_config, &openvino, &args, 0, Vec::new()).unwrap();
     assert!(
         report["backend"]["placement_evidence"]
             .as_str()
@@ -3581,7 +3587,7 @@ fn top_level_online_commands_exchange_protocol_without_loading_an_engine() {
     };
     invoke(TopCommand::Say(SayArgs {
         text: Some("protocol only".into()),
-        voice: Some(0),
+        voice: Some("0".into()),
         speed: Some(1.0),
         out: Some(root.join("unused.wav")),
         no_play: true,
