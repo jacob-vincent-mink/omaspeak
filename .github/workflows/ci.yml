@@ -26,7 +26,7 @@ jobs:
       - name: Install native build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends cmake ninja-build g++ git binutils libgomp1
+          sudo apt-get install -y --no-install-recommends cmake ninja-build g++ git binutils libgomp1 util-linux
       - name: Build the pinned default audio.cpp provider
         run: |
           set -euo pipefail

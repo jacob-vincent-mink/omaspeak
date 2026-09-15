@@ -175,13 +175,15 @@ fn provider_discovery_prefers_soname_then_highest_numeric_version() {
     fs::write(root.join("libaudiocpp.so.10"), b"ten").unwrap();
     fs::write(root.join("libaudiocpp.so.preview"), b"invalid").unwrap();
     assert_eq!(
-        find_provider_library(std::slice::from_ref(&root)).unwrap(),
+        crate::runtime::find_versioned_library(std::slice::from_ref(&root), "libaudiocpp.so")
+            .unwrap(),
         root.join("libaudiocpp.so.10").canonicalize().unwrap()
     );
 
     fs::write(root.join("libaudiocpp.so"), b"soname").unwrap();
     assert_eq!(
-        find_provider_library(std::slice::from_ref(&root)).unwrap(),
+        crate::runtime::find_versioned_library(std::slice::from_ref(&root), "libaudiocpp.so")
+            .unwrap(),
         root.join("libaudiocpp.so").canonicalize().unwrap()
     );
 }

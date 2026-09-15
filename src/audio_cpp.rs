@@ -1103,6 +1103,7 @@ pub fn discover_provider_library(config: &Config, config_file: &Path) -> Result<
     }
     let report = crate::runtime::inspect(&config.backend, config_file);
     let mut directories = report.configured_library_dirs;
+    directories.extend(report.environment_library_dirs);
     directories.extend(report.package_library_dirs);
     let directories = directories
         .into_iter()
@@ -1112,36 +1113,10 @@ pub fn discover_provider_library(config: &Config, config_file: &Path) -> Result<
             }
             unique
         });
-    Ok(find_provider_library(&directories))
-}
-
-fn find_provider_library(directories: &[PathBuf]) -> Option<PathBuf> {
-    for directory in directories {
-        let direct = directory.join("libaudiocpp.so");
-        if direct.is_file() {
-            return direct.canonicalize().ok();
-        }
-    }
-    let mut versioned = directories
-        .iter()
-        .flat_map(|directory| std::fs::read_dir(directory).into_iter().flatten().flatten())
-        .map(|entry| entry.path())
-        .filter_map(|path| {
-            let version = path
-                .is_file()
-                .then(|| path.file_name()?.to_str()?.strip_prefix("libaudiocpp.so."))
-                .flatten()?
-                .split('.')
-                .map(str::parse::<u64>)
-                .collect::<std::result::Result<Vec<_>, _>>()
-                .ok()?;
-            (!version.is_empty()).then_some((version, path))
-        })
-        .collect::<Vec<_>>();
-    versioned.sort_by(|(left, _), (right, _)| left.cmp(right));
-    versioned
-        .pop()
-        .and_then(|(_, path)| path.canonicalize().ok())
+    Ok(crate::runtime::find_versioned_library(
+        &directories,
+        "libaudiocpp.so",
+    ))
 }
 
 fn resolve_library_dirs(

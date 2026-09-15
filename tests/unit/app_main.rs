@@ -629,7 +629,7 @@ fn config_helpers_cover_supported_values_defaults_and_schema() {
     assert!(set_config(&mut config, "backend.options.", "x").is_err());
     assert!(set_config(&mut config, "backend.threads", "many").is_err());
 
-    save_config(&paths.config_file, &config).unwrap();
+    config.save(&paths.config_file).unwrap();
     let value = serde_json::to_value(Config::load(&paths.config_file).unwrap()).unwrap();
     assert_eq!(dotted_get(&value, "backend.threads"), Some(&json!(7)));
     assert!(dotted_get(&value, "backend.missing").is_none());
@@ -683,6 +683,8 @@ fn runtime_config_mutations_reconcile_provider_specific_state() {
     config.backend.runtime = Runtime::Cuda;
     config.backend.device = "gpu".into();
     config.backend.device_id = 1;
+    config.backend.library = Some(root.join("cuda.so"));
+    config.backend.library_dirs.push(root.join("cuda"));
     config
         .backend
         .options
@@ -702,6 +704,8 @@ fn runtime_config_mutations_reconcile_provider_specific_state() {
     assert_eq!(saved.backend.device, "auto");
     assert_eq!(saved.backend.device_id, 0);
     assert!(saved.backend.options.is_empty());
+    assert!(saved.backend.library.is_none());
+    assert!(saved.backend.library_dirs.is_empty());
 }
 
 #[test]
@@ -743,6 +747,20 @@ fn cli_parser_and_catalog_helpers_cover_command_surface() {
         vec!["omaspeak", "setup", "check", "--json"],
         vec!["omaspeak", "setup", "runtime", "--json"],
         vec!["omaspeak", "setup", "runtime", "--dir", "/opt/oma-sdk"],
+        vec![
+            "omaspeak",
+            "setup",
+            "runtime",
+            "--runtime",
+            "cuda",
+            "--device",
+            "gpu",
+            "--device-id",
+            "2",
+            "--dir",
+            "/opt/audiocpp-cuda",
+            "--apply",
+        ],
         vec!["omaspeak", "setup", "cache", "--prepare", "--json"],
         vec!["omaspeak", "setup", "model", "--list"],
         vec![
@@ -776,6 +794,7 @@ fn cli_parser_and_catalog_helpers_cover_command_surface() {
         "service lifecycle flags belong to the explicit setup systemd command"
     );
     assert!(Cli::try_parse_from(["omaspeak", "unknown"]).is_err());
+    assert!(Cli::try_parse_from(["omaspeak", "setup", "runtime", "--device-id", "2"]).is_err());
     for args in [
         ["omaspeak", "setup", "model", "--list", "--json"],
         ["omaspeak", "setup", "model", "--json", "--set"],
@@ -2246,6 +2265,7 @@ fn only_engine_loading_commands_require_runtime_path_preparation() {
             json: true,
             runtime: None,
             device: None,
+            device_id: None,
             dir: None,
             apply: false,
         }),
@@ -3030,14 +3050,18 @@ fn hidden_inventory_probe_dispatches_and_rejects_invalid_candidates() {
 
 #[test]
 fn noninteractive_runtime_setup_persists_selection_and_rejects_an_invalid_library() {
+    let make_paths = paths;
     let root = sandbox();
-    let paths = paths(&root);
+    let paths = make_paths(&root);
     apply_runtime_selection_with_provider_probe(
         &paths.config_file,
         &paths,
-        Runtime::Default,
-        "cpu",
-        None,
+        RuntimeSelection {
+            runtime: Runtime::Default,
+            device: "cpu".into(),
+            device_id: None,
+            directory: None,
+        },
         true,
         |_, _| omaspeak::runtime_inventory::Probe {
             loadable: true,
@@ -3059,6 +3083,45 @@ fn noninteractive_runtime_setup_persists_selection_and_rejects_an_invalid_librar
     assert_eq!(config.backend.runtime, Runtime::Default);
     assert_eq!(config.backend.device, "cpu");
 
+    let gpu_root = sandbox();
+    let gpu_paths = make_paths(&gpu_root);
+    apply_runtime_selection_with_provider_probe(
+        &gpu_paths.config_file,
+        &gpu_paths,
+        RuntimeSelection {
+            runtime: Runtime::Cuda,
+            device: "gpu".into(),
+            device_id: Some(2),
+            directory: None,
+        },
+        true,
+        |_, _| unreachable!("audio.cpp uses its provider probe"),
+        |candidate, _| {
+            assert_eq!(candidate.backend.device_id, 2);
+            Ok(PathBuf::from("/test/libaudiocpp-cuda.so"))
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        Config::load(&gpu_paths.config_file)
+            .unwrap()
+            .backend
+            .device_id,
+        2
+    );
+    assert!(
+        runtime_configuration_candidate(
+            &gpu_paths.config_file,
+            Runtime::Default,
+            "cpu",
+            Some(1),
+            None,
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("--device-id is only valid")
+    );
+
     let runtime = root.join("runtime-sdk/lib");
     fs::create_dir_all(&runtime).unwrap();
     fs::write(runtime.join("libaudiocpp.so.1"), b"fixture").unwrap();
@@ -3068,6 +3131,7 @@ fn noninteractive_runtime_setup_persists_selection_and_rejects_an_invalid_librar
             json: false,
             runtime: None,
             device: None,
+            device_id: None,
             dir: Some(root.join("runtime-sdk")),
             apply: true,
         }),
@@ -3082,6 +3146,7 @@ fn noninteractive_runtime_setup_persists_selection_and_rejects_an_invalid_librar
             json: true,
             runtime: None,
             device: None,
+            device_id: None,
             dir: None,
             apply: false,
         }),
@@ -3168,9 +3233,12 @@ fn noninteractive_npu_runtime_apply_defers_cache_on_a_clean_install() {
     apply_runtime_selection(
         &paths.config_file,
         &paths,
-        Runtime::Openvino,
-        "npu",
-        None,
+        RuntimeSelection {
+            runtime: Runtime::Openvino,
+            device: "npu".into(),
+            device_id: None,
+            directory: None,
+        },
         true,
         |_, _| omaspeak::runtime_inventory::Probe {
             loadable: true,
@@ -3635,7 +3703,7 @@ fn setup_completion_and_snapshot_cleanup_cover_service_and_path_states() {
 fn runtime_picker_handles_explicit_directories_and_cancelled_input_without_probing() {
     struct InputSelector {
         choices: VecDeque<Option<usize>>,
-        input: Option<String>,
+        inputs: VecDeque<Option<String>>,
         input_calls: usize,
     }
     impl SetupSelector for InputSelector {
@@ -3644,7 +3712,7 @@ fn runtime_picker_handles_explicit_directories_and_cancelled_input_without_probi
         }
         fn input(&mut self, _: &str, _: &str) -> Result<Option<String>> {
             self.input_calls += 1;
-            Ok(self.input.take())
+            Ok(self.inputs.pop_front().flatten())
         }
     }
 
@@ -3656,7 +3724,7 @@ fn runtime_picker_handles_explicit_directories_and_cancelled_input_without_probi
     config.save(&app_paths.config_file).unwrap();
     let mut cancelled = InputSelector {
         choices: [Some(2), Some(0)].into(),
-        input: None,
+        inputs: [None].into(),
         input_calls: 0,
     };
     assert!(
@@ -3666,19 +3734,26 @@ fn runtime_picker_handles_explicit_directories_and_cancelled_input_without_probi
     );
     assert_eq!(cancelled.input_calls, 1);
 
+    let cpu_provider = root.join("libaudiocpp-cpu.so");
+    fs::write(&cpu_provider, b"packaged CPU fixture").unwrap();
+    config.backend.runtime = Runtime::Default;
+    config.backend.device = "cpu".into();
+    config.backend.library = Some(cpu_provider.canonicalize().unwrap());
+    config.save(&app_paths.config_file).unwrap();
     let accelerator = root.join("cuda-provider");
     let mut selected = InputSelector {
         choices: [Some(2), Some(1)].into(),
-        input: Some(accelerator.display().to_string()),
+        inputs: [Some("3".into()), Some(accelerator.display().to_string())].into(),
         input_calls: 0,
     };
     let choice = choose_runtime(&app_paths.config_file, &mut selected)
         .unwrap()
         .unwrap();
-    assert_eq!(choice.0, Runtime::Cuda);
-    assert_eq!(choice.1, "gpu");
-    assert_eq!(choice.2.as_deref(), Some(accelerator.as_path()));
-    assert_eq!(selected.input_calls, 1);
+    assert_eq!(choice.runtime, Runtime::Cuda);
+    assert_eq!(choice.device, "gpu");
+    assert_eq!(choice.device_id, Some(3));
+    assert_eq!(choice.directory.as_deref(), Some(accelerator.as_path()));
+    assert_eq!(selected.input_calls, 2);
 
     config.backend.runtime = Runtime::Openvino;
     config.backend.openvino_library = Some(root.join("missing-openvino.so"));
@@ -3687,15 +3762,16 @@ fn runtime_picker_handles_explicit_directories_and_cancelled_input_without_probi
     let directory = root.join("sdk");
     let mut selected = InputSelector {
         choices: [Some(1), Some(3)].into(),
-        input: Some(directory.display().to_string()),
+        inputs: [Some(directory.display().to_string())].into(),
         input_calls: 0,
     };
     let choice = choose_runtime(&app_paths.config_file, &mut selected)
         .unwrap()
         .unwrap();
-    assert_eq!(choice.0, Runtime::Openvino);
-    assert_eq!(choice.1, "npu");
-    assert_eq!(choice.2.as_deref(), Some(directory.as_path()));
+    assert_eq!(choice.runtime, Runtime::Openvino);
+    assert_eq!(choice.device, "npu");
+    assert_eq!(choice.device_id, Some(0));
+    assert_eq!(choice.directory.as_deref(), Some(directory.as_path()));
     assert_eq!(selected.input_calls, 1);
 }
 

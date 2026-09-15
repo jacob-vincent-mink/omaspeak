@@ -359,7 +359,10 @@ fn environment_checks_cover_audio_launcher_and_optional_service_states() {
         if !environment.audio_available {
             assert!(result[0].detail.contains("optional"));
         }
-        assert_eq!(result[1].ok, environment.launcher_installed);
+        assert!(result[1].ok);
+        if !environment.launcher_installed {
+            assert!(result[1].detail.contains("optional"));
+        }
         assert!(result[2].detail.contains(expected));
     }
 

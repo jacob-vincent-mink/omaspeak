@@ -11,15 +11,14 @@ enabled. Keep its dependent libraries in the same provider tree or in that
 installation's normal runtime search path. Select it with:
 
 ```bash
-omaspeak setup runtime --runtime cuda --device gpu --dir /path/to/provider --apply
-omaspeak setup runtime --runtime vulkan --device gpu --dir /path/to/provider --apply
-omaspeak setup runtime --runtime hip --device gpu --dir /path/to/provider --apply
+omaspeak setup runtime --runtime cuda --device gpu --device-id 0 --dir /path/to/provider --apply
+omaspeak setup runtime --runtime vulkan --device gpu --device-id 0 --dir /path/to/provider --apply
+omaspeak setup runtime --runtime hip --device gpu --device-id 0 --dir /path/to/provider --apply
 ```
 
-`backend.device_id` selects a zero-based device for these accelerator runtimes.
-Set it with `omaspeak config set backend.device_id N` before applying if needed.
-The exact backend and device ID are sent to audio.cpp when Omaspeak creates the
-worker session.
+`--device-id` selects a zero-based device for these accelerator runtimes. The
+guided setup asks for the same value. The exact backend and device ID are sent
+to audio.cpp when Omaspeak creates the worker session.
 
 ABI loading alone is not placement proof. With an installed GGUF model, setup
 creates a real Supertonic session and writes a file-only synthesis before it

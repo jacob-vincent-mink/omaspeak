@@ -97,6 +97,7 @@ jobs:
             -not -path '*/.git/*' -print0)
           cp LICENSE "${root}/licenses/OMASPEAK-LICENSE"
           cp THIRD_PARTY_NOTICES.md "${root}/licenses/OMASPEAK-THIRD-PARTY-NOTICES"
+          cp THIRD_PARTY_NOTICES.md "${root}/THIRD_PARTY_NOTICES.md"
           cp licenses/SUPERTONIC-CODE-LICENSE "${root}/licenses/SUPERTONIC-CODE-LICENSE"
           cp licenses/LLAMA-CPP-LICENSE "${root}/licenses/LLAMA-CPP-LICENSE"
           cp licenses/POCKETFFT-LICENSE "${root}/licenses/POCKETFFT-LICENSE"
@@ -138,6 +139,7 @@ jobs:
           test -s "${root}/licenses/AUDIOCPP-THIRD-PARTY/external/sentencepiece/third_party/protobuf-lite/LICENSE"
           test -s "${root}/licenses/LLAMA-CPP-LICENSE"
           test -s "${root}/licenses/POCKETFFT-LICENSE"
+          test -s "${root}/THIRD_PARTY_NOTICES.md"
           test "$(find "${root}/licenses/AUDIOCPP-THIRD-PARTY" -type f | wc -l)" -ge 10
           export XDG_CONFIG_HOME="${RUNNER_TEMP}/omaspeak-release/config"
           export XDG_DATA_HOME="${RUNNER_TEMP}/omaspeak-release/data"

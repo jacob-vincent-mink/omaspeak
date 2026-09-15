@@ -87,6 +87,41 @@ fn process_isolated_audio_cpp_provider_synthesizes_without_its_cli() {
 
 #[cfg(target_os = "linux")]
 #[test]
+fn environment_provider_path_is_used_for_real_engine_loading() {
+    let root = sandbox();
+    let library = build_audio_cpp_stub(&root);
+    let provider_directory = library.parent().unwrap().to_owned();
+    let mut config = audio_cpp_stub_config(&root, library, "supertonic.gguf");
+    config.backend.library = None;
+    config.backend.library_dirs.clear();
+    config
+        .save(&root.join("config/omaspeak/config.toml"))
+        .unwrap();
+
+    let wav = root.join("environment-provider.wav");
+    let output = Command::new(env!("CARGO_BIN_EXE_omaspeak"))
+        .args([
+            "say",
+            "environment provider proof",
+            "--no-play",
+            "--out",
+            wav.to_str().unwrap(),
+        ])
+        .env("HOME", &root)
+        .env("XDG_CONFIG_HOME", root.join("config"))
+        .env("XDG_DATA_HOME", root.join("data"))
+        .env("XDG_STATE_HOME", root.join("state"))
+        .env("XDG_RUNTIME_DIR", root.join("run"))
+        .env("OMASPEAK_LIBRARY_PATH", provider_directory)
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert!(fs::read(wav).unwrap().starts_with(b"RIFF"));
+}
+
+#[cfg(target_os = "linux")]
+#[test]
 fn process_isolated_audio_cpp_provider_reports_native_failures_without_crashing() {
     for model_file in [
         "fail-load.gguf",
@@ -322,9 +357,10 @@ fn run_with_input(root: &Path, args: &[&str], input: &str) -> Output {
 #[cfg(unix)]
 #[test]
 fn guided_setup_accepts_arrow_keys_and_enter_in_a_real_pty() {
-    if Command::new("script").arg("--version").output().is_err() {
-        return;
-    }
+    assert!(
+        Command::new("script").arg("--version").output().is_ok(),
+        "the real-PTY setup regression test requires util-linux script(1)"
+    );
     let root = sandbox();
     let binary = env!("CARGO_BIN_EXE_omaspeak");
     assert!(!binary.contains(['\'', '"', ' ']));

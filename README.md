@@ -55,14 +55,17 @@ core from one build with plugins from another.
 ```bash
 # NVIDIA GPU: complete CUDA-enabled audio.cpp provider
 omaspeak setup runtime --runtime cuda --device gpu \
+  --device-id 0 \
   --dir /opt/audiocpp-cuda --apply
 
 # Vulkan GPU: complete Vulkan-enabled audio.cpp provider
 omaspeak setup runtime --runtime vulkan --device gpu \
+  --device-id 0 \
   --dir /opt/audiocpp-vulkan --apply
 
 # AMD GPU: complete HIP/ROCm-enabled audio.cpp provider
 omaspeak setup runtime --runtime hip --device gpu \
+  --device-id 0 \
   --dir /opt/audiocpp-hip --apply
 ```
 

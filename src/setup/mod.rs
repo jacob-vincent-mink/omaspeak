@@ -304,10 +304,12 @@ fn append_environment_checks(
     result.push(if environment.launcher_installed {
         ok("launcher", launcher.display().to_string())
     } else {
-        fail(
+        ok(
             "launcher",
-            format!("desktop launcher is missing: {}", launcher.display()),
-            "run `omaspeak setup menu`",
+            format!(
+                "not installed (optional; run `omaspeak setup menu`): {}",
+                launcher.display()
+            ),
         )
     });
     let service = systemd::service_path(paths);

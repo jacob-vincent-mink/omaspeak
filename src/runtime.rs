@@ -345,6 +345,10 @@ fn locate_openvino_plugins(exact: Option<&PathBuf>, search_dirs: &[PathBuf]) -> 
     if let Some(path) = exact {
         return (path.is_absolute() && path.is_file()).then(|| canonical_or(path.clone()));
     }
+    find_openvino_plugins(search_dirs)
+}
+
+pub fn find_openvino_plugins(search_dirs: &[PathBuf]) -> Option<PathBuf> {
     search_dirs
         .iter()
         .flat_map(|directory| {
@@ -357,7 +361,7 @@ fn locate_openvino_plugins(exact: Option<&PathBuf>, search_dirs: &[PathBuf]) -> 
         .map(canonical_or)
 }
 
-pub(crate) fn find_versioned_library(directories: &[PathBuf], name: &str) -> Option<PathBuf> {
+pub fn find_versioned_library(directories: &[PathBuf], name: &str) -> Option<PathBuf> {
     for directory in directories {
         let direct = directory.join(name);
         if direct.is_file() {

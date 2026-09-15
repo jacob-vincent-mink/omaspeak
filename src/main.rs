@@ -15,7 +15,9 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, anyhow, bail};
 use clap::{Args, Parser, Subcommand};
-use omaspeak::backend::{Fallback, Runtime, canonical_device, supported_capabilities};
+use omaspeak::backend::{
+    BackendConfig, Fallback, Runtime, canonical_device, supported_capabilities,
+};
 use omaspeak::config::Config;
 use omaspeak::engine::{Engine, Synthesis};
 use omaspeak::paths::AppPaths;
@@ -215,7 +217,7 @@ enum SetupCommand {
     /// Select a runtime and device, or print discovery data outside a terminal.
     Runtime {
         /// Print runtimes, devices, capabilities, and models as JSON.
-        #[arg(long, conflicts_with_all = ["dir", "runtime", "device"])]
+        #[arg(long, conflicts_with_all = ["dir", "runtime", "device", "device_id"])]
         json: bool,
         /// Select a runtime without opening the terminal UI.
         #[arg(long, value_name = "RUNTIME", requires = "device")]
@@ -223,6 +225,9 @@ enum SetupCommand {
         /// Select a device without opening the terminal UI.
         #[arg(long, value_name = "DEVICE", requires = "runtime")]
         device: Option<String>,
+        /// Select a zero-based GPU index for CUDA, Vulkan, or HIP.
+        #[arg(long, value_name = "INDEX", requires = "runtime")]
+        device_id: Option<u32>,
         /// Configure the current runtime from a directory containing matching native libraries.
         #[arg(long, value_name = "DIRECTORY")]
         dir: Option<PathBuf>,
@@ -273,6 +278,14 @@ trait SetupSelector {
     fn input(&mut self, _title: &str, _help: &str) -> Result<Option<String>> {
         Ok(Some(String::new()))
     }
+}
+
+#[derive(Debug, Eq, PartialEq)]
+struct RuntimeSelection {
+    runtime: Runtime,
+    device: String,
+    device_id: Option<u32>,
+    directory: Option<PathBuf>,
 }
 
 struct TerminalSetupSelector;
@@ -1345,16 +1358,19 @@ fn save_config_mutation(
 ) -> Result<()> {
     if key == "backend.runtime" && config.backend.runtime != previous_runtime {
         config.backend.device = "auto".into();
-        config.backend.options.clear();
-        if !matches!(
-            config.backend.runtime,
-            Runtime::Cuda | Runtime::Vulkan | Runtime::Hip
-        ) {
-            config.backend.device_id = 0;
-        }
+        clear_runtime_provider_configuration(&mut config.backend);
     }
     config.backend.validate_shape()?;
-    save_config(path, &config)
+    config.save(path)
+}
+
+fn clear_runtime_provider_configuration(backend: &mut BackendConfig) {
+    backend.device_id = 0;
+    backend.options.clear();
+    backend.library_dirs.clear();
+    backend.library = None;
+    backend.openvino_library = None;
+    backend.openvino_plugins = None;
 }
 
 fn set_config(config: &mut Config, key: &str, value: &str) -> Result<()> {
@@ -1456,16 +1472,6 @@ fn dynamic_option_name<'a>(key: &'a str, prefix: &str) -> Result<Option<&'a str>
         );
     }
     Ok(Some(option))
-}
-
-fn save_config(path: &Path, config: &Config) -> Result<()> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    let temporary = path.with_extension("toml.tmp");
-    fs::write(&temporary, toml::to_string_pretty(config)?)?;
-    fs::rename(&temporary, path)?;
-    Ok(())
 }
 
 fn dotted_get<'a>(value: &'a Value, key: &str) -> Option<&'a Value> {
@@ -1589,6 +1595,7 @@ fn setup(command: Option<SetupCommand>, config_path: &Path, paths: &AppPaths) ->
             json,
             runtime,
             device,
+            device_id,
             dir,
             apply,
         } => {
@@ -1598,9 +1605,12 @@ fn setup(command: Option<SetupCommand>, config_path: &Path, paths: &AppPaths) ->
                 apply_runtime_selection(
                     config_path,
                     paths,
-                    runtime,
-                    &device,
-                    dir.as_deref(),
+                    RuntimeSelection {
+                        runtime,
+                        device,
+                        device_id,
+                        directory: dir,
+                    },
                     apply,
                     omaspeak::runtime_inventory::probe,
                 )
@@ -1609,9 +1619,12 @@ fn setup(command: Option<SetupCommand>, config_path: &Path, paths: &AppPaths) ->
                 apply_runtime_selection(
                     config_path,
                     paths,
-                    current.backend.runtime,
-                    &current.backend.device,
-                    Some(&dir),
+                    RuntimeSelection {
+                        runtime: current.backend.runtime,
+                        device: current.backend.device,
+                        device_id: None,
+                        directory: Some(dir),
+                    },
                     apply,
                     omaspeak::runtime_inventory::probe,
                 )
@@ -1859,18 +1872,14 @@ fn prepare_npu_for_runtime_selection(
 fn apply_runtime_selection(
     config_path: &Path,
     paths: &AppPaths,
-    runtime: Runtime,
-    device: &str,
-    directory: Option<&Path>,
+    selection: RuntimeSelection,
     apply: bool,
     probe: impl FnOnce(&omaspeak::backend::BackendConfig, &Path) -> omaspeak::runtime_inventory::Probe,
 ) -> Result<()> {
     apply_runtime_selection_with_provider_probe(
         config_path,
         paths,
-        runtime,
-        device,
-        directory,
+        selection,
         apply,
         probe,
         omaspeak::audio_cpp::probe_provider,
@@ -1881,14 +1890,18 @@ fn apply_runtime_selection(
 fn apply_runtime_selection_with_provider_probe(
     config_path: &Path,
     paths: &AppPaths,
-    runtime: Runtime,
-    device: &str,
-    directory: Option<&Path>,
+    selection: RuntimeSelection,
     apply: bool,
     probe: impl FnOnce(&omaspeak::backend::BackendConfig, &Path) -> omaspeak::runtime_inventory::Probe,
     probe_audio_cpp: impl FnOnce(&Config, &Path) -> Result<PathBuf>,
 ) -> Result<()> {
-    let mut candidate = runtime_configuration_candidate(config_path, runtime, device, directory)?;
+    let mut candidate = runtime_configuration_candidate(
+        config_path,
+        selection.runtime,
+        &selection.device,
+        selection.device_id,
+        selection.directory.as_deref(),
+    )?;
     let mut evidence = if candidate.backend.kind == "audiocpp" {
         let library = probe_audio_cpp(&candidate, config_path)
             .context("runtime candidate rejected; config unchanged")?;
@@ -2038,18 +2051,27 @@ fn guided_full_setup_with_validator(
     check_human: impl FnOnce(&Path, &AppPaths) -> Result<()>,
     check_json: impl FnOnce(&Path, &AppPaths) -> Result<()>,
 ) -> Result<()> {
-    let Some((runtime, device, library_dir)) = choose_runtime(config_path, selector)? else {
+    let Some(selection) = choose_runtime(config_path, selector)? else {
         println!("Setup cancelled.");
         return Ok(());
     };
-    let candidate =
-        runtime_configuration_candidate(config_path, runtime, &device, library_dir.as_deref())?;
-    validate_runtime(&candidate, config_path, library_dir.as_deref().is_some())?;
+    let candidate = runtime_configuration_candidate(
+        config_path,
+        selection.runtime,
+        &selection.device,
+        selection.device_id,
+        selection.directory.as_deref(),
+    )?;
+    validate_runtime(
+        &candidate,
+        config_path,
+        selection.directory.as_deref().is_some(),
+    )?;
     let Some(model) = choose_model(
         config_path,
         paths,
         operations,
-        Some((runtime, &device)),
+        Some((selection.runtime, &selection.device)),
         selector,
     )?
     else {
@@ -2075,8 +2097,8 @@ fn guided_full_setup_with_validator(
     ];
     let summary = format!(
         "Runtime: {} · Device: {} · Model: {} · Voice: {} (ID {}) · Service unit: unchanged (`omaspeak setup systemd` installs it)",
-        runtime_name(runtime),
-        device,
+        runtime_name(selection.runtime),
+        selection.device,
         model,
         voice.name,
         voice.id,
@@ -2108,22 +2130,24 @@ fn guided_runtime(
     paths: &AppPaths,
     selector: &mut impl SetupSelector,
 ) -> Result<Option<(Runtime, String)>> {
-    let Some((runtime, device, library_dir)) = choose_runtime(config_path, selector)? else {
+    let Some(selection) = choose_runtime(config_path, selector)? else {
         println!("Runtime setup cancelled.");
         return Ok(None);
     };
-    if runtime == Runtime::Openvino {
+    if selection.runtime == Runtime::Openvino {
         let config = app_setup::load_config(config_path)?;
         let installed = omaspeak::catalog::model(&config.model.name)
             .is_some_and(|model| app_setup::model::verify(paths, model).is_ok());
         let compatible = !installed
             || omaspeak::catalog::model(&config.model.name).is_some_and(|model| {
-                model.openvino_capable && (!device.eq_ignore_ascii_case("npu") || model.npu_capable)
+                model.openvino_capable
+                    && (!selection.device.eq_ignore_ascii_case("npu") || model.npu_capable)
             });
         if !compatible {
             bail!(
-                "model {} is not compatible with direct OpenVINO on {device}; run `omaspeak setup` and choose Full setup to select a compatible Supertonic model",
-                config.model.name
+                "model {} is not compatible with direct OpenVINO on {}; run `omaspeak setup` and choose Full setup to select a compatible Supertonic model",
+                config.model.name,
+                selection.device
             );
         }
     }
@@ -2134,12 +2158,19 @@ fn guided_runtime(
         ),
         MenuItem::available("Cancel", "Leave the current configuration unchanged."),
     ];
-    let mut candidate =
-        runtime_configuration_candidate(config_path, runtime, &device, library_dir.as_deref())?;
+    let mut candidate = runtime_configuration_candidate(
+        config_path,
+        selection.runtime,
+        &selection.device,
+        selection.device_id,
+        selection.directory.as_deref(),
+    )?;
     let evidence = selector.probe_runtime(&candidate, config_path)?;
     let summary = format!(
-        "Runtime: {} · Device: {device}\r\n{}",
-        runtime_name(runtime),
+        "Runtime: {} · Device: {}{}\r\n{}",
+        runtime_name(selection.runtime),
+        selection.device,
+        accelerator_device_suffix(selection.runtime, selection.device_id.unwrap_or_default()),
         serde_json::to_string_pretty(&json!({
             "candidate": candidate.backend,
             "probe": evidence,
@@ -2159,22 +2190,24 @@ fn guided_runtime(
     candidate.save(config_path)?;
     if model_installed {
         println!(
-            "Runtime provider configured: {} on {device}; file-only model proof passed.",
-            runtime_name(runtime)
+            "Runtime provider configured: {} on {}; file-only model proof passed.",
+            runtime_name(selection.runtime),
+            selection.device
         );
     } else {
         println!(
-            "Runtime provider configured: {} on {device}; provider ABI passed. Model setup must still run the file-only synthesis proof.",
-            runtime_name(runtime)
+            "Runtime provider configured: {} on {}; provider ABI passed. Model setup must still run the file-only synthesis proof.",
+            runtime_name(selection.runtime),
+            selection.device
         );
     }
-    Ok(Some((runtime, device)))
+    Ok(Some((selection.runtime, selection.device)))
 }
 
 fn choose_runtime(
     config_path: &Path,
     selector: &mut impl SetupSelector,
-) -> Result<Option<(Runtime, String, Option<PathBuf>)>> {
+) -> Result<Option<RuntimeSelection>> {
     let config = app_setup::load_config(config_path)?;
     let locations = omaspeak::runtime::discover(&config.backend, config_path);
     // A stale configured provider path is reported by setup checks, but must
@@ -2272,6 +2305,32 @@ fn choose_runtime(
         return Ok(None);
     };
     let device = devices[selected].0.to_owned();
+    let device_id = if matches!(runtime, Runtime::Cuda | Runtime::Vulkan | Runtime::Hip) {
+        let default = if config.backend.runtime == runtime {
+            config.backend.device_id
+        } else {
+            0
+        };
+        let Some(value) = selector.input(
+            "Accelerator device index",
+            &format!(
+                "Enter the zero-based GPU index for {}. Leave empty to use {default}.",
+                runtime_name(runtime)
+            ),
+        )?
+        else {
+            return Ok(None);
+        };
+        if value.is_empty() {
+            default
+        } else {
+            value
+                .parse::<u32>()
+                .context("accelerator device index must be a non-negative integer")?
+        }
+    } else {
+        0
+    };
     let loadable = match runtime {
         Runtime::Openvino => locations.runtime_loadable.get("openvino") == Some(&true),
         Runtime::Default => {
@@ -2298,7 +2357,18 @@ fn choose_runtime(
         };
         (!value.is_empty()).then(|| PathBuf::from(value))
     };
-    Ok(Some((runtime, device, library_dir)))
+    Ok(Some(RuntimeSelection {
+        runtime,
+        device,
+        device_id: Some(device_id),
+        directory: library_dir,
+    }))
+}
+
+fn accelerator_device_suffix(runtime: Runtime, device_id: u32) -> String {
+    matches!(runtime, Runtime::Cuda | Runtime::Vulkan | Runtime::Hip)
+        .then(|| format!(" · Index: {device_id}"))
+        .unwrap_or_default()
 }
 
 fn setup_path_list(paths: &[PathBuf]) -> String {
@@ -2375,7 +2445,7 @@ fn save_runtime_with(
     library_dir: Option<&Path>,
     validate: impl FnOnce(&Config, &Path, bool) -> Result<()>,
 ) -> Result<()> {
-    let config = runtime_configuration_candidate(config_path, runtime, device, library_dir)?;
+    let config = runtime_configuration_candidate(config_path, runtime, device, None, library_dir)?;
     validate(&config, config_path, library_dir.is_some())?;
     config.save(config_path)
 }
@@ -2384,6 +2454,7 @@ fn runtime_configuration_candidate(
     config_path: &Path,
     runtime: Runtime,
     device: &str,
+    device_id: Option<u32>,
     library_dir: Option<&Path>,
 ) -> Result<Config> {
     let mut config = app_setup::load_config(config_path)?;
@@ -2396,13 +2467,18 @@ fn runtime_configuration_candidate(
         "audiocpp".into()
     };
     if runtime_changed {
-        config.backend.options.clear();
-        config.backend.library_dirs.clear();
-        config.backend.library = None;
-        config.backend.openvino_library = None;
-        config.backend.openvino_plugins = None;
+        clear_runtime_provider_configuration(&mut config.backend);
     }
-    if !matches!(runtime, Runtime::Cuda | Runtime::Vulkan | Runtime::Hip) {
+    if matches!(runtime, Runtime::Cuda | Runtime::Vulkan | Runtime::Hip) {
+        if let Some(device_id) = device_id {
+            config.backend.device_id = device_id;
+        } else if runtime_changed {
+            config.backend.device_id = 0;
+        }
+    } else {
+        if device_id.is_some_and(|device_id| device_id != 0) {
+            bail!("--device-id is only valid with cuda, vulkan, or hip");
+        }
         config.backend.device_id = 0;
     }
     if let Some(directory) = library_dir {
@@ -2533,7 +2609,11 @@ fn apply_runtime_directory(
             &directory,
             "libopenvino_c.so",
         )?);
-        config.backend.openvino_plugins = Some(find_openvino_plugins(&candidates, &directory)?);
+        config.backend.openvino_plugins = Some(
+            omaspeak::runtime::find_openvino_plugins(&candidates).with_context(|| {
+                format!("plugins.xml was not found below {}", directory.display())
+            })?,
+        );
     } else {
         config.backend.library = Some(find_runtime_file(
             &candidates,
@@ -2567,54 +2647,9 @@ fn apply_runtime_directory(
     Ok(())
 }
 
-fn find_openvino_plugins(candidates: &[PathBuf], root: &Path) -> Result<PathBuf> {
-    candidates
-        .iter()
-        .flat_map(|directory| {
-            [
-                directory.join("plugins.xml"),
-                directory.join("openvino/plugins.xml"),
-            ]
-        })
-        .find(|path| path.is_file())
-        .with_context(|| format!("plugins.xml was not found below {}", root.display()))?
-        .canonicalize()
-        .with_context(|| format!("resolve OpenVINO plugins.xml below {}", root.display()))
-}
-
 fn find_runtime_file(candidates: &[PathBuf], root: &Path, name: &str) -> Result<PathBuf> {
-    for directory in candidates {
-        let direct = directory.join(name);
-        if direct.is_file() {
-            return direct
-                .canonicalize()
-                .with_context(|| format!("resolve native library {}", direct.display()));
-        }
-    }
-    let prefix = format!("{name}.");
-    let mut matches = candidates
-        .iter()
-        .flat_map(|directory| fs::read_dir(directory).into_iter().flatten().flatten())
-        .map(|entry| entry.path())
-        .filter_map(|path| {
-            let version = path
-                .is_file()
-                .then(|| path.file_name()?.to_str()?.strip_prefix(&prefix))
-                .flatten()?
-                .split('.')
-                .map(str::parse::<u64>)
-                .collect::<std::result::Result<Vec<_>, _>>()
-                .ok()?;
-            (!version.is_empty()).then_some((version, path))
-        })
-        .collect::<Vec<_>>();
-    matches.sort_by(|(left, _), (right, _)| left.cmp(right));
-    matches
-        .pop()
-        .map(|(_, path)| path)
-        .with_context(|| format!("{name} was not found below {}", root.display()))?
-        .canonicalize()
-        .with_context(|| format!("resolve {name} below {}", root.display()))
+    omaspeak::runtime::find_versioned_library(candidates, name)
+        .with_context(|| format!("{name} was not found below {}", root.display()))
 }
 
 fn directory_contains_shared_libraries(directory: &Path) -> bool {
