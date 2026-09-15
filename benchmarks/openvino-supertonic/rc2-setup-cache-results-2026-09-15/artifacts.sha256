@@ -1,0 +1,15 @@
+defa6a6567430b979159daa8c3f368175bc37b07bbb4b84e876db6dae4069097  benchmarks/openvino-supertonic/rc2-setup-cache-results-2026-09-15/binary.sha256
+8b4325a28127cee90dbfcc50b2296fc501d6d70685a3f24c88aecf83a22b24cd  benchmarks/openvino-supertonic/rc2-setup-cache-results-2026-09-15/cache-after-inference.sha256
+8b4325a28127cee90dbfcc50b2296fc501d6d70685a3f24c88aecf83a22b24cd  benchmarks/openvino-supertonic/rc2-setup-cache-results-2026-09-15/cache-before-inference.sha256
+1aa5d3b39f43104c710d18dd6a70adda0d6324aa50c23f309d457b95812ed592  benchmarks/openvino-supertonic/rc2-setup-cache-results-2026-09-15/cache-stats.txt
+18901bda682e4bb823a47531da81c35f54cf411329317f34e4ef8b2e3df20156  benchmarks/openvino-supertonic/rc2-setup-cache-results-2026-09-15/environment.txt
+9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa  benchmarks/openvino-supertonic/rc2-setup-cache-results-2026-09-15/setup.exit-status.txt
+da48ddfdf5d7055894ea1ae728ee078e63baf1aea9529a628b503cd742e279b2  benchmarks/openvino-supertonic/rc2-setup-cache-results-2026-09-15/setup.npu-delta-us.txt
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  benchmarks/openvino-supertonic/rc2-setup-cache-results-2026-09-15/setup.stderr.log
+af940ea897a03f0652804b5f961d36b5bdfd2b6989938cc099f1aef0335aa036  benchmarks/openvino-supertonic/rc2-setup-cache-results-2026-09-15/setup.stdout.jsonl
+b28fa9f8ec69ddd613498291a5b44b16bb73df4c6d4a86033d37667024184db3  benchmarks/openvino-supertonic/rc2-setup-cache-results-2026-09-15/source-commit.txt
+9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa  benchmarks/openvino-supertonic/rc2-setup-cache-results-2026-09-15/synthesis.exit-status.txt
+cd1a079088763fceb3bece4a5d2f564849a347caba95364f171971670b4759a9  benchmarks/openvino-supertonic/rc2-setup-cache-results-2026-09-15/synthesis.json
+395030538a456498d413df11667ad1a9e36d3466b8bd795bf988f96fa656e06f  benchmarks/openvino-supertonic/rc2-setup-cache-results-2026-09-15/synthesis.npu-delta-us.txt
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  benchmarks/openvino-supertonic/rc2-setup-cache-results-2026-09-15/synthesis.stderr.log
+1721b546413b3a769ba7e472e73f6172b2a57df6394d1299ee708094db0855ac  benchmarks/openvino-supertonic/rc2-setup-cache-results-2026-09-15/synthesis.wav.sha256

@@ -1,0 +1,41 @@
+{
+  "backend": {
+    "effective_runtime": "openvino",
+    "fallback_used": false,
+    "kind": "openvino",
+    "model": "supertonic-3-npu",
+    "placement_evidence": "OpenVINO EXECUTION_DEVICES matched the requested device for every compiled graph",
+    "placement_verified": true,
+    "requested_device": "npu",
+    "requested_runtime": "openvino"
+  },
+  "benchmark": "omaspeak-file-synthesis",
+  "iterations": [
+    {
+      "audio_duration_milliseconds": 1702.60771,
+      "elapsed_milliseconds": 600.10906,
+      "iteration": 1,
+      "output": "/home/jacob/src/github.com/jacob-vincent-mink/.omaspeak-rc2-npu-cache-proof-final/wav/iteration-0001.wav",
+      "real_time_factor": 0.3523117171835196,
+      "sample_rate": 44100,
+      "samples": 75085,
+      "synthesis_milliseconds": 599.848646
+    }
+  ],
+  "measured_iterations": 1,
+  "model_load_milliseconds": 161,
+  "out_dir": "/home/jacob/src/github.com/jacob-vincent-mink/.omaspeak-rc2-npu-cache-proof-final/wav",
+  "schema_version": 1,
+  "summary": {
+    "p50_elapsed_milliseconds": 600.10906,
+    "p50_real_time_factor": 0.3523117171835196,
+    "p50_synthesis_milliseconds": 599.848646,
+    "p95_elapsed_milliseconds": 600.10906,
+    "p95_real_time_factor": 0.3523117171835196,
+    "p95_synthesis_milliseconds": 599.848646,
+    "samples": 1
+  },
+  "text": "testing one two three",
+  "voice": 7,
+  "warmup_iterations": 0
+}

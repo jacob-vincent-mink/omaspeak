@@ -70,8 +70,8 @@ official ORT 1.30 CUDA Plugin EP with direct WAV output and physical GPU
 telemetry. An earlier ORT 1.29 run is retained as historical evidence. The
 [Dell XPS OpenVINO report](benchmarks/openvino-supertonic/DELL-XPS-DIRECT-OPENVINO-2026-09-14.md)
 records direct CPU, iGPU, and NPU execution and accuracy, and the
-[rc.1 NPU cache proof](benchmarks/openvino-supertonic/RC1-EXPORT-IMPORT-NPU-2026-09-15.md)
-validates setup-time compiled-model export and later-process import.
+[rc.2 NPU setup proof](benchmarks/openvino-supertonic/RC2-SETUP-CACHE-2026-09-15.md)
+validates clean setup-time compiled-model export and second-process import.
 
 ## Setup
 
@@ -360,7 +360,8 @@ the NPU busy counter independently confirmed NPU execution.
 
 See [DEMO.md](DEMO.md) for a current usage walkthrough. Direct OpenVINO device
 placement and accuracy evidence is in the
-[Dell XPS direct OpenVINO report](benchmarks/openvino-supertonic/DELL-XPS-DIRECT-OPENVINO-2026-09-14.md).
+[Dell XPS direct OpenVINO report](benchmarks/openvino-supertonic/DELL-XPS-DIRECT-OPENVINO-2026-09-14.md)
+and [rc.2 NPU setup proof](benchmarks/openvino-supertonic/RC2-SETUP-CACHE-2026-09-15.md).
 The [2026-09-13 predecessor demo](benchmarks/historical/2026-09-13-piper.md)
 and [earlier GB10 CUDA report](benchmarks/cuda-gb10-2026-09-14.md) are retained
 only as historical evidence.
