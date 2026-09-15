@@ -12,6 +12,10 @@ This release introduces the greenfield native-provider architecture:
   before the model directory is atomically published;
 - guided setup discovers exact provider paths and requires model-backed
   file-only proof before final activation;
+- switching back to the packaged CPU provider clears prior accelerator paths
+  without asking for another runtime directory;
+- `omaspeak say` reads omitted text from a pipe and reports missing interactive
+  text immediately instead of waiting on the terminal;
 - runtime inventory reports an audio.cpp device as unverified until that model
   proof succeeds, rather than presenting ABI discovery as a failed device;
 - NPU model-cache compilation and a fresh-process cache-hit proof happen during

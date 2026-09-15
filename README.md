@@ -33,6 +33,10 @@ omaspeak say "Testing one, two, three"
 printf '%s' 'Piped input works too.' | omaspeak say --no-play --out /tmp/test.wav
 ```
 
+When the text argument is omitted, `say` reads redirected or piped standard
+input. An interactive invocation with no text exits immediately with usage
+guidance.
+
 `setup all` installs the verified model and desktop settings launcher. It does
 not install or start a service. `say` starts inference on demand when no daemon
 is running.

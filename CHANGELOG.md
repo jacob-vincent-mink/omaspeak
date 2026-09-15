@@ -9,6 +9,8 @@
 - Kept runtime transitions provider-specific: the packaged CPU provider is
   reused when leaving OpenVINO, while accelerator selections still require a
   matching complete external provider.
+- Made `omaspeak say` fail immediately with usage guidance when no text is
+  supplied from an interactive terminal, while preserving piped input.
 
 ## 0.0.1-rc.3 - 2026-09-15
 
