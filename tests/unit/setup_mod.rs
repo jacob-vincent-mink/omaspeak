@@ -26,6 +26,24 @@ fn ensure_config_creates_and_reloads_defaults() {
 }
 
 #[test]
+fn setup_loader_uses_defaults_for_invalid_config_without_changing_the_file() {
+    let (_, paths) = fixture("invalid-recovery");
+    fs::create_dir_all(paths.config_file.parent().unwrap()).unwrap();
+    let invalid = b"[backend]\nremoved_pre_release_field = true\n";
+    fs::write(&paths.config_file, invalid).unwrap();
+
+    let issue = config_recovery(&paths.config_file).unwrap().unwrap();
+    assert!(issue.contains("unknown field `removed_pre_release_field`"));
+    let config = ensure_config(&paths.config_file).unwrap();
+    assert_eq!(config.backend.kind, "supertonic");
+    assert_eq!(fs::read(&paths.config_file).unwrap(), invalid);
+
+    let unreadable = paths.config_file.with_file_name("config-directory");
+    fs::create_dir_all(&unreadable).unwrap();
+    assert!(config_recovery(&unreadable).is_err());
+}
+
+#[test]
 fn checks_report_malformed_missing_and_custom_states() {
     let (root, paths) = fixture("checks");
     fs::create_dir_all(paths.config_file.parent().unwrap()).unwrap();

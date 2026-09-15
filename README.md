@@ -94,6 +94,12 @@ omaspeak setup runtime --dir /opt/omaspeak-runtime --apply  # save only after th
 omaspeak setup model     # browse catalog metadata and install/activate a model
 ```
 
+Pre-release configuration files use the current schema only. If setup finds an
+invalid file, it starts from current defaults and tells you that the next
+successful apply will replace the file. Inventory, checks, and cancelled setup
+leave the original bytes untouched. Runtime commands and `omaspeak config`
+remain strict, so a malformed or unknown field cannot silently affect speech.
+
 The model picker marks the active model, models already installed, models that
 need license acceptance, and models that must be supplied by the user. It includes
 download sizes, the Supertonic model family, backend names, license status,

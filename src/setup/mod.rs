@@ -3,9 +3,10 @@ pub mod model;
 pub mod systemd;
 pub mod wizard;
 
+use std::fs;
 use std::path::Path;
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use serde::Serialize;
 
 use crate::catalog;
@@ -20,14 +21,48 @@ pub struct Check {
     pub remediation: Option<String>,
 }
 
-pub fn ensure_config(path: &Path) -> Result<Config> {
-    if path.exists() {
-        Config::load(path)
-    } else {
-        let config = Config::default();
-        config.save(path)?;
-        Ok(config)
+/// Load the current configuration for a setup flow. Pre-release configuration
+/// files are intentionally not migrated field by field: an invalid file is
+/// represented by current defaults until the user applies a setup change.
+/// Read-only setup actions therefore leave the invalid bytes untouched, while
+/// successful setup saves replace the whole file with the current schema.
+pub fn load_config(path: &Path) -> Result<Config> {
+    setup_config(path).map(|(config, _)| config)
+}
+
+/// Describe an invalid configuration without preventing the setup UI and
+/// repair commands from starting. File-system errors remain fatal so setup
+/// never mistakes an unreadable file for a replaceable pre-release config.
+pub fn config_recovery(path: &Path) -> Result<Option<String>> {
+    setup_config(path).map(|(_, error)| error)
+}
+
+fn setup_config(path: &Path) -> Result<(Config, Option<String>)> {
+    let input = match fs::read_to_string(path) {
+        Ok(input) => input,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok((Config::default(), None));
+        }
+        Err(error) => {
+            return Err(error).with_context(|| format!("read config {}", path.display()));
+        }
+    };
+    match toml::from_str(&input) {
+        Ok(config) => Ok((config, None)),
+        Err(error) => Ok((
+            Config::default(),
+            Some(format!("parse config {}: {error}", path.display())),
+        )),
     }
+}
+
+pub fn ensure_config(path: &Path) -> Result<Config> {
+    let exists = path.exists();
+    let config = load_config(path)?;
+    if !exists {
+        config.save(path)?;
+    }
+    Ok(config)
 }
 
 pub fn checks(path: &Path, paths: &AppPaths) -> Vec<Check> {
@@ -313,7 +348,7 @@ fn print_check_results_event(checks: Vec<Check>) -> Result<()> {
 }
 
 pub fn print_runtime(config_path: &Path, json: bool) -> Result<()> {
-    let config = Config::load(config_path)?;
+    let config = load_config(config_path)?;
     let locations = crate::runtime::discover(&config.backend, config_path);
     let inventory = crate::runtime_inventory::inventory(&config.backend, config_path);
     let value = serde_json::json!({

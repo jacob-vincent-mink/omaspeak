@@ -1379,6 +1379,11 @@ fn schema(path: &Path, paths: &AppPaths) -> Result<Value> {
 }
 
 fn setup(command: Option<SetupCommand>, config_path: &Path, paths: &AppPaths) -> Result<()> {
+    if let Some(error) = app_setup::config_recovery(config_path)? {
+        eprintln!(
+            "omaspeak setup: the existing configuration is invalid; a successful setup apply will replace it with the current schema\n  {error}"
+        );
+    }
     let Some(command) = command else {
         if is_interactive_terminal() {
             return guided_setup(
@@ -1396,7 +1401,7 @@ fn setup(command: Option<SetupCommand>, config_path: &Path, paths: &AppPaths) ->
     match command {
         SetupCommand::Check { json } => app_setup::print_checks(config_path, paths, json),
         SetupCommand::Cache { prepare, json } => {
-            let mut config = Config::load(config_path)?;
+            let mut config = app_setup::load_config(config_path)?;
             if prepare {
                 if !omaspeak::supertonic::uses_static_npu_shapes(&config) {
                     bail!(
@@ -1447,7 +1452,7 @@ fn setup(command: Option<SetupCommand>, config_path: &Path, paths: &AppPaths) ->
                     omaspeak::runtime_inventory::probe,
                 )
             } else if let Some(dir) = dir {
-                let current = Config::load(config_path)?;
+                let current = app_setup::load_config(config_path)?;
                 apply_runtime_selection(
                     config_path,
                     paths,
@@ -1516,10 +1521,19 @@ fn setup(command: Option<SetupCommand>, config_path: &Path, paths: &AppPaths) ->
             } else if uninstall {
                 app_setup::systemd::uninstall(paths)
             } else {
-                let mut config = app_setup::ensure_config(config_path)?;
-                prepare_npu_for_setup(&mut config, paths, ProgressFormat::Human)?;
-                let path = app_setup::systemd::install(paths, config_path, !no_start)?;
-                println!("installed: {}", path.display());
+                let original = config_snapshot(config_path)?;
+                let result = (|| {
+                    let mut config = app_setup::ensure_config(config_path)?;
+                    prepare_npu_for_setup(&mut config, paths, ProgressFormat::Human)?;
+                    config.save(config_path)?;
+                    let path = app_setup::systemd::install(paths, config_path, !no_start)?;
+                    println!("installed: {}", path.display());
+                    Ok(())
+                })();
+                if let Err(error) = result {
+                    restore_config_snapshot(config_path, original.as_deref())?;
+                    return Err(error);
+                }
                 Ok(())
             }
         }
@@ -1888,7 +1902,7 @@ fn guided_runtime(
         return Ok(None);
     };
     if runtime == Runtime::Openvino {
-        let config = Config::load(config_path)?;
+        let config = app_setup::load_config(config_path)?;
         let installed = omaspeak::catalog::model(&config.model.name)
             .is_some_and(|model| app_setup::model::verify(paths, model).is_ok());
         let compatible = !installed
@@ -1934,7 +1948,7 @@ fn choose_runtime(
     config_path: &Path,
     selector: &mut impl SetupSelector,
 ) -> Result<Option<(Runtime, String, Option<PathBuf>)>> {
-    let config = Config::load(config_path)?;
+    let config = app_setup::load_config(config_path)?;
     let locations = omaspeak::runtime::discover(&config.backend, config_path);
     let runtimes = [
         (
@@ -2107,7 +2121,7 @@ fn runtime_configuration_candidate(
     device: &str,
     library_dir: Option<&Path>,
 ) -> Result<Config> {
-    let mut config = Config::load(config_path)?;
+    let mut config = app_setup::load_config(config_path)?;
     let runtime_changed = config.backend.runtime != runtime;
     config.backend.runtime = runtime;
     config.backend.device = device.into();
@@ -2152,7 +2166,7 @@ fn configure_runtime_directory_with(
     directory: &Path,
     validate: impl FnOnce(&Config, &Path, bool) -> Result<()>,
 ) -> Result<()> {
-    let mut config = Config::load(config_path)?;
+    let mut config = app_setup::load_config(config_path)?;
     apply_runtime_directory(&mut config, config_path, directory)?;
     validate(&config, config_path, true)?;
     config.save(config_path)
@@ -2361,7 +2375,7 @@ fn guided_model(
     operations: &impl ModelSetupOperations,
     selector: &mut impl SetupSelector,
 ) -> Result<Option<String>> {
-    let current = Config::load(config_path)?;
+    let current = app_setup::load_config(config_path)?;
     let Some(id) = choose_model(
         config_path,
         paths,
@@ -2445,7 +2459,7 @@ fn choose_voice(
     installed: bool,
     selector: &mut impl SetupSelector,
 ) -> Result<Option<omaspeak::voices::Voice>> {
-    let current = Config::load(config_path)?;
+    let current = app_setup::load_config(config_path)?;
     let mut candidate = current.clone();
     spec.activate(&mut candidate);
     let voices = if installed {
@@ -2490,7 +2504,7 @@ fn choose_model(
     runtime: Option<(Runtime, &str)>,
     selector: &mut impl SetupSelector,
 ) -> Result<Option<String>> {
-    let config = Config::load(config_path)?;
+    let config = app_setup::load_config(config_path)?;
     let models = operations.models();
     let items: Vec<_> = models
         .iter()
@@ -2622,7 +2636,7 @@ fn setup_all_with_validator(
     reload_service: impl FnOnce(bool) -> Result<bool>,
     validate_runtime: impl FnOnce(&Config, &Path, bool) -> Result<()>,
 ) -> Result<()> {
-    let config = Config::load(config_path)?;
+    let config = app_setup::load_config(config_path)?;
     validate_runtime(&config, config_path, false)?;
     setup_all_with_config(
         config,

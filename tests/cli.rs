@@ -296,100 +296,105 @@ fn stderr(output: &Output) -> String {
     String::from_utf8_lossy(&output.stderr).into_owned()
 }
 
-fn generated_pre_runtime_decoupling_config() -> &'static str {
-    r#"[backend]
-kind = "sherpa-onnx"
-runtime = "default"
-device = "cpu"
-threads = 2
-fallback = "error"
-device_id = 0
-provider_config = ""
-
-[backend.options]
-
-[model]
-family = "supertonic"
-name = "supertonic-3-int8"
-directory = ""
-model_file = ""
-tokens_file = ""
-data_directory = ""
-duration_predictor = "duration_predictor.int8.onnx"
-text_encoder = "text_encoder.int8.onnx"
-vector_estimator = "vector_estimator.int8.onnx"
-vocoder = "vocoder.int8.onnx"
-tts_json = "tts.json"
-unicode_indexer = "unicode_indexer.bin"
-voice_style = "voice.bin"
-language = "en"
-steps = 5
-voice = 0
-noise_scale = 0.667
-noise_scale_w = 0.8
-length_scale = 1.0
-
-[model.options]
-
-[audio]
-device = "default"
-volume = 1.0
-
-[daemon]
-queue_capacity = 8
-max_text_bytes = 65536
-"#
-}
-
 #[test]
-fn setup_and_config_commands_upgrade_a_previously_generated_config() {
+fn setup_can_inspect_an_invalid_config_without_weakening_runtime_parsing() {
     let root = sandbox();
     let config_path = root.join("config/omaspeak/config.toml");
     fs::create_dir_all(config_path.parent().unwrap()).unwrap();
-    fs::write(&config_path, generated_pre_runtime_decoupling_config()).unwrap();
+    let invalid = b"[backend]\nkind = \"supertonic\"\nremoved_pre_release_field = true\n";
+    fs::write(&config_path, invalid).unwrap();
 
     for args in [
         &["setup", "runtime", "--json"][..],
         &["setup", "model", "--json"],
-        &["setup", "cache", "--json"],
     ] {
         let output = run(&root, args);
         assert!(output.status.success(), "{args:?}: {}", stderr(&output));
-        assert!(!stdout(&output).is_empty());
+        serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap();
+        assert!(stderr(&output).contains("successful setup apply will replace it"));
+        assert_eq!(fs::read(&config_path).unwrap(), invalid);
     }
 
-    for args in [
-        &["setup"][..],
-        &["setup", "check", "--json"],
-        &["setup", "model", "--verify", "missing"],
-        &["setup", "all", "--model", "missing"],
-    ] {
-        let output = run(&root, args);
-        assert!(!output.status.success());
-        let error = stderr(&output);
-        assert!(!error.contains("provider_config"), "{args:?}: {error}");
-        assert!(!error.contains("unknown field"), "{args:?}: {error}");
+    for args in [&["config", "get", "--json"][..], &["voices", "--json"]] {
+        let normal = run(&root, args);
+        assert!(!normal.status.success());
+        assert!(stderr(&normal).contains("unknown field `removed_pre_release_field`"));
+        assert_eq!(fs::read(&config_path).unwrap(), invalid);
     }
 
+    let check = run(&root, &["setup", "check", "--json"]);
+    assert!(!check.status.success());
+    let checks: serde_json::Value = serde_json::from_slice(&check.stdout).unwrap();
+    assert_eq!(checks[0]["name"], "config");
+    assert_eq!(checks[0]["ok"], false);
+    assert_eq!(fs::read(&config_path).unwrap(), invalid);
+
+    let Some(library) = std::env::var_os("OMASPEAK_TEST_ONNXRUNTIME_LIBRARY")
+        .map(PathBuf::from)
+        .filter(|path| path.is_file())
+    else {
+        return;
+    };
+    let applied = run(
+        &root,
+        &[
+            "setup",
+            "runtime",
+            "--runtime",
+            "default",
+            "--device",
+            "cpu",
+            "--dir",
+            library.parent().unwrap().to_str().unwrap(),
+            "--apply",
+        ],
+    );
+    assert!(applied.status.success(), "{}", stderr(&applied));
+    assert!(stderr(&applied).contains("successful setup apply will replace it"));
+    let repaired = Config::load(&config_path).unwrap();
+    assert_eq!(repaired.backend.kind, "supertonic");
+    assert_eq!(repaired.backend.device, "cpu");
+    assert!(
+        !fs::read_to_string(&config_path)
+            .unwrap()
+            .contains("removed_pre_release_field")
+    );
+}
+
+#[test]
+fn successful_setup_replaces_an_invalid_config_and_failed_setup_restores_it() {
+    let invalid = b"[audio\nvolume = 0.5\n";
+
+    let failed_root = sandbox();
+    let failed_config = failed_root.join("config/omaspeak/config.toml");
+    fs::create_dir_all(failed_config.parent().unwrap()).unwrap();
+    fs::write(&failed_config, invalid).unwrap();
+    let failed_bin = fake_systemctl(&failed_root, 1);
+    let failed = run_with_path(
+        &failed_root,
+        &["setup", "systemd", "--no-start"],
+        &failed_bin,
+    );
+    assert!(!failed.status.success());
+    assert_eq!(fs::read(&failed_config).unwrap(), invalid);
+
+    let root = sandbox();
+    let config_path = root.join("config/omaspeak/config.toml");
+    fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+    fs::write(&config_path, invalid).unwrap();
     let bin = fake_systemctl(&root, 0);
     let service = run_with_path(&root, &["setup", "systemd", "--no-start"], &bin);
     assert!(service.status.success(), "{}", stderr(&service));
+    assert!(stderr(&service).contains("successful setup apply will replace it"));
 
-    let save = run(&root, &["config", "set", "audio.volume", "0.75"]);
-    assert!(save.status.success(), "{}", stderr(&save));
-    let upgraded = fs::read_to_string(&config_path).unwrap();
-    assert!(upgraded.contains("kind = \"supertonic\""));
-    for stale in [
-        "provider_config",
-        "model_file",
-        "tokens_file",
-        "data_directory",
-        "noise_scale",
-        "length_scale",
-        "sherpa-onnx",
-    ] {
-        assert!(!upgraded.contains(stale), "saved config retained {stale}");
-    }
+    let repaired = Config::load(&config_path).unwrap();
+    assert_eq!(repaired.backend.kind, "supertonic");
+    assert_eq!(repaired.audio.volume, 1.0);
+    assert!(
+        !fs::read_to_string(&config_path)
+            .unwrap()
+            .contains("volume = 0.5")
+    );
 }
 
 #[test]
