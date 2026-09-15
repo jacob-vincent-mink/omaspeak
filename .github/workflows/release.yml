@@ -25,7 +25,7 @@ jobs:
             ort_arch: x64
             package_arch: x86_64
             ort_archive_sha256: a5ed5a3cac51fbb2e90da632ae43d19212faaa20e76484e62bcb7c23ddb3b3fd
-          - runner: ubuntu-22.04-arm
+          - runner: ubuntu-24.04-arm
             ort_arch: aarch64
             package_arch: aarch64
             ort_archive_sha256: e16a27a8ed330bbc698df7330b0cf56e722f354e3bcc92118682c74ef3c3e3da
@@ -64,8 +64,11 @@ jobs:
           test -f "${OMA_ORT_ROOT}/include/onnxruntime_cxx_api.h"
           test -f "${OMA_ORT_ROOT}/lib/libonnxruntime.so.${ORT_VERSION}"
 
-      - name: Build the runtime-neutral executable
-        run: cargo build --release --locked
+      - name: Test and build the runtime-neutral executable
+        run: |
+          OMASPEAK_TEST_ONNXRUNTIME_LIBRARY="${OMA_ORT_ROOT}/lib/libonnxruntime.so.${ORT_VERSION}" \
+            cargo test --locked
+          cargo build --release --locked
 
       - name: Stage the release
         id: package

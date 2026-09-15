@@ -1,4 +1,8 @@
-# Final-head OpenVINO NPU smoke — 2026-09-14
+# Historical pre-export/import OpenVINO NPU smoke — 2026-09-14
+
+This report predates Omaspeak's deterministic compiled-model export/import
+cache. It remains useful inference and placement evidence, but it does not
+validate the 0.0.1-rc.1 setup-time cache contract.
 
 Omaspeak commit `61ac63478e8e741fa84665d3d6cb9054a1d321d5` was
 built in release mode and validated on the Dell XPS against the system

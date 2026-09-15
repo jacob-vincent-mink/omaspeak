@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.0.1-rc.1 - 2026-09-14
+
 - Updated the packaged CPU core to ONNX Runtime 1.30.0 and switched CUDA setup
   to Microsoft's separately distributed CUDA Plugin EP.
 - Added native Linux aarch64 release packaging alongside x86-64.
@@ -21,5 +23,5 @@
   12-graph Intel NPU cache plan.
 - Added Intel CPU, iGPU, NPU, and NVIDIA GB10 validation evidence.
 
-Known limits: the release artifact targets Linux x86-64 with glibc 2.34 or
-newer, and accelerator stacks are external.
+Known limits: release artifacts target Linux x86-64 and aarch64 with glibc
+2.34 or newer, and accelerator stacks are external.

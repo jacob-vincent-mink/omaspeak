@@ -5,19 +5,18 @@ runtime-neutral executable and a bundled CPU ONNX Runtime. OpenVINO and CUDA
 remain external runtime choices configured after installation.
 
 Linux release CI produces x86-64 and aarch64 archives. There are no prebuilt
-artifacts for macOS or Windows. CUDA has been validated on aarch64 NVIDIA GB10
-hardware.
+artifacts for macOS or Windows.
 
 ## Release archive
 
-Download `omaspeak-0.0.1-rc-linux-x86_64.tar.xz` and `SHA256SUMS.txt` from the
-[v0.0.1-rc release](https://github.com/jacob-vincent-mink/omaspeak/releases/tag/v0.0.1-rc),
+Download `omaspeak-0.0.1-rc.1-linux-x86_64.tar.xz` and `SHA256SUMS.txt` from the
+[v0.0.1-rc.1 release](https://github.com/jacob-vincent-mink/omaspeak/releases/tag/v0.0.1-rc.1),
 then verify and unpack it:
 
 ```bash
 sha256sum --check --ignore-missing SHA256SUMS.txt
-tar -xJf omaspeak-0.0.1-rc-linux-x86_64.tar.xz
-cd omaspeak-0.0.1-rc-linux-x86_64
+tar -xJf omaspeak-0.0.1-rc.1-linux-x86_64.tar.xz
+cd omaspeak-0.0.1-rc.1-linux-x86_64
 ./omaspeak --version
 ```
 
@@ -83,5 +82,5 @@ cargo test --locked
 ```
 
 The source-built executable is runtime-neutral and does not contain the CPU
-library shipped in the release archive. Supply a compatible ONNX Runtime
+library shipped in the release archive. Supply an exact ONNX Runtime 1.30.0
 through setup or copy the release `lib/` directory beside the executable.

@@ -14,16 +14,16 @@ optional PipeWire/ALSA playback, stdin, JSON status, and config mutation.
 
 ## Install
 
-The 0.0.1-rc release supports Linux x86-64 with glibc 2.34 or newer. It ships one
+The 0.0.1-rc.1 release supports Linux x86-64 and aarch64 with glibc 2.34 or newer. It ships one
 executable plus a ready-to-use CPU runtime. Download the archive and
 `SHA256SUMS.txt` from the
-[GitHub release](https://github.com/jacob-vincent-mink/omaspeak/releases/tag/v0.0.1-rc),
+[GitHub release](https://github.com/jacob-vincent-mink/omaspeak/releases/tag/v0.0.1-rc.1),
 then verify, unpack, and configure it:
 
 ```bash
 sha256sum --check --ignore-missing SHA256SUMS.txt
-tar -xJf omaspeak-0.0.1-rc-linux-x86_64.tar.xz
-cd omaspeak-0.0.1-rc-linux-x86_64
+tar -xJf omaspeak-0.0.1-rc.1-linux-x86_64.tar.xz
+cd omaspeak-0.0.1-rc.1-linux-x86_64
 ./omaspeak setup all --accept-license OpenRAIL-M
 ./omaspeak say "Installation complete" --no-play --out test.wav
 ```
@@ -64,10 +64,9 @@ its vendor runtime. Omaspeak validates each selected runtime before it creates
 the TTS engine. The release does not bundle acceleration libraries.
 
 The Rust Supertonic frontend handles text, voice styles, diffusion, and audio
-assembly for both ONNX Runtime and direct OpenVINO execution. The direct ONNX
-Runtime CUDA path is proven on an NVIDIA GB10 with provider probing, process
-telemetry, Nsight kernel traces, CPU comparison, and independent ASR. See the
-[GB10 CUDA report](benchmarks/cuda-gb10-2026-09-14.md). The
+assembly for both ONNX Runtime and direct OpenVINO execution. An earlier GB10
+run using ONNX Runtime 1.29 is retained as historical evidence; it does not
+validate the ORT 1.30 Plugin EP release path. The
 [Dell XPS OpenVINO report](benchmarks/openvino-supertonic/DELL-XPS-DIRECT-OPENVINO-2026-09-14.md)
 records direct CPU, iGPU, and NPU execution and accuracy.
 
@@ -356,14 +355,12 @@ validation checks both output accuracy and physical device use: CPU and NPU
 each achieved 0% WER over the same 25-word suite, while OpenVINO placement and
 the NPU busy counter independently confirmed NPU execution.
 
-See [DEMO.md](DEMO.md) for a current usage walkthrough. Current performance,
-placement, and accuracy evidence is in the
-[GB10 CUDA report](benchmarks/cuda-gb10-2026-09-14.md) and
+See [DEMO.md](DEMO.md) for a current usage walkthrough. Direct OpenVINO device
+placement and accuracy evidence is in the
 [Dell XPS direct OpenVINO report](benchmarks/openvino-supertonic/DELL-XPS-DIRECT-OPENVINO-2026-09-14.md).
-The final cleanup head also has a focused
-[OpenVINO NPU setup smoke](benchmarks/openvino-supertonic/FINAL-HEAD-NPU-SMOKE-2026-09-14.md).
 The [2026-09-13 predecessor demo](benchmarks/historical/2026-09-13-piper.md)
-is retained only as historical evidence.
+and [earlier GB10 CUDA report](benchmarks/cuda-gb10-2026-09-14.md) are retained
+only as historical evidence.
 
 ## License
 

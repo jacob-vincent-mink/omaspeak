@@ -1,16 +1,13 @@
 # Supertonic runtime hardware benchmark
 
-This directory documents the current direct OpenVINO harness and preserves
-clearly labeled predecessor reports for historical evidence. The current
-release architecture is described here and in
-`DELL-XPS-DIRECT-OPENVINO-2026-09-14.md`; older reports do not define the live
-runtime contract.
+This directory documents the direct OpenVINO harness and preserves dated
+reports as historical evidence. The current release architecture is described
+in the repository's `RUNTIME.md` and `ACCELERATOR_SETUP.md`; dated benchmark
+reports do not define the live runtime contract.
 
-The [final-head NPU smoke](FINAL-HEAD-NPU-SMOKE-2026-09-14.md) verifies the
-post-cleanup inventory, preview/apply transaction, placement, and direct file
-synthesis against OpenVINO 2026.3.1. The earlier
-[setup/NPU smoke](CURRENT-SETUP-SMOKE-2026-09-14.md) records the first
-post-stabilization pass.
+The [pre-export/import NPU smoke](FINAL-HEAD-NPU-SMOKE-2026-09-14.md) and
+[earlier setup/NPU smoke](CURRENT-SETUP-SMOKE-2026-09-14.md) predate the
+0.0.1-rc.1 deterministic cache mechanism.
 
 This harness compares one Supertonic model through Omaspeak's shipped runtime
 paths: dynamically loaded ONNX Runtime on CPU and direct OpenVINO on CPU, Intel
@@ -25,7 +22,7 @@ runtimes, and run it:
 cargo build --release --locked
 
 BINARY=target/release/omaspeak \
-ORT_LIBRARY=/path/to/libonnxruntime.so.1.29.0 \
+ORT_LIBRARY=/path/to/libonnxruntime.so.1.30.0 \
 OPENVINO_LIBRARY=/opt/intel/openvino/runtime/lib/intel64/libopenvino_c.so \
 OPENVINO_PLUGINS=/opt/intel/openvino/runtime/lib/intel64/plugins.xml \
 MODEL_DIR="$HOME/.local/share/omaspeak/models/supertonic-3-npu" \
@@ -67,4 +64,4 @@ do not describe the current harness or release architecture.
 
 See
 [`DELL-XPS-DIRECT-OPENVINO-2026-09-14.md`](DELL-XPS-DIRECT-OPENVINO-2026-09-14.md)
-for the passing current four-lane matrix and CPU-versus-NPU accuracy proof.
+for direct OpenVINO device placement and CPU-versus-NPU accuracy evidence.

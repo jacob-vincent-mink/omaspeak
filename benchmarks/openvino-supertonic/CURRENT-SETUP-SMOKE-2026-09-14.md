@@ -1,4 +1,8 @@
-# Current setup and NPU synthesis smoke — 2026-09-14
+# Historical setup and NPU synthesis smoke — 2026-09-14
+
+This report predates Omaspeak's deterministic compiled-model export/import
+cache. It is retained as historical evidence and does not validate the
+0.0.1-rc.1 setup-time cache contract.
 
 The post-stabilization Omaspeak tree was rebuilt in release mode and exercised
 against the Dell XPS OpenVINO 2026.3.1 installation. The executable SHA-256 was

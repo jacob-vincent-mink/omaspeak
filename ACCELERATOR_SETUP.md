@@ -1,6 +1,6 @@
 # Accelerator setup
 
-Omaspeak 0.0.1-rc ships one runtime-neutral executable and a small default CPU
+Omaspeak 0.0.1-rc.1 ships one runtime-neutral executable and a small default CPU
 ONNX Runtime. Acceleration is optional. Setup discovers and validates native
 libraries already installed by the user; it never downloads or installs an
 OpenVINO, CUDA, or driver package.
@@ -135,9 +135,7 @@ omaspeak setup check
 ```
 
 Use `backend.device_id` for a specific visible CUDA ordinal and string-valued
-`backend.options.*` for ONNX Runtime CUDA provider options. The
-[GB10 CUDA report](benchmarks/cuda-gb10-2026-09-14.md) records provider probing,
-Nsight kernel placement, no-play synthesis, accuracy, and timings.
+`backend.options.*` for ONNX Runtime CUDA provider options.
 
 ## Services
 
