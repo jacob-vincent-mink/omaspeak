@@ -37,7 +37,7 @@ Model load is a fresh process measurement with potentially warm OS/driver
 caches, not a first-boot or first-ever shader compilation measurement.
 
 The resulting Vulkan WAV was mono 44.1 kHz with 161,384 samples (3.6595 s).
-CPU and Vulkan outputs had correlation 0.9999856, mean absolute sample error
+Over their shared sample range, CPU and Vulkan outputs had correlation 0.9999856, mean absolute sample error
 0.0001654, RMS amplitudes 0.056371 and 0.056347, and the same peak amplitude
 0.422363. Their durations differed by 107 samples (2.43 ms).
 
