@@ -658,6 +658,40 @@ fn config_helpers_cover_supported_values_defaults_and_schema() {
             .iter()
             .any(|key| key["key"] == "model.duration_predictor")
     );
+    let schema_keys = description["keys"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|entry| entry["key"].as_str())
+        .collect::<Vec<_>>();
+    for required in [
+        "backend.fallback",
+        "backend.device_id",
+        "model.name",
+        "daemon.max_text_bytes",
+    ] {
+        assert!(schema_keys.contains(&required), "schema omitted {required}");
+    }
+    assert_eq!(
+        description["collections"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|entry| entry["prefix"].as_str())
+            .collect::<Vec<_>>(),
+        ["backend.options.", "model.options."]
+    );
+    let human = human_schema_lines(&description).unwrap();
+    assert!(
+        human
+            .iter()
+            .any(|line| line.starts_with("backend.device_id\t"))
+    );
+    assert!(
+        human
+            .iter()
+            .any(|line| line.starts_with("model.options.\t"))
+    );
 
     for (key, _) in assignments {
         unset_config(&mut config, key).unwrap();
@@ -673,6 +707,31 @@ fn config_helpers_cover_supported_values_defaults_and_schema() {
     assert!(parse_runtime("metal").is_err());
     assert_eq!(parse_fallback("error").unwrap(), Fallback::Error);
     assert!(parse_fallback("maybe").is_err());
+}
+
+#[test]
+fn runtime_schema_availability_requires_a_matching_detected_provider() {
+    let mut config = Config::default();
+    let choices = runtime_schema_choices(&config, false, false, false);
+    assert!(choices.iter().all(|choice| choice["available"] == false));
+
+    let choices = runtime_schema_choices(&config, true, false, false);
+    assert_eq!(choices[0]["value"], "default");
+    assert_eq!(choices[0]["available"], true);
+    assert!(
+        choices[1..]
+            .iter()
+            .all(|choice| choice["available"] == false)
+    );
+
+    config.backend.runtime = Runtime::Cuda;
+    let choices = runtime_schema_choices(&config, true, true, true);
+    assert_eq!(choices[1]["value"], "cuda");
+    assert_eq!(choices[1]["available"], true);
+    assert_eq!(choices[4]["value"], "openvino");
+    assert_eq!(choices[4]["available"], true);
+    assert_eq!(choices[2]["available"], false);
+    assert_eq!(choices[3]["available"], false);
 }
 
 #[test]

@@ -1317,9 +1317,9 @@ fn config_command(command: ConfigCommand, path: &Path, paths: &AppPaths) -> Resu
             if json {
                 println!("{}", serde_json::to_string_pretty(&value)?);
             } else {
-                println!(
-                    "backend.runtime\tdefault|cuda|vulkan|hip|openvino\nbackend.device\truntime-dependent\nbackend.library\texact complete audio.cpp provider library\nbackend.library_dirs\tprovider dependency directories\nbackend.openvino_library\texact OpenVINO C API library\nbackend.openvino_plugins\texact OpenVINO plugins.xml\nbackend.options.<scope>.<name>\taudio.cpp load/session/request option or direct OpenVINO property\nmodel.family\tsupertonic\nmodel.file\tsingle-file GGUF model\nmodel.options.<name>\tmodel-specific option"
-                );
+                for line in human_schema_lines(&value)? {
+                    println!("{line}");
+                }
             }
         }
         ConfigCommand::Get { key, json } => {
@@ -1500,6 +1500,27 @@ fn parse_fallback(value: &str) -> Result<Fallback> {
 
 fn schema(path: &Path, paths: &AppPaths) -> Result<Value> {
     let config = Config::load(path)?;
+    let locations = omaspeak::runtime::discover(&config.backend, path);
+    let packaged_cpu = omaspeak::runtime::find_versioned_library(
+        &locations.package_library_dirs,
+        "libaudiocpp.so",
+    )
+    .is_some();
+    let external_audio = locations
+        .audiocpp_library
+        .as_deref()
+        .is_some_and(|provider| {
+            !locations
+                .package_library_dirs
+                .iter()
+                .any(|directory| provider.starts_with(directory))
+        });
+    let runtime_choices = runtime_schema_choices(
+        &config,
+        packaged_cpu,
+        external_audio,
+        locations.runtime_loadable.get("openvino") == Some(&true),
+    );
     let voice_choices = omaspeak::voices::available(&config, paths)
         .unwrap_or_else(|_| {
             omaspeak::catalog::model(&config.model.name)
@@ -1513,14 +1534,17 @@ fn schema(path: &Path, paths: &AppPaths) -> Result<Value> {
         json!({"schema_version":1,"app":"omaspeak","app_version":env!("CARGO_PKG_VERSION"),"daemon_version":env!("CARGO_PKG_VERSION"),"config_path":path,
         "keys":[
             {"key":"backend.kind","type":"enum","section":"Backend","label":"Backend","description":"Inference engine","value":config.backend.kind,"file_value":null,"compiled":true,"restart_required":true,"choices":["audiocpp","supertonic"]},
-            {"key":"backend.runtime","type":"enum","section":"Backend","label":"Runtime","description":"Inference runtime","value":config.backend.runtime,"file_value":null,"compiled":true,"restart_required":true,"choices":[{"value":"default","available":true,"capability":"cpu"},{"value":"cuda","available":true,"capability":"cuda"},{"value":"vulkan","available":true,"capability":"vulkan"},{"value":"hip","available":true,"capability":"hip"},{"value":"openvino","available":true,"capability":"openvino"}]},
+            {"key":"backend.runtime","type":"enum","section":"Backend","label":"Runtime","description":"Inference runtime; availability means a matching provider was detected","value":config.backend.runtime,"file_value":null,"compiled":true,"restart_required":true,"choices":runtime_choices},
             {"key":"backend.device","type":"string","section":"Backend","label":"Device","description":"Runtime-specific device","value":config.backend.device,"file_value":null,"compiled":true,"restart_required":true},
+            {"key":"backend.device_id","type":"integer","section":"Backend","label":"Device index","description":"Zero-based GPU index for CUDA, Vulkan, or HIP","value":config.backend.device_id,"file_value":null,"compiled":true,"restart_required":true,"min":0},
+            {"key":"backend.fallback","type":"enum","section":"Backend","label":"Fallback","description":"Fallback policy within the selected provider and model","value":config.backend.fallback,"file_value":null,"compiled":true,"restart_required":true,"choices":["error","cpu"]},
             {"key":"backend.library_dirs","type":"path-list","section":"Backend","label":"Native library directories","description":"Application-owned provider/vendor runtime search path","value":config.backend.library_dirs,"file_value":null,"compiled":true,"restart_required":true},
             {"key":"backend.library","type":"path","section":"Backend","label":"Provider library","description":"Exact complete native provider library","value":config.backend.library,"file_value":null,"compiled":true,"restart_required":true},
             {"key":"backend.openvino_library","type":"path","section":"Backend","label":"OpenVINO library","description":"Exact OpenVINO C API library","value":config.backend.openvino_library,"file_value":null,"compiled":true,"restart_required":true},
             {"key":"backend.openvino_plugins","type":"path","section":"Backend","label":"OpenVINO plugins","description":"Exact OpenVINO plugins.xml","value":config.backend.openvino_plugins,"file_value":null,"compiled":true,"restart_required":true},
             {"key":"backend.threads","type":"integer","section":"Backend","label":"Threads","description":"Inference threads","value":config.backend.threads,"file_value":null,"compiled":true,"restart_required":true,"min":1,"max":64},
             {"key":"model.family","type":"enum","section":"Model","label":"Family","description":"TTS model family","value":config.model.family,"file_value":null,"compiled":true,"restart_required":true,"choices":["supertonic"]},
+            {"key":"model.name","type":"string","section":"Model","label":"Model","description":"Active catalog or custom model name","value":config.model.name,"file_value":null,"compiled":true,"restart_required":true},
             {"key":"model.directory","type":"path","section":"Model","label":"Directory","description":"Model asset directory","value":config.model_directory(paths),"file_value":config.model.directory,"compiled":true,"restart_required":true},
             {"key":"model.file","type":"string","section":"Model","label":"Model file","description":"Single-file native model inside the model directory","value":config.model.file,"file_value":null,"compiled":true,"restart_required":true},
             {"key":"model.duration_predictor","type":"string","section":"Model","label":"Duration predictor","description":"Supertonic duration predictor filename","value":config.model.duration_predictor,"file_value":null,"compiled":true,"restart_required":true},
@@ -1532,9 +1556,54 @@ fn schema(path: &Path, paths: &AppPaths) -> Result<Value> {
             {"key":"model.voice_style","type":"string","section":"Model","label":"Voice styles","description":"Supertonic voice style filename","value":config.model.voice_style,"file_value":null,"compiled":true,"restart_required":true},
             {"key":"model.language","type":"enum","section":"Model","label":"Language","description":"Supertonic generation language","value":config.model.language,"file_value":null,"compiled":true,"restart_required":true,"choices":["en","ko","ja","ar","bg","cs","da","de","el","es","et","fi","fr","hi","hr","hu","id","it","lt","lv","nl","pl","pt","ro","ru","sk","sl","sv","tr","uk","vi"]},
             {"key":"model.steps","type":"integer","section":"Model","label":"Generation steps","description":"Supertonic denoising steps","value":config.model.steps,"file_value":null,"compiled":true,"restart_required":true,"min":1},
-            {"key":"model.voice","type":"enum","section":"Model","label":"Voice","description":"Default TTS speaker","value":config.model.voice,"file_value":null,"compiled":true,"restart_required":true,"choices":voice_choices}],
-        "collections":[],"constraints":[{"kind":"matrix","keys":["backend.runtime","backend.device"],"rows":[{"backend.runtime":"default","backend.device":["auto","cpu"]},{"backend.runtime":"cuda","backend.device":["auto","gpu"]},{"backend.runtime":"vulkan","backend.device":["auto","gpu"]},{"backend.runtime":"hip","backend.device":["auto","gpu"]},{"backend.runtime":"openvino","backend.device":["auto","npu","gpu","cpu"]}]}]}),
+            {"key":"model.voice","type":"enum","section":"Model","label":"Voice","description":"Default TTS speaker","value":config.model.voice,"file_value":null,"compiled":true,"restart_required":true,"choices":voice_choices},
+            {"key":"daemon.max_text_bytes","type":"integer","section":"Daemon","label":"Maximum text bytes","description":"Largest accepted UTF-8 request payload","value":config.daemon.max_text_bytes,"file_value":null,"compiled":true,"restart_required":true,"min":1}],
+        "collections":[
+            {"prefix":"backend.options.","type":"string-map","section":"Backend","label":"Provider options","description":"audio.cpp load/session/request options or direct OpenVINO device properties","restart_required":true},
+            {"prefix":"model.options.","type":"string-map","section":"Model","label":"Model options","description":"Model-specific string options","restart_required":true}],
+        "constraints":[{"kind":"matrix","keys":["backend.runtime","backend.device"],"rows":[{"backend.runtime":"default","backend.device":["auto","cpu"]},{"backend.runtime":"cuda","backend.device":["auto","gpu"]},{"backend.runtime":"vulkan","backend.device":["auto","gpu"]},{"backend.runtime":"hip","backend.device":["auto","gpu"]},{"backend.runtime":"openvino","backend.device":["auto","npu","gpu","cpu"]}]},{"kind":"runtime-only","key":"backend.device_id","runtimes":["cuda","vulkan","hip"]}]}),
     )
+}
+
+fn runtime_schema_choices(
+    config: &Config,
+    packaged_cpu: bool,
+    external_audio: bool,
+    openvino: bool,
+) -> Vec<Value> {
+    let audio_available = |runtime| config.backend.runtime == runtime && external_audio;
+    vec![
+        json!({"value":"default","available":packaged_cpu || audio_available(Runtime::Default),"capability":"cpu"}),
+        json!({"value":"cuda","available":audio_available(Runtime::Cuda),"capability":"cuda"}),
+        json!({"value":"vulkan","available":audio_available(Runtime::Vulkan),"capability":"vulkan"}),
+        json!({"value":"hip","available":audio_available(Runtime::Hip),"capability":"hip"}),
+        json!({"value":"openvino","available":openvino,"capability":"openvino"}),
+    ]
+}
+
+fn human_schema_lines(schema: &Value) -> Result<Vec<String>> {
+    let keys = schema["keys"]
+        .as_array()
+        .context("configuration schema keys are not an array")?;
+    let collections = schema["collections"]
+        .as_array()
+        .context("configuration schema collections are not an array")?;
+    keys.iter()
+        .chain(collections)
+        .map(|entry| {
+            Ok(format!(
+                "{}\t{}",
+                entry
+                    .get("key")
+                    .or_else(|| entry.get("prefix"))
+                    .and_then(Value::as_str)
+                    .context("configuration schema entry has no key or prefix")?,
+                entry["description"]
+                    .as_str()
+                    .context("configuration schema entry has no description")?
+            ))
+        })
+        .collect()
 }
 
 fn setup(command: Option<SetupCommand>, config_path: &Path, paths: &AppPaths) -> Result<()> {
