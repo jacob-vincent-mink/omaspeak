@@ -6,8 +6,10 @@ performance for complete audio.cpp providers or the current direct OpenVINO
 path.
 
 New proof bundles identify the Omaspeak commit, provider library hash, provider
-upstream revision, model hash, device and driver, file-only output, placement
-evidence, cold load, hot synthesis, real-time factor, and cross-provider quality
-checks.
+upstream revision, every model-file hash, device and driver, file-only output,
+placement evidence, cold load, hot synthesis, real-time factor, and
+cross-provider quality checks.
 
-- [2026-09-15 native providers](results/2026-09-15-native-providers/RESULTS.md)
+The earlier direct OpenVINO result used a converted/mixed graph set that is no
+longer in the catalog, so it was removed. No accelerator number is a release
+claim until the official `supertonic-3-openvino` files are measured again.

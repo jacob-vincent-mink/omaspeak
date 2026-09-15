@@ -457,7 +457,7 @@ fn npu_cache_fixture(name: &str) -> (Config, crate::paths::AppPaths) {
     config.model.vocoder = "vocoder.onnx".into();
     config.model.tts_json = "tts.json".into();
     config.model.unicode_indexer = "unicode.json".into();
-    config.model.voice_style = "voice.bin".into();
+    config.model.voice_style = "voice_styles".into();
     let model = config.model_directory(&paths);
     fs::create_dir_all(&model).unwrap();
     for file in [
@@ -467,9 +467,16 @@ fn npu_cache_fixture(name: &str) -> (Config, crate::paths::AppPaths) {
         &config.model.vocoder,
         &config.model.tts_json,
         &config.model.unicode_indexer,
-        &config.model.voice_style,
     ] {
         fs::write(model.join(file), file.as_bytes()).unwrap();
+    }
+    fs::create_dir_all(model.join("voice_styles")).unwrap();
+    for name in crate::catalog::SUPERTONIC_VOICE_NAMES {
+        fs::write(
+            model.join(format!("voice_styles/{name}.json")),
+            name.as_bytes(),
+        )
+        .unwrap();
     }
     (config, paths)
 }

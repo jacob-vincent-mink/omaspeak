@@ -4,11 +4,10 @@ use std::path::{Component, Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, bail};
-use bzip2::read::BzDecoder;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
-use crate::catalog::{ModelSpec, SupplementalFile};
+use crate::catalog::{ModelFile, ModelSpec};
 use crate::paths::AppPaths;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, clap::ValueEnum)]
@@ -22,6 +21,8 @@ pub enum ProgressFormat {
 struct Event<'a> {
     event: &'a str,
     model: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    file: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     current: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -40,130 +41,75 @@ pub fn verify_at(directory: &Path, spec: &ModelSpec) -> Result<()> {
     verify_directory(directory, spec)
 }
 
+/// Install every pinned file into a staging directory and publish it atomically.
+///
+/// `source_override` may be a directory with the catalog layout. A regular
+/// file is accepted only for a one-file model.
 pub fn install(
     paths: &AppPaths,
     spec: &ModelSpec,
-    archive_override: Option<&Path>,
+    source_override: Option<&Path>,
     progress: ProgressFormat,
     accepted_license: Option<&str>,
 ) -> Result<PathBuf> {
     let target = model_directory(paths, spec);
     if verify_directory(&target, spec).is_ok() {
-        emit(progress, "already-installed", spec, None, None)?;
+        emit(progress, "already-installed", spec, None, None, None)?;
         return Ok(target);
     }
+    validate_install_authorization(spec, source_override, accepted_license)?;
 
-    validate_install_authorization(spec, archive_override, accepted_license)?;
-
-    fs::create_dir_all(paths.data_dir.join("models"))?;
+    let models = paths.data_dir.join("models");
+    fs::create_dir_all(&models)?;
     fs::create_dir_all(paths.data_dir.join("downloads"))?;
-    let archive = match archive_override {
-        Some(path) => path.to_owned(),
-        None => download_archive(paths, spec, progress)?,
-    };
-    let directory_source = archive.is_dir();
-    if !directory_source {
-        verify_archive(&archive, spec)?;
-    }
-    let supplemental_files = if directory_source {
-        Vec::new()
-    } else {
-        spec.supplemental_files
-            .iter()
-            .map(|asset| download_supplemental(paths, spec, asset, progress))
-            .collect::<Result<Vec<_>>>()?
-    };
-
-    let staging =
-        paths
-            .data_dir
-            .join("models")
-            .join(format!(".{}.install-{}", spec.id, std::process::id()));
+    let staging = models.join(format!(".{}.install-{}", spec.id, std::process::id()));
     if staging.exists() {
         fs::remove_dir_all(&staging)?;
     }
     fs::create_dir_all(&staging)?;
-    emit(
-        progress,
-        if spec.single_file.is_some() {
-            "install-file"
-        } else {
-            "extract"
-        },
-        spec,
-        None,
-        None,
-    )?;
-    let prepare = || -> Result<PathBuf> {
-        let extracted = materialize_artifact(&archive, &staging, spec)
-            .with_context(|| format!("install model artifact {}", archive.display()))?;
-        for (asset, source) in spec.supplemental_files.iter().zip(&supplemental_files) {
-            install_supplemental(source, &extracted, asset)?;
-            if !asset.supersedes.is_empty() && asset.supersedes != asset.path {
-                validate_relative_file(asset.supersedes)?;
-                let superseded = extracted.join(asset.supersedes);
-                if superseded.exists() {
-                    fs::remove_file(&superseded).with_context(|| {
-                        format!("remove superseded model asset {}", superseded.display())
-                    })?;
-                }
-            }
-        }
-        install_model_license(&extracted, spec)?;
-        verify_directory(&extracted, spec)?;
-        Ok(extracted)
-    };
-    let extracted = match prepare() {
-        Ok(extracted) => extracted,
-        Err(error) => {
-            let _ = fs::remove_dir_all(&staging);
-            return Err(error).context("prepare verified model installation");
-        }
-    };
 
-    let old =
-        paths
-            .data_dir
-            .join("models")
-            .join(format!(".{}.old-{}", spec.id, std::process::id()));
+    let prepared = (|| -> Result<()> {
+        match source_override {
+            Some(source) => materialize_local_source(source, &staging, spec, progress),
+            None => materialize_downloads(paths, &staging, spec, progress),
+        }?;
+        install_model_license(&staging, spec)?;
+        write_install_manifest(&staging, spec, source_override, accepted_license)?;
+        verify_directory(&staging, spec)
+    })();
+    if let Err(error) = prepared {
+        let _ = fs::remove_dir_all(&staging);
+        return Err(error).context("prepare verified model installation");
+    }
+
+    let old = models.join(format!(".{}.old-{}", spec.id, std::process::id()));
     if old.exists() {
         fs::remove_dir_all(&old)?;
     }
     if target.exists() {
         fs::rename(&target, &old)?;
     }
-    if let Err(error) = fs::rename(&extracted, &target) {
+    if let Err(error) = fs::rename(&staging, &target) {
         if old.exists() {
             let _ = fs::rename(&old, &target);
         }
-        return Err(error).context("activate extracted model");
-    }
-    let activate = || -> Result<()> {
-        write_install_manifest(&target, spec, archive_override, accepted_license)?;
-        verify_directory(&target, spec)
-    };
-    if let Err(error) = activate() {
-        let _ = fs::remove_dir_all(&target);
-        if old.exists() {
-            let _ = fs::rename(&old, &target);
-        }
-        let _ = fs::remove_dir_all(&staging);
-        return Err(error).context("finalize installed model");
+        return Err(error).context("activate model directory");
     }
     let _ = fs::remove_dir_all(&old);
-    let _ = fs::remove_dir_all(&staging);
-    emit(progress, "installed", spec, None, None)?;
+    emit(progress, "installed", spec, None, None, None)?;
     Ok(target)
 }
 
 fn validate_install_authorization(
     spec: &ModelSpec,
-    archive_override: Option<&Path>,
+    source_override: Option<&Path>,
     accepted_license: Option<&str>,
 ) -> Result<()> {
-    if archive_override.is_none() && !spec.downloadable {
+    if source_override.is_none()
+        && (!spec.downloadable || spec.files.iter().any(|file| file.url.is_empty()))
+    {
         bail!(
-            "{} is user-supplied only because its model terms are {}; Omaspeak will not download it; supply a directory or archive you have the right to use with --archive",
+            "{} is user-supplied only because its model terms are {}; provide its pinned files with --source",
             spec.id,
             spec.license_status
         );
@@ -178,6 +124,199 @@ fn validate_install_authorization(
         );
     }
     Ok(())
+}
+
+fn materialize_local_source(
+    source: &Path,
+    staging: &Path,
+    spec: &ModelSpec,
+    progress: ProgressFormat,
+) -> Result<()> {
+    if source.is_file() && spec.files.len() != 1 {
+        bail!(
+            "{} contains {} files; --source must point to a directory with the catalog layout",
+            spec.id,
+            spec.files.len()
+        );
+    }
+    if !source.is_dir() && !source.is_file() {
+        bail!("model source does not exist: {}", source.display());
+    }
+    for file in spec.files {
+        validate_relative_file(file.path)?;
+        let input = if source.is_dir() {
+            source.join(file.path)
+        } else {
+            source.to_owned()
+        };
+        verify_pinned_file(&input, file.size, file.sha256)?;
+        copy_verified(&input, &staging.join(file.path), file)?;
+        emit(
+            progress,
+            "source-file",
+            spec,
+            Some(file.path),
+            Some(file.size),
+            Some(file.size),
+        )?;
+    }
+    Ok(())
+}
+
+fn materialize_downloads(
+    paths: &AppPaths,
+    staging: &Path,
+    spec: &ModelSpec,
+    progress: ProgressFormat,
+) -> Result<()> {
+    for file in spec.files {
+        let cached = download_file(paths, spec, file, progress)?;
+        copy_verified(&cached, &staging.join(file.path), file)?;
+    }
+    Ok(())
+}
+
+fn copy_verified(source: &Path, target: &Path, file: &ModelFile) -> Result<()> {
+    let parent = target
+        .parent()
+        .context("model file has no parent directory")?;
+    fs::create_dir_all(parent)?;
+    let name = target
+        .file_name()
+        .context("model file has no file name")?
+        .to_string_lossy();
+    let part = parent.join(format!(".{name}.part-{}", std::process::id()));
+    let _ = fs::remove_file(&part);
+    let copied = (|| -> Result<()> {
+        fs::copy(source, &part)?;
+        verify_pinned_file(&part, file.size, file.sha256)?;
+        fs::rename(&part, target)?;
+        Ok(())
+    })();
+    if copied.is_err() {
+        let _ = fs::remove_file(part);
+    }
+    copied
+}
+
+fn download_file(
+    paths: &AppPaths,
+    spec: &ModelSpec,
+    file: &ModelFile,
+    progress: ProgressFormat,
+) -> Result<PathBuf> {
+    validate_relative_file(file.path)?;
+    if file.url.is_empty() {
+        bail!("{} has no download URL for {}", spec.id, file.path);
+    }
+    let target = paths
+        .data_dir
+        .join("downloads")
+        .join(spec.id)
+        .join(file.path);
+    if verify_pinned_file(&target, file.size, file.sha256).is_ok() {
+        emit(
+            progress,
+            "cached",
+            spec,
+            Some(file.path),
+            Some(file.size),
+            Some(file.size),
+        )?;
+        return Ok(target);
+    }
+    let parent = target
+        .parent()
+        .context("download has no parent directory")?;
+    fs::create_dir_all(parent)?;
+    let part = parent.join(format!(
+        ".{}.part-{}",
+        target.file_name().unwrap_or_default().to_string_lossy(),
+        std::process::id()
+    ));
+    let _ = fs::remove_file(&part);
+    emit(
+        progress,
+        "download-start",
+        spec,
+        Some(file.path),
+        Some(0),
+        Some(file.size),
+    )?;
+    let response = ureq::get(file.url)
+        .call()
+        .with_context(|| format!("download {} from {}", file.path, file.url))?;
+    let result =
+        write_pinned_download(response.into_reader(), &part, &target, spec, file, progress);
+    if result.is_err() {
+        let _ = fs::remove_file(part);
+    }
+    result?;
+    Ok(target)
+}
+
+fn write_pinned_download(
+    mut input: impl Read,
+    part: &Path,
+    target: &Path,
+    spec: &ModelSpec,
+    file: &ModelFile,
+    progress: ProgressFormat,
+) -> Result<()> {
+    let output_file = File::create(part)?;
+    let mut output = BufWriter::new(output_file);
+    let mut hasher = Sha256::new();
+    let mut total = 0_u64;
+    let mut reported = 0_u64;
+    let mut buffer = [0_u8; 128 * 1024];
+    loop {
+        let count = input.read(&mut buffer)?;
+        if count == 0 {
+            break;
+        }
+        total += count as u64;
+        if total > file.size {
+            bail!("download exceeded expected size for {}", file.path);
+        }
+        hasher.update(&buffer[..count]);
+        output.write_all(&buffer[..count])?;
+        if should_report_progress(total, reported, file.size) {
+            emit(
+                progress,
+                "download-progress",
+                spec,
+                Some(file.path),
+                Some(total),
+                Some(file.size),
+            )?;
+            reported = total;
+        }
+    }
+    output.flush()?;
+    output.get_ref().sync_all()?;
+    if total != file.size {
+        bail!(
+            "downloaded {total} bytes for {}, expected {}",
+            file.path,
+            file.size
+        );
+    }
+    if format!("{:x}", hasher.finalize()) != file.sha256 {
+        bail!("download checksum mismatch for {}", file.path);
+    }
+    fs::rename(part, target)?;
+    emit(
+        progress,
+        "downloaded",
+        spec,
+        Some(file.path),
+        Some(total),
+        Some(total),
+    )
+}
+
+fn should_report_progress(current: u64, last: u64, total: u64) -> bool {
+    current.saturating_sub(last) >= 1024 * 1024 || current == total
 }
 
 fn install_model_license(directory: &Path, spec: &ModelSpec) -> Result<()> {
@@ -197,7 +336,7 @@ fn install_model_license(directory: &Path, spec: &ModelSpec) -> Result<()> {
 fn write_install_manifest(
     directory: &Path,
     spec: &ModelSpec,
-    archive_override: Option<&Path>,
+    source_override: Option<&Path>,
     accepted_license: Option<&str>,
 ) -> Result<()> {
     let accepted_at = SystemTime::now()
@@ -214,20 +353,18 @@ fn write_install_manifest(
         })
     });
     let manifest = serde_json::json!({
+        "schema": 1,
         "catalog": spec,
         "provenance": {
-            "source": if let Some(source) = archive_override {
-                if source.is_dir() { "user-supplied-directory" } else if spec.single_file.is_some() { "user-supplied-file" } else { "user-supplied-archive" }
-            } else { "catalog-download" },
+            "source": if source_override.is_some() { "user-supplied" } else { "catalog-download" },
+            "source_path": source_override.map(|path| path.display().to_string()),
             "source_revision": spec.source_revision,
             "artifact_source": spec.artifact_source,
             "artifact_revision": spec.artifact_revision,
             "original_model_source": spec.original_model_source,
             "original_model_revision": spec.original_model_revision,
-            "artifact_url": artifact_url(spec),
-            "artifact_sha256": artifact_sha256(spec),
-            "supplemental_assets": spec.supplemental_files,
-            "modified": !spec.supplemental_files.is_empty(),
+            "files": spec.files,
+            "modified": false,
         },
         "license_acceptance": acceptance,
     });
@@ -238,143 +375,6 @@ fn write_install_manifest(
     .context("write model provenance manifest")
 }
 
-fn download_supplemental(
-    paths: &AppPaths,
-    spec: &ModelSpec,
-    asset: &SupplementalFile,
-    progress: ProgressFormat,
-) -> Result<PathBuf> {
-    validate_relative_file(asset.path)?;
-    let cache_name = format!("{}.{}", spec.id, asset.path.replace(['/', '\\'], "-"));
-    let target = paths.data_dir.join("downloads").join(cache_name);
-    if verify_pinned_file(&target, asset.size, asset.sha256).is_ok() {
-        emit(
-            progress,
-            "supplement-cached",
-            spec,
-            Some(asset.size),
-            Some(asset.size),
-        )?;
-        return Ok(target);
-    }
-
-    let part = target.with_extension("part");
-    let _ = fs::remove_file(&part);
-    emit(
-        progress,
-        "supplement-download-start",
-        spec,
-        Some(0),
-        Some(asset.size),
-    )?;
-    let response = ureq::get(asset.url)
-        .call()
-        .with_context(|| format!("download supplemental model asset {}", asset.url))?;
-    write_pinned_download(
-        response.into_reader(),
-        &part,
-        &target,
-        asset.size,
-        asset.sha256,
-        spec,
-        progress,
-    )?;
-    Ok(target)
-}
-
-fn write_pinned_download(
-    mut input: impl Read,
-    part: &Path,
-    target: &Path,
-    expected_size: u64,
-    expected_sha256: &str,
-    spec: &ModelSpec,
-    progress: ProgressFormat,
-) -> Result<()> {
-    let result = (|| -> Result<()> {
-        let file = File::create(part)?;
-        let mut output = BufWriter::new(file);
-        let mut hasher = Sha256::new();
-        let mut total = 0_u64;
-        let mut reported = 0_u64;
-        let mut buffer = [0_u8; 128 * 1024];
-        loop {
-            let count = input.read(&mut buffer)?;
-            if count == 0 {
-                break;
-            }
-            total += count as u64;
-            if total > expected_size {
-                bail!("download exceeded expected size for {}", spec.id);
-            }
-            hasher.update(&buffer[..count]);
-            output.write_all(&buffer[..count])?;
-            if should_report_progress(total, reported, expected_size) {
-                emit(
-                    progress,
-                    "supplement-download-progress",
-                    spec,
-                    Some(total),
-                    Some(expected_size),
-                )?;
-                reported = total;
-            }
-        }
-        output.flush()?;
-        output.get_ref().sync_all()?;
-        if total != expected_size {
-            bail!(
-                "downloaded {} bytes for {}, expected {}",
-                total,
-                spec.id,
-                expected_size
-            );
-        }
-        if format!("{:x}", hasher.finalize()) != expected_sha256 {
-            bail!("download checksum mismatch for {}", spec.id);
-        }
-        fs::rename(part, target)?;
-        emit(
-            progress,
-            "supplement-downloaded",
-            spec,
-            Some(total),
-            Some(total),
-        )?;
-        Ok(())
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(part);
-    }
-    result
-}
-
-fn install_supplemental(source: &Path, directory: &Path, asset: &SupplementalFile) -> Result<()> {
-    validate_relative_file(asset.path)?;
-    verify_pinned_file(source, asset.size, asset.sha256)?;
-    let target = directory.join(asset.path);
-    let parent = target
-        .parent()
-        .context("supplemental model asset has no parent directory")?;
-    fs::create_dir_all(parent)?;
-    let file_name = target
-        .file_name()
-        .context("supplemental model asset has no file name")?
-        .to_string_lossy();
-    let part = parent.join(format!(".{file_name}.part-{}", std::process::id()));
-    let _ = fs::remove_file(&part);
-    let result = (|| -> Result<()> {
-        fs::copy(source, &part)?;
-        verify_pinned_file(&part, asset.size, asset.sha256)?;
-        fs::rename(&part, &target)?;
-        Ok(())
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(&part);
-    }
-    result
-}
-
 fn validate_relative_file(path: &str) -> Result<()> {
     let path = Path::new(path);
     if path.as_os_str().is_empty()
@@ -382,10 +382,7 @@ fn validate_relative_file(path: &str) -> Result<()> {
             .components()
             .any(|part| !matches!(part, Component::Normal(_)))
     {
-        bail!(
-            "supplemental model asset has unsafe path {}",
-            path.display()
-        );
+        bail!("model asset has unsafe path {}", path.display());
     }
     Ok(())
 }
@@ -402,215 +399,10 @@ fn verify_pinned_file(path: &Path, expected_size: u64, expected_sha256: &str) ->
     Ok(())
 }
 
-fn download_archive(
-    paths: &AppPaths,
-    spec: &ModelSpec,
-    progress: ProgressFormat,
-) -> Result<PathBuf> {
-    let cache_id = crate::catalog::models()
-        .iter()
-        .find(|candidate| {
-            artifact_size(candidate) == artifact_size(spec)
-                && artifact_sha256(candidate) == artifact_sha256(spec)
-                && artifact_url(candidate) == artifact_url(spec)
-        })
-        .map_or(spec.id, |candidate| candidate.id);
-    let target = paths
-        .data_dir
-        .join("downloads")
-        .join(spec.single_file.map_or_else(
-            || format!("{cache_id}.tar.bz2"),
-            |file| format!("{cache_id}-{}", file.path.replace(['/', '\\'], "-")),
-        ));
-    if verify_archive(&target, spec).is_ok() {
-        emit(
-            progress,
-            "cached",
-            spec,
-            Some(artifact_size(spec)),
-            Some(artifact_size(spec)),
-        )?;
-        return Ok(target);
-    }
-    let part = target.with_extension("part");
-    let _ = fs::remove_file(&part);
-    emit(
-        progress,
-        "download-start",
-        spec,
-        Some(0),
-        Some(artifact_size(spec)),
-    )?;
-    let response = ureq::get(artifact_url(spec))
-        .call()
-        .with_context(|| format!("download {}", artifact_url(spec)))?;
-    write_download(response.into_reader(), &part, &target, spec, progress)?;
-    Ok(target)
-}
-
-fn write_download(
-    mut input: impl Read,
-    part: &Path,
-    target: &Path,
-    spec: &ModelSpec,
-    progress: ProgressFormat,
-) -> Result<()> {
-    let file = File::create(part)?;
-    let mut output = BufWriter::new(file);
-    let mut hasher = Sha256::new();
-    let mut total = 0_u64;
-    let mut reported = 0_u64;
-    let mut buffer = [0_u8; 128 * 1024];
-    loop {
-        let count = input.read(&mut buffer)?;
-        if count == 0 {
-            break;
-        }
-        total += count as u64;
-        if total > artifact_size(spec) {
-            bail!("download exceeded expected size for {}", spec.id);
-        }
-        hasher.update(&buffer[..count]);
-        output.write_all(&buffer[..count])?;
-        if should_report_progress(total, reported, artifact_size(spec)) {
-            emit(
-                progress,
-                "download-progress",
-                spec,
-                Some(total),
-                Some(artifact_size(spec)),
-            )?;
-            reported = total;
-        }
-    }
-    output.flush()?;
-    output.get_ref().sync_all()?;
-    if total != artifact_size(spec) {
-        bail!(
-            "downloaded {} bytes for {}, expected {}",
-            total,
-            spec.id,
-            artifact_size(spec)
-        );
-    }
-    let digest = format!("{:x}", hasher.finalize());
-    if digest != artifact_sha256(spec) {
-        bail!("download checksum mismatch for {}", spec.id);
-    }
-    fs::rename(part, target)?;
-    emit(progress, "downloaded", spec, Some(total), Some(total))?;
-    Ok(())
-}
-
-fn should_report_progress(current: u64, last: u64, total: u64) -> bool {
-    current.saturating_sub(last) >= 1024 * 1024 || current == total
-}
-
-fn verify_archive(path: &Path, spec: &ModelSpec) -> Result<()> {
-    let metadata = fs::symlink_metadata(path)
-        .with_context(|| format!("model archive is missing: {}", path.display()))?;
-    if !metadata.file_type().is_file() || metadata.len() != artifact_size(spec) {
-        bail!("model artifact size mismatch for {}", path.display());
-    }
-    let digest = sha256_file(path)?;
-    if digest != artifact_sha256(spec) {
-        bail!("model artifact checksum mismatch for {}", path.display());
-    }
-    Ok(())
-}
-
-fn materialize_artifact(archive: &Path, staging: &Path, spec: &ModelSpec) -> Result<PathBuf> {
-    if archive.is_dir() {
-        let directory = staging.join("model");
-        fs::create_dir_all(&directory)?;
-        for required in spec.required_files {
-            validate_relative_file(required.path)?;
-            let source = archive.join(required.path);
-            verify_pinned_file(&source, required.size, required.sha256)?;
-            let target = directory.join(required.path);
-            fs::create_dir_all(target.parent().context("model asset has no parent")?)?;
-            fs::copy(&source, &target).with_context(|| {
-                format!(
-                    "copy model asset {} to {}",
-                    source.display(),
-                    target.display()
-                )
-            })?;
-        }
-        return Ok(directory);
-    }
-    if let Some(file) = spec.single_file {
-        validate_relative_file(file.path)?;
-        let directory = staging.join(spec.id);
-        let target = directory.join(file.path);
-        fs::create_dir_all(target.parent().context("single-file model has no parent")?)?;
-        fs::copy(archive, &target).with_context(|| {
-            format!(
-                "copy single-file model {} to {}",
-                archive.display(),
-                target.display()
-            )
-        })?;
-        return Ok(directory);
-    }
-    let decoder = BzDecoder::new(BufReader::new(File::open(archive)?));
-    let mut archive = tar::Archive::new(decoder);
-    for entry in archive.entries()? {
-        let mut entry = entry?;
-        let path = entry.path()?.into_owned();
-        if path
-            .components()
-            .any(|part| !matches!(part, Component::Normal(_)))
-        {
-            bail!("archive contains unsafe path {}", path.display());
-        }
-        if path.components().next().and_then(|part| match part {
-            Component::Normal(value) => value.to_str(),
-            _ => None,
-        }) != Some(spec.archive_root)
-        {
-            bail!("archive entry is outside expected root: {}", path.display());
-        }
-        let kind = entry.header().entry_type();
-        if !kind.is_file() && !kind.is_dir() {
-            bail!("archive contains unsupported entry {}", path.display());
-        }
-        if !entry.unpack_in(staging)? {
-            bail!("archive entry escaped destination: {}", path.display());
-        }
-    }
-    Ok(staging.join(spec.archive_root))
-}
-
-#[cfg(test)]
-fn extract_archive(archive: &Path, staging: &Path, spec: &ModelSpec) -> Result<PathBuf> {
-    materialize_artifact(archive, staging, spec)
-}
-
-fn artifact_url(spec: &ModelSpec) -> &str {
-    spec.single_file.map_or(spec.archive_url, |file| file.url)
-}
-
-fn artifact_size(spec: &ModelSpec) -> u64 {
-    spec.single_file.map_or(spec.archive_size, |file| file.size)
-}
-
-fn artifact_sha256(spec: &ModelSpec) -> &str {
-    spec.single_file
-        .map_or(spec.archive_sha256, |file| file.sha256)
-}
-
 fn verify_directory(directory: &Path, spec: &ModelSpec) -> Result<()> {
-    for required in spec.required_files {
-        let path = directory.join(required.path);
-        let metadata = fs::symlink_metadata(&path)
-            .with_context(|| format!("required model asset is missing: {}", path.display()))?;
-        if !metadata.file_type().is_file() || metadata.len() != required.size {
-            bail!("model asset has wrong size: {}", path.display());
-        }
-        if sha256_file(&path)? != required.sha256 {
-            bail!("model asset checksum mismatch: {}", path.display());
-        }
+    for file in spec.files {
+        validate_relative_file(file.path)?;
+        verify_pinned_file(&directory.join(file.path), file.size, file.sha256)?;
     }
     if let Some(text) = crate::catalog::model_license_text(spec) {
         validate_relative_file(spec.license_file)?;
@@ -619,6 +411,93 @@ fn verify_directory(directory: &Path, spec: &ModelSpec) -> Result<()> {
             text.len() as u64,
             spec.license_sha256,
         )?;
+    }
+    verify_manifest(directory, spec)
+}
+
+fn verify_manifest(directory: &Path, spec: &ModelSpec) -> Result<()> {
+    let path = directory.join(".omaspeak-model.json");
+    let manifest: serde_json::Value = serde_json::from_slice(
+        &fs::read(&path).with_context(|| format!("read model manifest {}", path.display()))?,
+    )
+    .with_context(|| format!("parse model manifest {}", path.display()))?;
+    if manifest.as_object().is_none_or(|object| object.len() != 4) {
+        bail!(
+            "model manifest has unexpected top-level fields: {}",
+            path.display()
+        );
+    }
+    if manifest.get("schema") != Some(&serde_json::json!(1)) {
+        bail!(
+            "model manifest has an unsupported schema: {}",
+            path.display()
+        );
+    }
+    if manifest.get("catalog") != Some(&serde_json::to_value(spec)?) {
+        bail!("model manifest catalog does not match the active pinned catalog");
+    }
+    let provenance = manifest
+        .get("provenance")
+        .and_then(serde_json::Value::as_object)
+        .context("model manifest is missing provenance")?;
+    if provenance.len() != 9 {
+        bail!("model manifest provenance has unexpected fields");
+    }
+    let source = provenance
+        .get("source")
+        .and_then(serde_json::Value::as_str)
+        .context("model manifest is missing its source kind")?;
+    let source_path = provenance
+        .get("source_path")
+        .context("model manifest is missing source_path")?;
+    match source {
+        "catalog-download" if source_path.is_null() => {}
+        "user-supplied" if source_path.as_str().is_some_and(|path| !path.is_empty()) => {}
+        _ => bail!("model manifest source and source_path are inconsistent"),
+    }
+    for (key, expected) in [
+        ("source_revision", serde_json::json!(spec.source_revision)),
+        ("artifact_source", serde_json::json!(spec.artifact_source)),
+        (
+            "artifact_revision",
+            serde_json::json!(spec.artifact_revision),
+        ),
+        (
+            "original_model_source",
+            serde_json::json!(spec.original_model_source),
+        ),
+        (
+            "original_model_revision",
+            serde_json::json!(spec.original_model_revision),
+        ),
+        ("files", serde_json::to_value(spec.files)?),
+        ("modified", serde_json::json!(false)),
+    ] {
+        if provenance.get(key) != Some(&expected) {
+            bail!("model manifest provenance field {key} does not match the catalog");
+        }
+    }
+    let acceptance = manifest
+        .get("license_acceptance")
+        .context("model manifest is missing license_acceptance")?;
+    if spec.requires_acceptance {
+        let acceptance = acceptance
+            .as_object()
+            .context("model manifest is missing required license acceptance")?;
+        if acceptance.len() != 5
+            || acceptance.get("license") != Some(&serde_json::json!(spec.license))
+            || acceptance.get("license_url") != Some(&serde_json::json!(spec.license_url))
+            || acceptance.get("license_file") != Some(&serde_json::json!(spec.license_file))
+            || acceptance.get("license_sha256") != Some(&serde_json::json!(spec.license_sha256))
+            || acceptance
+                .get("accepted_at_unix_seconds")
+                .and_then(serde_json::Value::as_u64)
+                .is_none()
+        {
+            bail!("model manifest license acceptance does not match the catalog");
+        }
+    } else if !acceptance.is_null() {
+        bail!("model manifest records unexpected license acceptance");
     }
     Ok(())
 }
@@ -641,24 +520,28 @@ fn emit(
     format: ProgressFormat,
     event: &'static str,
     spec: &ModelSpec,
+    file: Option<&str>,
     current: Option<u64>,
     total: Option<u64>,
 ) -> Result<()> {
     match format {
-        ProgressFormat::Human => match (current, total) {
-            (Some(current), Some(total)) if event.ends_with("download-progress") => {
+        ProgressFormat::Human => match (file, current, total) {
+            (Some(file), Some(current), Some(total)) if event == "download-progress" => {
                 eprint!(
-                    "\rDownloading {}: {:>3}%",
-                    spec.id,
+                    "\rDownloading {file}: {:>3}%",
                     current.saturating_mul(100) / total.max(1)
                 );
                 std::io::stderr().flush()?;
             }
             _ => {
-                if event.ends_with("downloaded") {
+                if event == "downloaded" {
                     eprintln!();
                 }
-                eprintln!("{}: {}", event, spec.id);
+                if let Some(file) = file {
+                    eprintln!("{event}: {} ({file})", spec.id);
+                } else {
+                    eprintln!("{event}: {}", spec.id);
+                }
             }
         },
         ProgressFormat::Json => println!(
@@ -666,8 +549,9 @@ fn emit(
             serde_json::to_string(&Event {
                 event,
                 model: spec.id,
+                file,
                 current,
-                total
+                total,
             })?
         ),
     }

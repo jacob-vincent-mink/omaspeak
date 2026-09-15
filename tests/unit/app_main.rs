@@ -38,9 +38,15 @@ fn write_npu_fingerprint_assets(config: &Config, paths: &AppPaths) {
         &config.model.vocoder,
         &config.model.tts_json,
         &config.model.unicode_indexer,
-        &config.model.voice_style,
     ] {
-        fs::write(model.join(name), name.as_bytes()).unwrap();
+        let path = model.join(name);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, name.as_bytes()).unwrap();
+    }
+    let voices = model.join(&config.model.voice_style);
+    fs::create_dir_all(&voices).unwrap();
+    for name in omaspeak::catalog::SUPERTONIC_VOICE_NAMES {
+        fs::write(voices.join(format!("{name}.json")), name.as_bytes()).unwrap();
     }
     let runtime = paths.data_dir.join("openvino");
     fs::create_dir_all(&runtime).unwrap();
@@ -827,7 +833,7 @@ fn cli_parser_and_catalog_helpers_cover_command_surface() {
             "setup",
             "model",
             "--download",
-            "supertonic-3-int8",
+            "supertonic-3-openvino",
             "--no-activate",
             "--progress-format",
             "json",
@@ -874,7 +880,7 @@ fn cli_parser_and_catalog_helpers_cover_command_surface() {
             "model",
             "--json",
             "--download",
-            "supertonic-3-int8",
+            "supertonic-3-openvino",
         ])
         .is_err()
     );
@@ -892,7 +898,7 @@ fn cli_parser_and_catalog_helpers_cover_command_surface() {
         ])
         .is_err()
     );
-    assert!(model_spec("supertonic-3-int8").is_ok());
+    assert!(model_spec("supertonic-3-openvino").is_ok());
     assert!(
         model_spec("missing")
             .unwrap_err()
@@ -1564,7 +1570,7 @@ fn model_setup_dispatches_list_verify_set_and_install_actions() {
         false,
         None,
         None,
-        Some("supertonic-3-int8".into()),
+        Some("supertonic-3-openvino".into()),
         None,
         None,
         false,
@@ -1578,7 +1584,7 @@ fn model_setup_dispatches_list_verify_set_and_install_actions() {
         false,
         false,
         None,
-        Some("supertonic-3-int8".into()),
+        Some("supertonic-3-openvino".into()),
         None,
         None,
         None,
@@ -1594,7 +1600,7 @@ fn model_setup_dispatches_list_verify_set_and_install_actions() {
         &available,
         false,
         false,
-        Some("supertonic-3-int8".into()),
+        Some("supertonic-3-openvino".into()),
         None,
         None,
         Some(root.join("archive")),
@@ -1609,7 +1615,7 @@ fn model_setup_dispatches_list_verify_set_and_install_actions() {
         &available,
         false,
         false,
-        Some("supertonic-3-int8".into()),
+        Some("supertonic-3-openvino".into()),
         None,
         None,
         None,
@@ -2044,7 +2050,7 @@ fn guided_model_marks_active_installed_and_downloadable_models() {
     assert_eq!(selected.as_deref(), Some("supertonic-3-gguf"));
     assert!(selector.calls[0].1[0].label.contains("● active"));
     assert!(
-        selector.calls[0].1[2]
+        selector.calls[0].1[1]
             .detail
             .contains("Intel NPU compatible")
     );
@@ -2069,7 +2075,7 @@ fn guided_model_marks_active_installed_and_downloadable_models() {
 
 #[test]
 fn model_license_prompt_requires_an_explicit_accept_choice() {
-    let spec = omaspeak::catalog::model("supertonic-3-int8").unwrap();
+    let spec = omaspeak::catalog::model("supertonic-3-openvino").unwrap();
     let mut cancelled = ScriptedSelector::new([Some(1)]);
     assert!(!confirm_model_license(spec, false, &mut cancelled).unwrap());
     assert!(cancelled.calls[0].1[0].detail.contains("use restrictions"));
@@ -2083,22 +2089,18 @@ fn model_license_prompt_requires_an_explicit_accept_choice() {
 fn voice_picker_uses_installed_metadata_and_preselects_active_voice() {
     let root = sandbox();
     let paths = paths(&root);
-    let spec = omaspeak::catalog::model("supertonic-3-int8").unwrap();
+    let spec = omaspeak::catalog::model("supertonic-3-openvino").unwrap();
     let mut config = Config::default();
     spec.activate(&mut config);
     config.model.voice = 1;
     config.save(&paths.config_file).unwrap();
     let directory = config.model_directory(&paths);
     fs::create_dir_all(&directory).unwrap();
-    let dimensions = [2_i64, 1, 1, 2, 1, 1];
-    fs::write(
-        directory.join("voice.bin"),
-        dimensions
-            .into_iter()
-            .flat_map(i64::to_le_bytes)
-            .collect::<Vec<_>>(),
-    )
-    .unwrap();
+    let voices = directory.join("voice_styles");
+    fs::create_dir_all(&voices).unwrap();
+    for name in omaspeak::catalog::SUPERTONIC_VOICE_NAMES {
+        fs::write(voices.join(format!("{name}.json")), b"{}").unwrap();
+    }
     let mut selector = ScriptedSelector::new([Some(0)]);
 
     let selected = choose_voice(&paths.config_file, &paths, spec, true, &mut selector)
@@ -2107,7 +2109,7 @@ fn voice_picker_uses_installed_metadata_and_preselects_active_voice() {
 
     assert_eq!(selected.id, 0);
     assert_eq!(selector.calls[0].0, "Omaspeak voice");
-    assert_eq!(selector.calls[0].1.len(), 2);
+    assert_eq!(selector.calls[0].1.len(), 10);
     assert_eq!(selector.calls[0].2, 1);
 }
 
@@ -2118,9 +2120,9 @@ fn model_only_flow_constrains_catalog_for_active_npu_runtime() {
     let mut config = Config::default();
     config.backend.runtime = Runtime::Openvino;
     config.backend.device = "NPU".into();
-    config.model.name = "supertonic-3-npu".into();
+    config.model.name = "supertonic-3-openvino".into();
     config.save(&paths.config_file).unwrap();
-    let mut selector = ScriptedSelector::new([Some(2)]);
+    let mut selector = ScriptedSelector::new([Some(1)]);
     let selected = choose_model(
         &paths.config_file,
         &paths,
@@ -2130,11 +2132,10 @@ fn model_only_flow_constrains_catalog_for_active_npu_runtime() {
     )
     .unwrap();
 
-    assert_eq!(selected.as_deref(), Some("supertonic-3-npu"));
+    assert_eq!(selected.as_deref(), Some("supertonic-3-openvino"));
     assert!(!selector.calls[0].1[0].enabled);
-    assert!(!selector.calls[0].1[1].enabled);
-    assert!(selector.calls[0].1[2].enabled);
-    assert_eq!(selector.calls[0].2, 2);
+    assert!(selector.calls[0].1[1].enabled);
+    assert_eq!(selector.calls[0].2, 1);
     assert!(selector.calls[0].1[0].detail.contains("Incompatible"));
 }
 
@@ -2202,7 +2203,6 @@ fn fresh_full_setup_stages_audio_cpp_cpu_and_gguf_together() {
     assert_eq!(configured.model.file, "supertonic-3-orig.gguf");
     assert!(selector.calls[2].1[0].enabled);
     assert!(!selector.calls[2].1[1].enabled);
-    assert!(!selector.calls[2].1[2].enabled);
 }
 
 #[test]
@@ -2349,8 +2349,8 @@ fn only_engine_loading_commands_require_runtime_path_preparation() {
     }));
     assert!(!command_loads_engine(&TopCommand::Setup {
         command: Some(SetupCommand::All {
-            model: "supertonic-3-int8".into(),
-            archive: None,
+            model: "supertonic-3-openvino".into(),
+            source: None,
             accept_license: None,
             progress_format: ProgressFormat::Human,
         }),
@@ -2495,7 +2495,7 @@ fn setup_all_installs_model_and_launcher_but_leaves_service_untouched() {
             &paths.config_file,
             &paths,
             &operations,
-            "supertonic-3-int8",
+            "supertonic-3-openvino",
             None,
             None,
             Some("OpenRAIL-M"),
@@ -2541,7 +2541,7 @@ fn setup_transaction_restores_existing_and_new_configs_on_late_failures() {
         &existing.config_file,
         &existing,
         &operations,
-        "supertonic-3-int8",
+        "supertonic-3-openvino",
         Some(2),
         None,
         Some("OpenRAIL-M"),
@@ -2575,7 +2575,7 @@ fn setup_transaction_restores_existing_and_new_configs_on_late_failures() {
         &new.config_file,
         &new,
         &operations,
-        "supertonic-3-int8",
+        "supertonic-3-openvino",
         None,
         None,
         Some("OpenRAIL-M"),
@@ -2614,7 +2614,7 @@ fn setup_transaction_restores_existing_and_new_configs_on_late_failures() {
         &restart.config_file,
         &restart,
         &operations,
-        "supertonic-3-int8",
+        "supertonic-3-openvino",
         None,
         None,
         Some("OpenRAIL-M"),
@@ -2657,7 +2657,7 @@ fn setup_precompile_failure_leaves_config_launcher_and_service_untouched() {
         &paths.config_file,
         &paths,
         &FakeModelOperations { installed: true },
-        "supertonic-3-int8",
+        "supertonic-3-openvino",
         None,
         None,
         Some("OpenRAIL-M"),
@@ -2699,7 +2699,7 @@ fn setup_transaction_checks_then_restarts_and_prints_both_formats() {
             &paths.config_file,
             &paths,
             &operations,
-            "supertonic-3-int8",
+            "supertonic-3-openvino",
             Some(1),
             None,
             Some("OpenRAIL-M"),
@@ -2730,15 +2730,15 @@ fn setup_transaction_checks_then_restarts_and_prints_both_formats() {
 fn builtin_model_boundaries_and_offline_command_validation_are_actionable() {
     let root = sandbox();
     let paths = paths(&root);
-    let spec = BuiltinModels.resolve("supertonic-3-int8").unwrap();
-    assert_eq!(BuiltinModels.models().len(), 3);
+    let spec = BuiltinModels.resolve("supertonic-3-openvino").unwrap();
+    assert_eq!(BuiltinModels.models().len(), 2);
     assert!(BuiltinModels.verify(&paths, spec).is_err());
     assert!(
         BuiltinModels
             .install(
                 &paths,
                 spec,
-                Some(&root.join("missing-archive.tar.bz2")),
+                Some(&root.join("missing-model-directory")),
                 ProgressFormat::Human,
                 Some("OpenRAIL-M"),
             )
@@ -2849,7 +2849,7 @@ fn installed_guided_model_and_voice_validation_cover_local_only_paths() {
     );
     assert_eq!(Config::load(&paths.config_file).unwrap().model.voice, 2);
 
-    let mut empty = *omaspeak::catalog::model("supertonic-3-int8").unwrap();
+    let mut empty = *omaspeak::catalog::model("supertonic-3-openvino").unwrap();
     empty.id = "empty-voices";
     empty.name = "empty-voices";
     empty.voices = &[];
@@ -2862,7 +2862,7 @@ fn installed_guided_model_and_voice_validation_cover_local_only_paths() {
         &paths.config_file,
         &paths,
         &operations,
-        "supertonic-3-int8",
+        "supertonic-3-openvino",
         Some(99),
         None,
         Some("OpenRAIL-M"),
@@ -2890,7 +2890,7 @@ fn unattended_setup_rejects_a_missing_runtime_before_mutating_config() {
         &paths.config_file,
         &paths,
         &FakeModelOperations { installed: false },
-        "supertonic-3-int8",
+        "supertonic-3-openvino",
         None,
         None,
         Some("OpenRAIL-M"),
@@ -2909,7 +2909,7 @@ fn unattended_setup_rejects_a_missing_runtime_before_mutating_config() {
 fn catalog_status_matrix_and_guided_model_cancellations_use_existing_paths() {
     let root = sandbox();
     let paths = paths(&root);
-    let base = *omaspeak::catalog::model("supertonic-3-int8").unwrap();
+    let base = *omaspeak::catalog::model("supertonic-3-openvino").unwrap();
     let model = |id, downloadable, requires_acceptance| {
         let mut model = base;
         model.id = id;
@@ -2948,7 +2948,7 @@ fn catalog_status_matrix_and_guided_model_cancellations_use_existing_paths() {
     let items = &selector.calls[0].1;
     assert!(items[0].label.contains("active · user-supplied"));
     assert!(!items[0].enabled);
-    assert!(items[0].detail.contains("--archive PATH"));
+    assert!(items[0].detail.contains("--source PATH"));
     assert!(items[1].label.contains("installed"));
     assert!(items[2].label.contains("user-supplied only"));
     assert!(items[2].detail.contains("OpenRAIL-M"));
@@ -3259,7 +3259,7 @@ fn noninteractive_runtime_setup_persists_selection_and_rejects_an_invalid_librar
                 download: None,
                 set: None,
                 verify: None,
-                archive: None,
+                source: None,
                 accept_license: None,
                 no_activate: false,
                 progress_format: ProgressFormat::Human,
@@ -3409,7 +3409,7 @@ fn npu_model_readiness_distinguishes_catalog_custom_and_device_states() {
     let error = npu_model_ready_with(&config, &app_paths, |_, _| Ok(())).unwrap_err();
     assert!(error.to_string().contains("not validated for Intel NPU"));
 
-    config.model.name = "supertonic-3-npu".into();
+    config.model.name = "supertonic-3-openvino".into();
     assert!(!npu_model_ready_with(&config, &app_paths, |_, _| bail!("missing")).unwrap());
     assert!(npu_model_ready_with(&config, &app_paths, |_, _| Ok(())).unwrap());
 
@@ -3460,7 +3460,7 @@ fn explicit_cache_setup_reports_optional_unready_and_ready_states() {
     assert!(error.to_string().contains("runtime/device"));
 
     let mut unready = Config::default();
-    omaspeak::catalog::model("supertonic-3-npu")
+    omaspeak::catalog::model("supertonic-3-openvino")
         .unwrap()
         .activate(&mut unready);
     unready.backend.runtime = Runtime::Openvino;
@@ -3550,7 +3550,7 @@ fn top_level_dispatch_uses_injected_paths_for_safe_offline_commands() {
                         download: None,
                         set: None,
                         verify: None,
-                        archive: None,
+                        source: None,
                         accept_license: None,
                         no_activate: false,
                         progress_format: ProgressFormat::Human,
@@ -3999,7 +3999,7 @@ fn unattended_setup_validation_boundary_preserves_transaction_semantics() {
         &app_paths.config_file,
         &app_paths,
         &FakeModelOperations { installed: true },
-        "supertonic-3-int8",
+        "supertonic-3-openvino",
         None,
         None,
         Some("OpenRAIL-M"),
@@ -4024,7 +4024,7 @@ fn unattended_setup_validation_boundary_preserves_transaction_semantics() {
         &app_paths.config_file,
         &app_paths,
         &FakeModelOperations { installed: true },
-        "supertonic-3-int8",
+        "supertonic-3-openvino",
         None,
         None,
         Some("OpenRAIL-M"),

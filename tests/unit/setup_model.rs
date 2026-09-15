@@ -1,210 +1,37 @@
-use super::*;
-use bzip2::Compression;
-use bzip2::write::BzEncoder;
+use std::fs;
 use std::net::TcpListener;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread;
 
-use crate::catalog::{RequiredFile, SingleFile, SupplementalFile};
+use sha2::{Digest, Sha256};
+
+use super::*;
+
+static NEXT: AtomicUsize = AtomicUsize::new(0);
 
 fn temp(name: &str) -> PathBuf {
-    let path =
-        std::env::temp_dir().join(format!("omaspeak-model-test-{}-{name}", std::process::id()));
+    let path = std::env::temp_dir().join(format!(
+        "omaspeak-model-test-{}-{name}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
     let _ = fs::remove_dir_all(&path);
     fs::create_dir_all(&path).unwrap();
     path
 }
 
-fn leak(value: String) -> &'static str {
-    Box::leak(value.into_boxed_str())
+fn leak(value: impl Into<String>) -> &'static str {
+    Box::leak(value.into().into_boxed_str())
 }
 
 fn digest(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
 
-fn archive(root: &str, path: &str, bytes: &[u8]) -> Vec<u8> {
-    let encoder = BzEncoder::new(Vec::new(), Compression::best());
-    let mut builder = tar::Builder::new(encoder);
-    let mut header = tar::Header::new_gnu();
-    header.set_size(bytes.len() as u64);
-    header.set_mode(0o644);
-    header.set_cksum();
-    builder
-        .append_data(&mut header, format!("{root}/{path}"), bytes)
-        .unwrap();
-    builder.into_inner().unwrap().finish().unwrap()
-}
-
-fn archive_with_superseded(root: &str) -> Vec<u8> {
-    let encoder = BzEncoder::new(Vec::new(), Compression::best());
-    let mut builder = tar::Builder::new(encoder);
-    for (path, bytes) in [
-        ("model.bin", &b"tiny model"[..]),
-        ("model.int8", &b"superseded"[..]),
-    ] {
-        let mut header = tar::Header::new_gnu();
-        header.set_size(bytes.len() as u64);
-        header.set_mode(0o644);
-        header.set_cksum();
-        builder
-            .append_data(&mut header, format!("{root}/{path}"), bytes)
-            .unwrap();
-    }
-    builder.into_inner().unwrap().finish().unwrap()
-}
-
-fn archive_with_superseded_directory(root: &str) -> Vec<u8> {
-    let encoder = BzEncoder::new(Vec::new(), Compression::best());
-    let mut builder = tar::Builder::new(encoder);
-    let mut model = tar::Header::new_gnu();
-    model.set_size(b"tiny model".len() as u64);
-    model.set_mode(0o644);
-    model.set_cksum();
-    builder
-        .append_data(&mut model, format!("{root}/model.bin"), &b"tiny model"[..])
-        .unwrap();
-
-    let mut directory = tar::Header::new_gnu();
-    directory.set_entry_type(tar::EntryType::Directory);
-    directory.set_size(0);
-    directory.set_mode(0o755);
-    directory.set_cksum();
-    builder
-        .append_data(&mut directory, format!("{root}/model.int8"), &[][..])
-        .unwrap();
-    builder.into_inner().unwrap().finish().unwrap()
-}
-
-fn archive_with_marker_directory(root: &str, path: &str, bytes: &[u8]) -> Vec<u8> {
-    let encoder = BzEncoder::new(Vec::new(), Compression::best());
-    let mut builder = tar::Builder::new(encoder);
-
-    let mut file = tar::Header::new_gnu();
-    file.set_size(bytes.len() as u64);
-    file.set_mode(0o644);
-    file.set_cksum();
-    builder
-        .append_data(&mut file, format!("{root}/{path}"), bytes)
-        .unwrap();
-
-    let mut directory = tar::Header::new_gnu();
-    directory.set_entry_type(tar::EntryType::Directory);
-    directory.set_size(0);
-    directory.set_mode(0o755);
-    directory.set_cksum();
-    builder
-        .append_data(
-            &mut directory,
-            format!("{root}/.omaspeak-model.json"),
-            &[][..],
-        )
-        .unwrap();
-
-    builder.into_inner().unwrap().finish().unwrap()
-}
-
-fn spec(archive_bytes: &[u8], url: &str) -> &'static ModelSpec {
-    let asset = b"tiny model";
-    let required: &'static [RequiredFile] = Box::leak(
-        vec![RequiredFile {
-            path: "model.bin",
-            size: asset.len() as u64,
-            sha256: leak(digest(asset)),
-        }]
-        .into_boxed_slice(),
-    );
-    Box::leak(Box::new(ModelSpec {
-        id: "tiny",
-        backend: "supertonic",
-        family: "supertonic",
-        name: "tiny",
-        description: "test model",
-        license: "MIT",
-        license_url: "https://example.invalid/license",
-        license_status: "verified",
-        downloadable: true,
-        requires_acceptance: false,
-        source_revision: "test-revision",
-        artifact_source: "https://example.invalid/artifact",
-        artifact_revision: "test-revision",
-        original_model_source: "https://example.invalid/original",
-        original_model_revision: "original-revision",
-        single_file: None,
-        license_file: "",
-        license_sha256: "",
-        archive_url: leak(url.to_owned()),
-        archive_size: archive_bytes.len() as u64,
-        archive_sha256: leak(digest(archive_bytes)),
-        archive_root: "tiny-root",
-        duration_predictor: "",
-        text_encoder: "",
-        vector_estimator: "",
-        vocoder: "",
-        tts_json: "",
-        unicode_indexer: "",
-        voice_style: "",
-        language: "en",
-        steps: 5,
-        voices: &[],
-        openvino_capable: false,
-        npu_capable: false,
-        required_files: required,
-        supplemental_files: &[],
-    }))
-}
-
-fn spec_with_supplement(archive_bytes: &[u8]) -> &'static ModelSpec {
-    let required: &'static [RequiredFile] = Box::leak(
-        vec![
-            RequiredFile {
-                path: "model.bin",
-                size: 10,
-                sha256: leak(digest(b"tiny model")),
-            },
-            RequiredFile {
-                path: "extra/model.fp32",
-                size: 11,
-                sha256: leak(digest(b"float model")),
-            },
-        ]
-        .into_boxed_slice(),
-    );
-    let supplemental_files: &'static [SupplementalFile] = Box::leak(
-        vec![SupplementalFile {
-            path: "extra/model.fp32",
-            supersedes: "model.int8",
-            url: "http://unused.invalid/model.fp32",
-            size: 11,
-            sha256: leak(digest(b"float model")),
-        }]
-        .into_boxed_slice(),
-    );
-    Box::leak(Box::new(ModelSpec {
-        supplemental_files,
-        required_files: required,
-        ..*spec(archive_bytes, "http://unused.invalid/model")
-    }))
-}
-
-fn single_file_spec() -> &'static ModelSpec {
-    let bytes = b"tiny model";
-    let mut model = *spec(&[], "");
-    model.single_file = Some(SingleFile {
-        path: "model.bin",
-        url: "https://example.invalid/model.bin",
-        size: bytes.len() as u64,
-        sha256: leak(digest(bytes)),
-    });
-    model.archive_url = "";
-    model.archive_size = 0;
-    model.archive_sha256 = "";
-    model.archive_root = "";
-    Box::leak(Box::new(model))
-}
-
 fn paths(root: &Path) -> AppPaths {
     AppPaths {
-        config_file: root.join("config/config.toml"),
+        config_file: root.join("config/omaspeak.toml"),
         data_dir: root.join("data"),
         cache_dir: root.join("cache"),
         state_dir: root.join("state"),
@@ -212,710 +39,514 @@ fn paths(root: &Path) -> AppPaths {
     }
 }
 
+fn spec(id: &str, definitions: &[(&str, &[u8], &str)]) -> &'static ModelSpec {
+    let files = definitions
+        .iter()
+        .map(|(path, bytes, url)| ModelFile {
+            path: leak(*path),
+            url: leak(*url),
+            size: bytes.len() as u64,
+            sha256: leak(digest(bytes)),
+        })
+        .collect::<Vec<_>>();
+    let mut model = *crate::catalog::model("supertonic-3-gguf").unwrap();
+    model.id = leak(id);
+    model.name = model.id;
+    model.model_file = files.first().map_or("", |file| file.path);
+    model.files = Box::leak(files.into_boxed_slice());
+    model.license = "MIT";
+    model.license_status = "test fixture";
+    model.requires_acceptance = false;
+    model.license_file = "";
+    model.license_sha256 = "";
+    Box::leak(Box::new(model))
+}
+
+fn write_source(root: &Path, spec: &ModelSpec, definitions: &[(&str, &[u8], &str)]) {
+    for (file, (_, bytes, _)) in spec.files.iter().zip(definitions) {
+        let path = root.join(file.path);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, bytes).unwrap();
+    }
+}
+
 #[test]
 fn model_path_is_backend_neutral() {
-    let paths = AppPaths {
-        config_file: "/tmp/config".into(),
-        data_dir: "/tmp/data".into(),
-        cache_dir: "/tmp/cache".into(),
-        state_dir: "/tmp/state".into(),
-        runtime_dir: "/tmp/run".into(),
-    };
-    let spec = crate::catalog::models().first().unwrap();
+    let root = temp("path");
+    let app = paths(&root);
     assert_eq!(
-        model_directory(&paths, spec),
-        PathBuf::from("/tmp/data/models/supertonic-3-gguf")
+        model_directory(&app, crate::catalog::model("supertonic-3-gguf").unwrap()),
+        root.join("data/models/supertonic-3-gguf")
     );
 }
 
 #[test]
-fn cached_single_file_install_is_verified_and_published_atomically() {
-    let root = temp("single-file");
-    let app_paths = paths(&root);
-    let model = single_file_spec();
-    let cache = app_paths.data_dir.join("downloads/tiny-model.bin");
-    fs::create_dir_all(cache.parent().unwrap()).unwrap();
-    fs::write(&cache, b"tiny model").unwrap();
-
-    let installed = install(&app_paths, model, None, ProgressFormat::Human, None).unwrap();
+fn local_directory_install_is_verified_idempotent_and_repairable() {
+    let definitions = [
+        (
+            "onnx/model.bin",
+            &b"model"[..],
+            "https://unused.invalid/model",
+        ),
+        (
+            "voices/F1.json",
+            &b"voice"[..],
+            "https://unused.invalid/voice",
+        ),
+    ];
+    let model = spec("local", &definitions);
+    let root = temp("local");
+    let source = root.join("source");
+    write_source(&source, model, &definitions);
+    let app = paths(&root);
+    let installed = install(&app, model, Some(&source), ProgressFormat::Json, None).unwrap();
+    verify(&app, model).unwrap();
+    verify_at(&installed, model).unwrap();
     assert_eq!(
-        fs::read(installed.join("model.bin")).unwrap(),
-        b"tiny model"
+        fs::read(installed.join("onnx/model.bin")).unwrap(),
+        b"model"
     );
-    verify(&app_paths, model).unwrap();
-    assert!(installed.join(".omaspeak-model.json").is_file());
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&fs::read(installed.join(".omaspeak-model.json")).unwrap()).unwrap();
+    assert_eq!(manifest["provenance"]["source"], "user-supplied");
+    assert_eq!(manifest["provenance"]["modified"], false);
+
+    fs::write(source.join("onnx/model.bin"), b"wrong").unwrap();
+    install(&app, model, Some(&source), ProgressFormat::Human, None).unwrap();
+    assert_eq!(
+        fs::read(installed.join("onnx/model.bin")).unwrap(),
+        b"model"
+    );
+
+    fs::write(installed.join("onnx/model.bin"), b"bad!!").unwrap();
+    assert!(verify(&app, model).is_err());
+    fs::write(source.join("onnx/model.bin"), b"model").unwrap();
+    install(&app, model, Some(&source), ProgressFormat::Human, None).unwrap();
+    verify(&app, model).unwrap();
+}
+
+#[test]
+fn missing_or_tampered_manifest_is_never_treated_as_installed() {
+    let bytes = b"model";
+    let model = spec("manifest", &[("model", bytes, "https://unused.invalid")]);
+    let root = temp("manifest");
+    let source = root.join("source");
+    write_source(
+        &source,
+        model,
+        &[("model", bytes, "https://unused.invalid")],
+    );
+    let app = paths(&root);
+    let target = install(&app, model, Some(&source), ProgressFormat::Human, None).unwrap();
+    let manifest_path = target.join(".omaspeak-model.json");
+    let original = fs::read(&manifest_path).unwrap();
+
+    fs::remove_file(&manifest_path).unwrap();
     assert!(
-        fs::read_dir(app_paths.data_dir.join("models"))
-            .unwrap()
-            .all(|entry| !entry
-                .unwrap()
-                .file_name()
-                .to_string_lossy()
-                .starts_with(".tiny.install-"))
+        verify(&app, model)
+            .unwrap_err()
+            .to_string()
+            .contains("manifest")
     );
-
-    fs::write(installed.join("model.bin"), b"bad").unwrap();
-    assert!(verify(&app_paths, model).is_err());
-}
-
-#[test]
-fn restricted_models_are_user_supplied_only() {
-    let root = temp("restricted-license");
-    let archive_bytes = archive("tiny-root", "model.bin", b"tiny model");
-    let archive_path = root.join("tiny.tar.bz2");
-    fs::write(&archive_path, &archive_bytes).unwrap();
-    let mut restricted = *spec(&archive_bytes, "https://example.invalid/model");
-    restricted.downloadable = false;
-    restricted.license = "research-only terms";
-    restricted.license_status = "restricted";
-    let restricted = Box::leak(Box::new(restricted));
-    let app_paths = paths(&root);
-
-    let error = install(&app_paths, restricted, None, ProgressFormat::Human, None).unwrap_err();
-    assert!(error.to_string().contains("user-supplied only"));
-    assert!(!app_paths.data_dir.exists());
-
-    install(
-        &app_paths,
-        restricted,
-        Some(&archive_path),
-        ProgressFormat::Human,
-        None,
+    fs::write(&manifest_path, &original).unwrap();
+    let mut manifest: serde_json::Value = serde_json::from_slice(&original).unwrap();
+    manifest["provenance"]["artifact_revision"] = serde_json::json!("tampered");
+    fs::write(
+        &manifest_path,
+        serde_json::to_vec_pretty(&manifest).unwrap(),
     )
     .unwrap();
+    let error = verify(&app, model).unwrap_err().to_string();
+    assert!(error.contains("catalog") || error.contains("provenance"));
 }
 
 #[test]
-fn user_supplied_model_directory_is_verified_and_copied() {
-    let root = temp("user-supplied-directory");
-    let archive_bytes = archive("tiny-root", "model.bin", b"tiny model");
-    let mut restricted = *spec(&archive_bytes, "https://example.invalid/model");
-    restricted.downloadable = false;
-    restricted.archive_url = "";
-    restricted.archive_size = 0;
-    restricted.archive_sha256 = "";
-    restricted.archive_root = "";
-    let restricted = Box::leak(Box::new(restricted));
-    let source = root.join("official-source");
-    fs::create_dir_all(&source).unwrap();
-    fs::write(source.join("model.bin"), b"tiny model").unwrap();
-    let app_paths = paths(&root);
-
-    let installed = install(
-        &app_paths,
-        restricted,
-        Some(&source),
-        ProgressFormat::Human,
-        None,
-    )
-    .unwrap();
-    assert_eq!(
-        fs::read(installed.join("model.bin")).unwrap(),
-        b"tiny model"
+fn manifest_verification_rejects_structural_and_source_tampering() {
+    let bytes = b"model";
+    let model = spec(
+        "manifest-structure",
+        &[("model", bytes, "https://unused.invalid")],
     );
-    let manifest = fs::read_to_string(installed.join(".omaspeak-model.json")).unwrap();
-    assert!(manifest.contains("user-supplied-directory"));
+    let root = temp("manifest-structure");
+    let source = root.join("source");
+    write_source(
+        &source,
+        model,
+        &[("model", bytes, "https://unused.invalid")],
+    );
+    let app = paths(&root);
+    let target = install(&app, model, Some(&source), ProgressFormat::Human, None).unwrap();
+    let manifest_path = target.join(".omaspeak-model.json");
+    let original: serde_json::Value =
+        serde_json::from_slice(&fs::read(&manifest_path).unwrap()).unwrap();
 
-    fs::write(source.join("model.bin"), b"tampered").unwrap();
-    fs::remove_dir_all(&installed).unwrap();
-    assert!(
-        install(
-            &app_paths,
-            restricted,
-            Some(&source),
-            ProgressFormat::Human,
-            None,
+    let reject = |mut manifest: serde_json::Value| {
+        fs::write(
+            &manifest_path,
+            serde_json::to_vec_pretty(&manifest).unwrap(),
         )
-        .is_err()
-    );
+        .unwrap();
+        assert!(verify(&app, model).is_err());
+        manifest = original.clone();
+        fs::write(
+            &manifest_path,
+            serde_json::to_vec_pretty(&manifest).unwrap(),
+        )
+        .unwrap();
+    };
+
+    let mut value = original.clone();
+    value["unexpected"] = true.into();
+    reject(value);
+    let mut value = original.clone();
+    value["schema"] = 2.into();
+    reject(value);
+    let mut value = original.clone();
+    value["catalog"]["name"] = "tampered".into();
+    reject(value);
+    let mut value = original.clone();
+    value["provenance"]["unexpected"] = true.into();
+    reject(value);
+    let mut value = original.clone();
+    value["provenance"]
+        .as_object_mut()
+        .unwrap()
+        .remove("source");
+    value["provenance"]["replacement"] = true.into();
+    reject(value);
+    let mut value = original.clone();
+    value["provenance"]
+        .as_object_mut()
+        .unwrap()
+        .remove("source_path");
+    value["provenance"]["replacement"] = true.into();
+    reject(value);
+    let mut value = original.clone();
+    value["provenance"]["source"] = "catalog-download".into();
+    reject(value);
+    let mut value = original.clone();
+    value["license_acceptance"] = serde_json::json!({"unexpected": true});
+    reject(value);
+
+    fs::write(&manifest_path, b"not json").unwrap();
+    assert!(verify(&app, model).is_err());
 }
 
 #[test]
-fn accepted_model_license_and_provenance_are_preserved_beside_weights() {
-    let root = temp("accepted-license");
-    let archive_bytes = archive("tiny-root", "model.bin", b"tiny model");
-    let archive_path = root.join("tiny.tar.bz2");
-    fs::write(&archive_path, &archive_bytes).unwrap();
-    let mut licensed = *spec(&archive_bytes, "https://example.invalid/model");
-    licensed.license = "OpenRAIL-M";
-    licensed.license_url = "https://example.invalid/OpenRAIL-M";
-    licensed.requires_acceptance = true;
-    licensed.source_revision = "pinned-revision";
-    licensed.license_file = "MODEL-LICENSE";
-    licensed.license_sha256 = "0d944a9110fed9a9602d60e0423a272903e7bd21ab060490774efc77c2275e9f";
-    let licensed = Box::leak(Box::new(licensed));
-    let app_paths = paths(&root);
+fn interrupted_staging_and_old_directories_are_cleaned_before_publication() {
+    let bytes = b"fresh";
+    let model = spec("interrupted", &[("model", bytes, "https://unused.invalid")]);
+    let root = temp("interrupted");
+    let source = root.join("source");
+    write_source(
+        &source,
+        model,
+        &[("model", bytes, "https://unused.invalid")],
+    );
+    let app = paths(&root);
+    let models = app.data_dir.join("models");
+    let staging = models.join(format!(".interrupted.install-{}", std::process::id()));
+    let old = models.join(format!(".interrupted.old-{}", std::process::id()));
+    fs::create_dir_all(&staging).unwrap();
+    fs::write(staging.join("partial"), b"partial").unwrap();
+    fs::create_dir_all(&old).unwrap();
+    fs::write(old.join("stale"), b"stale").unwrap();
+    let target = install(&app, model, Some(&source), ProgressFormat::Json, None).unwrap();
+    verify_at(&target, model).unwrap();
+    assert!(!staging.exists());
+    assert!(!old.exists());
+}
 
+#[test]
+fn one_file_model_accepts_file_source_and_multifile_requires_directory() {
+    let bytes = b"one";
+    let one = spec(
+        "one",
+        &[("model.gguf", bytes, "https://unused.invalid/one")],
+    );
+    let root = temp("file-source");
+    let file = root.join("model.gguf");
+    fs::write(&file, bytes).unwrap();
+    install(&paths(&root), one, Some(&file), ProgressFormat::Human, None).unwrap();
+
+    let multi = spec(
+        "multi",
+        &[
+            ("a", &b"a"[..], "https://unused.invalid/a"),
+            ("b", &b"b"[..], "https://unused.invalid/b"),
+        ],
+    );
     let error = install(
-        &app_paths,
-        licensed,
-        Some(&archive_path),
+        &paths(&temp("multi")),
+        multi,
+        Some(&file),
         ProgressFormat::Human,
         None,
     )
     .unwrap_err();
-    assert!(error.to_string().contains("--accept-license OpenRAIL-M"));
-    assert!(!app_paths.data_dir.exists());
+    assert!(format!("{error:#}").contains("must point to a directory"));
+}
 
-    let directory = install(
-        &app_paths,
+#[test]
+fn local_sources_must_exist_and_match_every_pin() {
+    let bytes = b"right";
+    let model = spec("pins", &[("nested/model", bytes, "https://unused.invalid")]);
+    let root = temp("pins");
+    let app = paths(&root);
+    assert!(
+        install(
+            &app,
+            model,
+            Some(&root.join("missing")),
+            ProgressFormat::Human,
+            None
+        )
+        .is_err()
+    );
+    let source = root.join("source");
+    fs::create_dir_all(source.join("nested")).unwrap();
+    fs::write(source.join("nested/model"), b"wrong").unwrap();
+    assert!(install(&app, model, Some(&source), ProgressFormat::Human, None).is_err());
+    assert!(!model_directory(&app, model).exists());
+}
+
+#[test]
+fn license_acceptance_and_provenance_are_recorded() {
+    let bytes = b"licensed";
+    let mut licensed = *spec("licensed", &[("model", bytes, "https://unused.invalid")]);
+    licensed.license = "OpenRAIL-M";
+    licensed.license_status = "acceptance required";
+    licensed.requires_acceptance = true;
+    licensed.license_file = "MODEL-LICENSE";
+    licensed.license_sha256 = "0d944a9110fed9a9602d60e0423a272903e7bd21ab060490774efc77c2275e9f";
+    let licensed = Box::leak(Box::new(licensed));
+    let root = temp("license");
+    let source = root.join("source");
+    write_source(
+        &source,
         licensed,
-        Some(&archive_path),
-        ProgressFormat::Human,
+        &[("model", bytes, "https://unused.invalid")],
+    );
+    let app = paths(&root);
+    let error = install(&app, licensed, Some(&source), ProgressFormat::Human, None).unwrap_err();
+    assert!(error.to_string().contains("requires acceptance"));
+    let installed = install(
+        &app,
+        licensed,
+        Some(&source),
+        ProgressFormat::Json,
         Some("OpenRAIL-M"),
     )
     .unwrap();
     assert_eq!(
-        sha256_file(&directory.join("MODEL-LICENSE")).unwrap(),
-        licensed.license_sha256
+        fs::read(installed.join("MODEL-LICENSE")).unwrap().len(),
+        15_007
     );
     let manifest: serde_json::Value =
-        serde_json::from_slice(&fs::read(directory.join(".omaspeak-model.json")).unwrap()).unwrap();
+        serde_json::from_slice(&fs::read(installed.join(".omaspeak-model.json")).unwrap()).unwrap();
     assert_eq!(manifest["license_acceptance"]["license"], "OpenRAIL-M");
-    assert_eq!(manifest["provenance"]["source"], "user-supplied-archive");
-    assert_eq!(manifest["provenance"]["source_revision"], "pinned-revision");
     assert!(
         manifest["license_acceptance"]["accepted_at_unix_seconds"]
             .as_u64()
             .is_some()
     );
-    verify(&app_paths, licensed).unwrap();
+    let mut tampered = manifest;
+    tampered["license_acceptance"]["license"] = "different".into();
+    fs::write(
+        installed.join(".omaspeak-model.json"),
+        serde_json::to_vec_pretty(&tampered).unwrap(),
+    )
+    .unwrap();
+    assert!(verify(&app, licensed).is_err());
 }
 
 #[test]
-fn progress_is_rate_limited_and_always_reports_completion() {
-    assert!(!should_report_progress(128 * 1024, 0, 2 * 1024 * 1024));
-    assert!(should_report_progress(1024 * 1024, 0, 2 * 1024 * 1024));
-    assert!(should_report_progress(
-        2 * 1024 * 1024,
-        1024 * 1024,
-        2 * 1024 * 1024
-    ));
+fn non_downloadable_models_require_a_local_source() {
+    let mut restricted = *spec("restricted", &[("model", &b"x"[..], "")]);
+    restricted.downloadable = false;
+    let restricted = Box::leak(Box::new(restricted));
+    let root = temp("restricted");
+    let error = install(&paths(&root), restricted, None, ProgressFormat::Human, None).unwrap_err();
+    assert!(error.to_string().contains("--source"));
+}
+
+fn local_downloads(bodies: Vec<Vec<u8>>) -> (String, thread::JoinHandle<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = thread::spawn(move || {
+        for body in bodies {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0_u8; 2048];
+            let _ = stream.read(&mut request);
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            )
+            .unwrap();
+            stream.write_all(&body).unwrap();
+        }
+    });
+    (format!("http://{address}/asset"), server)
 }
 
 #[test]
-fn local_archive_install_is_verified_idempotent_and_repairable() {
-    let root = temp("install");
-    let archive_bytes = archive("tiny-root", "model.bin", b"tiny model");
-    let archive_path = root.join("tiny.tar.bz2");
-    fs::write(&archive_path, &archive_bytes).unwrap();
-    let spec = spec(&archive_bytes, "http://unused.invalid/model");
-    let paths = paths(&root);
-
-    let installed = install(
-        &paths,
-        spec,
-        Some(&archive_path),
-        ProgressFormat::Json,
-        None,
-    )
-    .unwrap();
-    assert_eq!(installed, model_directory(&paths, spec));
-    assert!(installed.join(".omaspeak-model.json").is_file());
-    verify(&paths, spec).unwrap();
-    install(
-        &paths,
-        spec,
-        Some(&archive_path),
-        ProgressFormat::Human,
-        None,
-    )
-    .unwrap();
-
-    fs::write(installed.join("model.bin"), b"bad").unwrap();
-    assert!(verify(&paths, spec).is_err());
-    install(
-        &paths,
-        spec,
-        Some(&archive_path),
-        ProgressFormat::Human,
-        None,
-    )
-    .unwrap();
-    verify(&paths, spec).unwrap();
-}
-
-#[test]
-fn supplemental_asset_is_cached_verified_and_installed_with_the_archive() {
-    let root = temp("supplement");
-    let archive_bytes = archive_with_superseded("tiny-root");
-    let archive_path = root.join("tiny.tar.bz2");
-    fs::write(&archive_path, &archive_bytes).unwrap();
-    let spec = spec_with_supplement(&archive_bytes);
-    let paths = paths(&root);
-    let downloads = paths.data_dir.join("downloads");
-    fs::create_dir_all(&downloads).unwrap();
-    fs::write(downloads.join("tiny.extra-model.fp32"), b"float model").unwrap();
-
-    let installed = install(
-        &paths,
-        spec,
-        Some(&archive_path),
-        ProgressFormat::Json,
-        None,
-    )
-    .unwrap();
+fn catalog_downloads_every_file_and_reuses_verified_cache() {
+    let (url, server) = local_downloads(vec![b"alpha".to_vec(), b"beta".to_vec()]);
+    let model = spec(
+        "download",
+        &[
+            ("a/model", &b"alpha"[..], &url),
+            ("b/style", &b"beta"[..], &url),
+        ],
+    );
+    let root = temp("download");
+    let app = paths(&root);
+    install(&app, model, None, ProgressFormat::Json, None).unwrap();
+    server.join().unwrap();
+    verify(&app, model).unwrap();
     assert_eq!(
-        fs::read(installed.join("extra/model.fp32")).unwrap(),
-        b"float model"
+        fs::read(root.join("data/downloads/download/a/model")).unwrap(),
+        b"alpha"
     );
-    assert!(!installed.join("model.int8").exists());
-    verify(&paths, spec).unwrap();
-
-    fs::write(installed.join("extra/model.fp32"), b"broken file").unwrap();
-    install(
-        &paths,
-        spec,
-        Some(&archive_path),
-        ProgressFormat::Human,
-        None,
-    )
-    .unwrap();
-    verify(&paths, spec).unwrap();
+    install(&app, model, None, ProgressFormat::Human, None).unwrap();
+    fs::remove_dir_all(model_directory(&app, model)).unwrap();
+    install(&app, model, None, ProgressFormat::Json, None).unwrap();
+    verify(&app, model).unwrap();
 }
 
 #[test]
-fn supplemental_install_rejects_a_directory_at_the_superseded_asset_path() {
-    let root = temp("superseded-directory");
-    let archive_bytes = archive_with_superseded_directory("tiny-root");
-    let archive_path = root.join("tiny.tar.bz2");
-    fs::write(&archive_path, &archive_bytes).unwrap();
-    let spec = spec_with_supplement(&archive_bytes);
-    let app_paths = paths(&root);
-    let downloads = app_paths.data_dir.join("downloads");
-    fs::create_dir_all(&downloads).unwrap();
-    fs::write(downloads.join("tiny.extra-model.fp32"), b"float model").unwrap();
-
-    let error = install(
-        &app_paths,
-        spec,
-        Some(&archive_path),
-        ProgressFormat::Human,
-        None,
-    )
-    .unwrap_err();
-    assert!(format!("{error:#}").contains("remove superseded model asset"));
-    assert!(!model_directory(&app_paths, spec).exists());
+fn downloads_reject_wrong_lengths_checksums_and_remove_parts() {
+    let root = temp("bad-download");
+    let app = paths(&root);
+    let bytes = b"good";
+    let missing_url = spec("missing-url", &[("model", bytes, "")]);
     assert!(
-        !app_paths
-            .data_dir
-            .join("models")
-            .join(format!(".tiny.install-{}", std::process::id()))
-            .exists()
+        download_file(
+            &app,
+            missing_url,
+            &missing_url.files[0],
+            ProgressFormat::Human
+        )
+        .is_err()
     );
-}
+    let model = spec(
+        "bad-download",
+        &[("model", bytes, "http://127.0.0.1:9/missing")],
+    );
+    assert!(download_file(&app, model, &model.files[0], ProgressFormat::Json).is_err());
 
-#[test]
-fn supplemental_download_and_paths_are_strictly_verified() {
-    let root = temp("supplement-verify");
-    let archive_bytes = archive("tiny-root", "model.bin", b"tiny model");
-    let spec = spec_with_supplement(&archive_bytes);
-    let asset = &spec.supplemental_files[0];
-    let part = root.join("download.part");
-    let target = root.join("download");
-    write_pinned_download(
-        &b"float model"[..],
-        &part,
-        &target,
-        asset.size,
-        asset.sha256,
-        spec,
-        ProgressFormat::Json,
-    )
-    .unwrap();
-    verify_pinned_file(&target, asset.size, asset.sha256).unwrap();
+    let target = root.join("target");
+    let part = root.join("part");
+    let mut wrong_size = model.files[0];
+    wrong_size.size += 1;
     assert!(
         write_pinned_download(
-            &b"short"[..],
+            &bytes[..],
             &part,
             &target,
-            asset.size,
-            asset.sha256,
-            spec,
-            ProgressFormat::Human,
+            model,
+            &wrong_size,
+            ProgressFormat::Human
         )
         .is_err()
     );
-    assert!(validate_relative_file("../escape").is_err());
-    assert!(validate_relative_file("/absolute").is_err());
-    assert!(validate_relative_file("").is_err());
-}
-
-#[test]
-fn unavailable_catalog_downloads_fail_without_leaving_partial_files() {
-    let root = temp("network-failures");
-    let archive_bytes = archive("tiny-root", "model.bin", b"tiny model");
-    let mut unavailable = *spec(&archive_bytes, "http://127.0.0.1:9/model.tar.bz2");
-    unavailable.id = "unavailable";
-    let unavailable = Box::leak(Box::new(unavailable));
-    let app_paths = paths(&root);
-    fs::create_dir_all(app_paths.data_dir.join("downloads")).unwrap();
-    assert!(download_archive(&app_paths, unavailable, ProgressFormat::Json).is_err());
+    assert!(!target.exists());
+    let mut wrong_hash = model.files[0];
+    wrong_hash.sha256 = leak("0".repeat(64));
     assert!(
-        !app_paths
-            .data_dir
-            .join("downloads/unavailable.tar.bz2.part")
-            .exists()
-    );
-
-    let mut with_supplement = *spec_with_supplement(&archive_bytes);
-    with_supplement.id = "unavailable-supplement";
-    let bad_asset: &'static [SupplementalFile] = Box::leak(
-        vec![SupplementalFile {
-            url: "http://127.0.0.1:9/model.fp32",
-            ..with_supplement.supplemental_files[0]
-        }]
-        .into_boxed_slice(),
-    );
-    with_supplement.supplemental_files = bad_asset;
-    let with_supplement = Box::leak(Box::new(with_supplement));
-    assert!(
-        download_supplemental(
-            &app_paths,
-            with_supplement,
-            &bad_asset[0],
-            ProgressFormat::Human,
+        write_pinned_download(
+            &bytes[..],
+            &part,
+            &target,
+            model,
+            &wrong_hash,
+            ProgressFormat::Json
         )
         .is_err()
     );
+    let longer = b"longer";
     assert!(
-        !app_paths
-            .data_dir
-            .join("downloads/unavailable-supplement.extra-model.fp32.part")
-            .exists()
+        write_pinned_download(
+            &longer[..],
+            &part,
+            &target,
+            model,
+            &model.files[0],
+            ProgressFormat::Human
+        )
+        .is_err()
     );
 }
 
 #[test]
-fn archive_and_asset_corruption_are_rejected() {
-    let root = temp("corruption");
-    let bytes = archive("tiny-root", "model.bin", b"tiny model");
-    let path = root.join("archive.tar.bz2");
-    fs::write(&path, &bytes).unwrap();
-    let spec = spec(&bytes, "http://unused.invalid/model");
-    verify_archive(&path, spec).unwrap();
+fn corrupted_cache_is_replaced_before_install() {
+    let bytes = b"fresh";
+    let (url, server) = local_downloads(vec![bytes.to_vec()]);
+    let model = spec("cache-repair", &[("model", bytes, &url)]);
+    let root = temp("cache-repair");
+    let cache = root.join("data/downloads/cache-repair/model");
+    fs::create_dir_all(cache.parent().unwrap()).unwrap();
+    fs::write(&cache, b"stale").unwrap();
+    install(&paths(&root), model, None, ProgressFormat::Human, None).unwrap();
+    server.join().unwrap();
+    assert_eq!(fs::read(cache).unwrap(), bytes);
+}
 
-    let mut changed = bytes.clone();
-    let middle = changed.len() / 2;
-    changed[middle] ^= 1;
-    fs::write(&path, &changed).unwrap();
-    assert!(verify_archive(&path, spec).is_err());
-    fs::write(&path, &bytes[..bytes.len() - 1]).unwrap();
-    assert!(verify_archive(&path, spec).is_err());
-    assert!(verify_archive(&root.join("missing"), spec).is_err());
+#[test]
+fn staging_manifest_failure_preserves_previous_model() {
+    let bytes = b"new";
+    let mut model = *spec(
+        "rollback",
+        &[(".omaspeak-model.json/file", bytes, "https://unused.invalid")],
+    );
+    model.model_file = ".omaspeak-model.json/file";
+    let model = Box::leak(Box::new(model));
+    let root = temp("rollback");
+    let app = paths(&root);
+    let target = model_directory(&app, model);
+    fs::create_dir_all(&target).unwrap();
+    fs::write(target.join("previous"), b"keep").unwrap();
+    let source = root.join("source");
+    write_source(
+        &source,
+        model,
+        &[(".omaspeak-model.json/file", bytes, "https://unused.invalid")],
+    );
+    assert!(install(&app, model, Some(&source), ProgressFormat::Human, None).is_err());
+    assert_eq!(fs::read(target.join("previous")).unwrap(), b"keep");
+}
 
-    let directory = root.join("assets");
+#[test]
+fn unsafe_catalog_paths_and_non_regular_assets_are_rejected() {
+    for path in ["", "../escape", "/absolute", "a/../b"] {
+        assert!(validate_relative_file(path).is_err());
+    }
+    assert!(validate_relative_file("nested/file").is_ok());
+    let root = temp("directory-asset");
+    let directory = root.join("asset");
     fs::create_dir_all(&directory).unwrap();
-    assert!(verify_directory(&directory, spec).is_err());
-    fs::write(directory.join("model.bin"), b"bad model!").unwrap();
-    assert!(verify_directory(&directory, spec).is_err());
-    fs::write(directory.join("model.bin"), b"tiny xodel").unwrap();
-    assert!(verify_directory(&directory, spec).is_err());
+    assert!(verify_pinned_file(&directory, 0, &digest(b"")).is_err());
+    assert!(verify_pinned_file(&root.join("missing"), 0, &digest(b"")).is_err());
 }
 
 #[test]
-fn extraction_rejects_wrong_roots_and_non_files() {
-    let root = temp("unsafe");
-    let wrong = archive("other-root", "model.bin", b"tiny model");
-    let wrong_path = root.join("wrong.tar.bz2");
-    fs::write(&wrong_path, wrong).unwrap();
-    let expected = archive("tiny-root", "model.bin", b"tiny model");
-    let spec = spec(&expected, "http://unused.invalid/model");
-    assert!(extract_archive(&wrong_path, &root.join("stage"), spec).is_err());
-
-    let encoder = BzEncoder::new(Vec::new(), Compression::best());
-    let mut builder = tar::Builder::new(encoder);
-    let mut header = tar::Header::new_gnu();
-    header.set_entry_type(tar::EntryType::Symlink);
-    header.set_size(0);
-    header.set_mode(0o777);
-    header.set_link_name("target").unwrap();
-    header.set_cksum();
-    builder
-        .append_data(&mut header, "tiny-root/link", &[][..])
-        .unwrap();
-    let links = builder.into_inner().unwrap().finish().unwrap();
-    let links_path = root.join("links.tar.bz2");
-    fs::write(&links_path, links).unwrap();
-    assert!(extract_archive(&links_path, &root.join("stage2"), spec).is_err());
-}
-
-#[test]
-fn downloaded_bytes_succeed_cache_and_reject_bad_lengths() {
-    let root = temp("network");
-    let archive_bytes = archive("tiny-root", "model.bin", b"tiny model");
-    let model_spec = spec(&archive_bytes, "http://unused.invalid/model");
-    let app_paths = paths(&root);
-    fs::create_dir_all(app_paths.data_dir.join("downloads")).unwrap();
-    let downloaded = app_paths.data_dir.join("downloads/tiny.tar.bz2");
-    let part = downloaded.with_extension("tar.bz2.part");
-    write_download(
-        &archive_bytes[..],
-        &part,
-        &downloaded,
-        model_spec,
-        ProgressFormat::Json,
-    )
-    .unwrap();
-    verify_archive(&downloaded, model_spec).unwrap();
-    assert_eq!(
-        download_archive(&app_paths, model_spec, ProgressFormat::Human).unwrap(),
-        downloaded
+fn progress_threshold_and_emit_formats_cover_completion() {
+    assert!(!should_report_progress(100, 0, 200));
+    assert!(should_report_progress(200, 100, 200));
+    assert!(should_report_progress(1024 * 1024, 0, 2 * 1024 * 1024));
+    let model = spec(
+        "progress",
+        &[("model", &b"x"[..], "https://unused.invalid")],
     );
-
-    let short_root = temp("short");
-    let short_spec = spec(&archive_bytes, "http://unused.invalid/model");
-    let short_paths = paths(&short_root);
-    fs::create_dir_all(short_paths.data_dir.join("downloads")).unwrap();
-    let target = short_paths.data_dir.join("downloads/tiny.tar.bz2");
-    assert!(
-        write_download(
-            &archive_bytes[..archive_bytes.len() - 1],
-            &target.with_extension("tar.bz2.part"),
-            &target,
-            short_spec,
-            ProgressFormat::Human,
-        )
-        .is_err()
-    );
-
-    let overflow_root = temp("overflow");
-    let expected = &archive_bytes[..archive_bytes.len() - 1];
-    let overflow_spec = spec(expected, "http://unused.invalid/model");
-    let overflow_paths = paths(&overflow_root);
-    fs::create_dir_all(overflow_paths.data_dir.join("downloads")).unwrap();
-    let target = overflow_paths.data_dir.join("downloads/tiny.tar.bz2");
-    assert!(
-        write_download(
-            &archive_bytes[..],
-            &target.with_extension("tar.bz2.part"),
-            &target,
-            overflow_spec,
-            ProgressFormat::Human,
-        )
-        .is_err()
-    );
-
-    let wrong_root = temp("wrong-checksum");
-    let wrong_spec = spec(&archive_bytes, "http://unused.invalid/model");
-    let target = wrong_root.join("tiny.tar.bz2");
-    let mut wrong = archive_bytes.clone();
-    wrong[0] ^= 1;
-    assert!(
-        write_download(
-            &wrong[..],
-            &target.with_extension("tar.bz2.part"),
-            &target,
-            wrong_spec,
-            ProgressFormat::Human,
-        )
-        .is_err()
-    );
-}
-
-#[test]
-fn install_uses_cached_download_and_cleans_stale_work_directories() {
-    let root = temp("cached-install");
-    let archive_bytes = archive("tiny-root", "model.bin", b"tiny model");
-    let spec = spec(&archive_bytes, "http://unused.invalid/model");
-    let paths = paths(&root);
-    let downloads = paths.data_dir.join("downloads");
-    let models = paths.data_dir.join("models");
-    fs::create_dir_all(&downloads).unwrap();
-    fs::create_dir_all(&models).unwrap();
-    fs::write(downloads.join("tiny.tar.bz2"), &archive_bytes).unwrap();
-    fs::create_dir_all(models.join(format!(".tiny.install-{}", std::process::id()))).unwrap();
-    fs::create_dir_all(models.join(format!(".tiny.old-{}", std::process::id()))).unwrap();
-
-    let installed = install(&paths, spec, None, ProgressFormat::Human, None).unwrap();
-    assert_eq!(
-        fs::read(installed.join("model.bin")).unwrap(),
-        b"tiny model"
-    );
-}
-
-#[test]
-fn failed_model_finalization_restores_the_previous_directory() {
-    let root = temp("finalize-rollback");
-    let archive_bytes = archive_with_marker_directory("tiny-root", "model.bin", b"tiny model");
-    let archive_path = root.join("tiny.tar.bz2");
-    fs::write(&archive_path, &archive_bytes).unwrap();
-    let spec = spec(&archive_bytes, "http://unused.invalid/model");
-    let paths = paths(&root);
-    let previous = model_directory(&paths, spec);
-    fs::create_dir_all(&previous).unwrap();
-    fs::write(previous.join("previous"), b"keep me").unwrap();
-
-    let error = install(
-        &paths,
-        spec,
-        Some(&archive_path),
-        ProgressFormat::Human,
-        None,
-    )
-    .unwrap_err();
-    assert!(error.to_string().contains("finalize installed model"));
-    assert_eq!(fs::read(previous.join("previous")).unwrap(), b"keep me");
-    assert!(!previous.join("model.bin").exists());
-
     emit(
         ProgressFormat::Human,
         "downloaded",
-        spec,
-        Some(spec.archive_size),
-        Some(spec.archive_size),
+        model,
+        Some("model"),
+        Some(1),
+        Some(1),
     )
     .unwrap();
-}
-
-#[test]
-fn failed_model_preparation_cleans_staging_and_supplement_parts() {
-    let root = temp("prepare-cleanup");
-    let archive_bytes = archive("tiny-root", "model.bin", b"tiny model");
-    let broken_archive = root.join("broken.tar.bz2");
-    fs::write(&broken_archive, b"not a bzip archive").unwrap();
-    let model_spec = spec(b"not a bzip archive", "http://unused.invalid/model");
-    let app_paths = paths(&root);
-    let error = install(
-        &app_paths,
-        model_spec,
-        Some(&broken_archive),
-        ProgressFormat::Human,
-        None,
-    )
-    .unwrap_err();
-    assert!(
-        format!("{error:#}").contains("prepare verified model installation"),
-        "{error:#}"
-    );
-    assert!(
-        !app_paths
-            .data_dir
-            .join("models")
-            .join(format!(".tiny.install-{}", std::process::id()))
-            .exists()
-    );
-
-    let supplemental_spec = spec_with_supplement(&archive_bytes);
-    let asset = &supplemental_spec.supplemental_files[0];
-    let part = root.join("supplement.part");
-    let target = root.join("supplement");
-    assert!(
-        write_pinned_download(
-            &b"float model extra"[..],
-            &part,
-            &target,
-            asset.size,
-            asset.sha256,
-            supplemental_spec,
-            ProgressFormat::Human,
-        )
-        .is_err()
-    );
-    assert!(!part.exists());
-    assert!(
-        write_pinned_download(
-            &b"wrong model"[..],
-            &part,
-            &target,
-            asset.size,
-            asset.sha256,
-            supplemental_spec,
-            ProgressFormat::Human,
-        )
-        .is_err()
-    );
-    assert!(!part.exists());
-
-    let destination = root.join("installed");
-    fs::create_dir_all(&destination).unwrap();
-    let wrong_source = root.join("wrong-source");
-    fs::write(&wrong_source, b"bad").unwrap();
-    assert!(install_supplemental(&wrong_source, &destination, asset).is_err());
-    assert!(!destination.join("extra/.model.fp32.part").exists());
-}
-
-fn local_download(body: Vec<u8>) -> Option<(String, thread::JoinHandle<()>)> {
-    let listener = match TcpListener::bind("127.0.0.1:0") {
-        Ok(listener) => listener,
-        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => return None,
-        Err(error) => panic!("bind local download fixture: {error}"),
-    };
-    let address = listener.local_addr().unwrap();
-    let server = thread::spawn(move || {
-        let (mut stream, _) = listener.accept().unwrap();
-        let mut request = [0_u8; 2048];
-        let _ = stream.read(&mut request).unwrap();
-        write!(
-            stream,
-            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-            body.len()
-        )
-        .unwrap();
-        stream.write_all(&body).unwrap();
-    });
-    Some((format!("http://{address}/asset"), server))
-}
-
-#[test]
-fn local_http_downloads_are_pinned_before_entering_the_install_cache() {
-    let root = temp("local-downloads");
-    let app_paths = paths(&root);
-    fs::create_dir_all(app_paths.data_dir.join("downloads")).unwrap();
-
-    let archive_bytes = archive("tiny-root", "model.bin", b"tiny model");
-    let Some((archive_url, archive_server)) = local_download(archive_bytes.clone()) else {
-        return;
-    };
-    let archive_spec = spec(&archive_bytes, &archive_url);
-    let downloaded = download_archive(&app_paths, archive_spec, ProgressFormat::Json).unwrap();
-    archive_server.join().unwrap();
-    assert_eq!(fs::read(downloaded).unwrap(), archive_bytes);
-
-    let supplement = b"float model".to_vec();
-    let (supplement_url, supplement_server) = local_download(supplement.clone()).unwrap();
-    let base = spec_with_supplement(&archive_bytes);
-    let supplemental_files: &'static [SupplementalFile] = Box::leak(
-        vec![SupplementalFile {
-            url: leak(supplement_url),
-            ..base.supplemental_files[0]
-        }]
-        .into_boxed_slice(),
-    );
-    let with_supplement = Box::leak(Box::new(ModelSpec {
-        id: "local-supplement",
-        supplemental_files,
-        ..*base
-    }));
-    let downloaded = download_supplemental(
-        &app_paths,
-        with_supplement,
-        &supplemental_files[0],
-        ProgressFormat::Json,
-    )
-    .unwrap();
-    supplement_server.join().unwrap();
-    assert_eq!(fs::read(downloaded).unwrap(), supplement);
-
-    let large = (0..1_200_000)
-        .map(|index| ((index * 31 + 17) % 251) as u8)
-        .collect::<Vec<_>>();
-    let (large_url, large_server) = local_download(large.clone()).unwrap();
-    let large_spec = spec(&large, &large_url);
-    let downloaded = download_archive(&app_paths, large_spec, ProgressFormat::Json).unwrap();
-    large_server.join().unwrap();
-    assert_eq!(fs::read(downloaded).unwrap(), large);
-
-    let (large_supplement_url, large_supplement_server) = local_download(large.clone()).unwrap();
-    let large_asset = Box::leak(Box::new(SupplementalFile {
-        path: "large/model.bin",
-        supersedes: "",
-        url: leak(large_supplement_url),
-        size: large.len() as u64,
-        sha256: leak(digest(&large)),
-    }));
-    let downloaded =
-        download_supplemental(&app_paths, large_spec, large_asset, ProgressFormat::Human).unwrap();
-    large_supplement_server.join().unwrap();
-    assert_eq!(fs::read(downloaded).unwrap(), large);
+    emit(ProgressFormat::Json, "installed", model, None, None, None).unwrap();
 }

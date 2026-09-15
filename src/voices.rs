@@ -1,6 +1,3 @@
-use std::fs::File;
-use std::io::Read;
-
 use anyhow::{Context, Result, bail};
 use serde::Serialize;
 
@@ -8,8 +5,7 @@ use crate::catalog::ModelSpec;
 use crate::config::Config;
 use crate::paths::AppPaths;
 
-pub const SUPERTONIC_PRESET_NAMES: [&str; 10] =
-    ["M1", "M2", "M3", "M4", "M5", "F1", "F2", "F3", "F4", "F5"];
+pub use crate::catalog::SUPERTONIC_VOICE_NAMES as SUPERTONIC_PRESET_NAMES;
 
 /// One selectable voice exposed by the active model.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -88,38 +84,22 @@ fn supertonic_voices(config: &Config, paths: &AppPaths) -> Result<Vec<Voice>> {
     if config.model.voice_style.trim().is_empty() {
         bail!("Supertonic voice style file is not configured");
     }
-    let path = config
+    let directory = config
         .model_directory(paths)
         .join(&config.model.voice_style);
-    let mut header = [0_u8; 48];
-    File::open(&path)
-        .with_context(|| format!("read Supertonic voice styles {}", path.display()))?
-        .read_exact(&mut header)
-        .with_context(|| format!("read Supertonic voice header {}", path.display()))?;
-    let mut dimensions = [0_i64; 6];
-    for (index, bytes) in header.as_chunks::<8>().0.iter().enumerate() {
-        dimensions[index] = i64::from_le_bytes(*bytes);
-    }
-    if dimensions.iter().any(|dimension| *dimension <= 0) || dimensions[0] != dimensions[3] {
+    if !directory.is_dir() {
         bail!(
-            "{} has invalid Supertonic voice dimensions {dimensions:?}",
-            path.display()
+            "Supertonic voice style directory is missing: {}",
+            directory.display()
         );
     }
-    let count = i32::try_from(dimensions[0]).context("Supertonic voice count exceeds i32")?;
-    Ok((0..count)
-        .map(|id| Voice {
-            id,
-            name: fallback_name(config, id),
-        })
-        .collect())
-}
-
-fn fallback_name(config: &Config, id: i32) -> String {
-    crate::catalog::model(&config.model.name)
-        .and_then(|spec| spec.voices.iter().find(|voice| voice.id == id))
-        .map(|voice| voice.name.to_owned())
-        .unwrap_or_else(|| format!("Voice {}", id + 1))
+    for name in SUPERTONIC_PRESET_NAMES {
+        let path = directory.join(format!("{name}.json"));
+        if !path.is_file() {
+            bail!("Supertonic voice style is missing: {}", path.display());
+        }
+    }
+    Ok(supertonic_presets())
 }
 
 #[cfg(test)]

@@ -148,8 +148,8 @@ fn write_compact_assets(root: &Path) -> (Config, AppPaths) {
     config.model.vector_estimator = "vector.onnx".into();
     config.model.vocoder = "vocoder.onnx".into();
     config.model.tts_json = "tts.json".into();
-    config.model.unicode_indexer = "unicode.bin".into();
-    config.model.voice_style = "voice.bin".into();
+    config.model.unicode_indexer = "unicode.json".into();
+    config.model.voice_style = "voice_styles".into();
     config.model.language = "en".into();
     config.model.steps = 3;
     for file in ["duration.onnx", "text.onnx", "vector.onnx", "vocoder.onnx"] {
@@ -161,17 +161,36 @@ fn write_compact_assets(root: &Path) -> (Config, AppPaths) {
     )
     .unwrap();
     fs::write(
-        model.join("unicode.bin"),
-        (0_i32..2048).flat_map(i32::to_le_bytes).collect::<Vec<_>>(),
+        model.join("unicode.json"),
+        serde_json::to_vec(&(0_i32..2048).collect::<Vec<_>>()).unwrap(),
     )
     .unwrap();
-    let mut voice = [2_i64, 2, 2, 2, 1, 2]
-        .into_iter()
-        .flat_map(i64::to_le_bytes)
-        .collect::<Vec<_>>();
-    voice.extend((0..12).flat_map(|value| (value as f32).to_le_bytes()));
-    fs::write(model.join("voice.bin"), voice).unwrap();
+    write_style_directory(&model.join("voice_styles"));
     (config, app_paths)
+}
+
+fn write_style_directory(directory: &Path) {
+    fs::create_dir_all(directory).unwrap();
+    for (index, name) in crate::catalog::SUPERTONIC_VOICE_NAMES.iter().enumerate() {
+        let base = index as f32 * 4.0;
+        let style = serde_json::json!({
+            "style_ttl": {
+                "data": [[[base, base + 1.0], [base + 2.0, base + 3.0]]],
+                "dims": [1, 2, 2],
+                "type": "float32"
+            },
+            "style_dp": {
+                "data": [[[index as f32 * 10.0, index as f32 * 10.0 + 1.0]]],
+                "dims": [1, 1, 2],
+                "type": "float32"
+            }
+        });
+        fs::write(
+            directory.join(format!("{name}.json")),
+            serde_json::to_vec(&style).unwrap(),
+        )
+        .unwrap();
+    }
 }
 
 #[test]
@@ -721,48 +740,120 @@ fn compact_assets_load_and_preserve_multiple_voice_slices() {
     assert_eq!(first.ttl, &[0.0, 1.0, 2.0, 3.0]);
     assert_eq!(second.ttl, &[4.0, 5.0, 6.0, 7.0]);
     assert_eq!(second.dp, &[10.0, 11.0]);
-    assert!(loaded.style.slice(2).is_err());
+    assert_eq!(loaded.style.slice(2).unwrap().ttl, &[8.0, 9.0, 10.0, 11.0]);
+    assert!(loaded.style.slice(10).is_err());
 }
 
 #[test]
-fn compact_asset_parsers_reject_corruption() {
+fn official_json_asset_parsers_reject_corruption() {
     let root = temp("bad-assets");
-    let indexer = root.join("index.bin");
-    fs::write(&indexer, []).unwrap();
+    let indexer = root.join("index.json");
+    fs::write(&indexer, b"[]").unwrap();
     assert!(read_indexer(&indexer).is_err());
-    fs::write(&indexer, [1, 2, 3]).unwrap();
+    fs::write(&indexer, b"not json").unwrap();
     assert!(read_indexer(&indexer).is_err());
-    let voice = root.join("voice.bin");
-    fs::write(&voice, [0; 47]).unwrap();
-    assert!(read_voice_style(&voice).is_err());
-    let mut invalid = [0_i64, 1, 1, 1, 1, 1]
-        .into_iter()
-        .flat_map(i64::to_le_bytes)
-        .collect::<Vec<_>>();
-    invalid.extend(0_f32.to_le_bytes());
-    fs::write(&voice, &invalid).unwrap();
-    assert!(read_voice_style(&voice).is_err());
-    let mut mismatch = [1_i64; 6]
-        .into_iter()
-        .flat_map(i64::to_le_bytes)
-        .collect::<Vec<_>>();
-    mismatch.extend(0_f32.to_le_bytes());
-    fs::write(&voice, &mismatch).unwrap();
-    assert!(read_voice_style(&voice).is_err());
+    fs::write(&indexer, b"[2147483648]").unwrap();
+    assert!(read_indexer(&indexer).is_err());
 
-    let overflow = [i64::MAX, i64::MAX, 2, i64::MAX, i64::MAX, 2]
-        .into_iter()
-        .flat_map(i64::to_le_bytes)
-        .collect::<Vec<_>>();
-    fs::write(&voice, overflow).unwrap();
-    assert!(read_voice_style(&voice).is_err());
+    let voices = root.join("voices");
+    assert!(read_voice_styles(&voices).is_err());
+    write_style_directory(&voices);
+    fs::write(voices.join("M1.json"), b"not json").unwrap();
+    assert!(read_voice_styles(&voices).is_err());
+    write_style_directory(&voices);
+    let invalid = serde_json::json!({
+        "style_ttl": {"data": [[[1.0]]], "dims": [2, 1, 1], "type": "float32"},
+        "style_dp": {"data": [[[1.0]]], "dims": [1, 1, 1], "type": "float32"}
+    });
+    fs::write(
+        voices.join("M1.json"),
+        serde_json::to_vec(&invalid).unwrap(),
+    )
+    .unwrap();
+    assert!(read_voice_styles(&voices).is_err());
+    write_style_directory(&voices);
+    let mismatch = serde_json::json!({
+        "style_ttl": {"data": [[[1.0]]], "dims": [1, 1, 2], "type": "float32"},
+        "style_dp": {"data": [[[1.0]]], "dims": [1, 1, 1], "type": "float32"}
+    });
+    fs::write(
+        voices.join("M1.json"),
+        serde_json::to_vec(&mismatch).unwrap(),
+    )
+    .unwrap();
+    assert!(read_voice_styles(&voices).is_err());
+    write_style_directory(&voices);
+    let wrong_type = serde_json::json!({
+        "style_ttl": {"data": [[[1.0]]], "dims": [1, 1, 1], "type": "float16"},
+        "style_dp": {"data": [[[1.0]]], "dims": [1, 1, 1], "type": "float32"}
+    });
+    fs::write(
+        voices.join("M1.json"),
+        serde_json::to_vec(&wrong_type).unwrap(),
+    )
+    .unwrap();
+    assert!(read_voice_styles(&voices).is_err());
 
-    let duration_overflow = [1_i64, 1, 1, 1, i64::MAX, i64::MAX]
-        .into_iter()
-        .flat_map(i64::to_le_bytes)
-        .collect::<Vec<_>>();
-    fs::write(&voice, duration_overflow).unwrap();
-    assert!(read_voice_style(&voice).is_err());
+    write_style_directory(&voices);
+    let wrong_rank = serde_json::json!({
+        "style_ttl": {"data": [[[1.0]]], "dims": [1, 1], "type": "float32"},
+        "style_dp": {"data": [[[1.0]]], "dims": [1, 1, 1], "type": "float32"}
+    });
+    fs::write(
+        voices.join("M1.json"),
+        serde_json::to_vec(&wrong_rank).unwrap(),
+    )
+    .unwrap();
+    assert!(read_voice_styles(&voices).is_err());
+
+    write_style_directory(&voices);
+    let wrong_plane_count = serde_json::json!({
+        "style_ttl": {"data": [], "dims": [1, 2, 2], "type": "float32"},
+        "style_dp": {"data": [[[1.0]]], "dims": [1, 1, 1], "type": "float32"}
+    });
+    fs::write(
+        voices.join("M1.json"),
+        serde_json::to_vec(&wrong_plane_count).unwrap(),
+    )
+    .unwrap();
+    assert!(read_voice_styles(&voices).is_err());
+
+    write_style_directory(&voices);
+    let wrong_row_count = serde_json::json!({
+        "style_ttl": {"data": [[[1.0, 2.0]]], "dims": [1, 2, 2], "type": "float32"},
+        "style_dp": {"data": [[[1.0]]], "dims": [1, 1, 1], "type": "float32"}
+    });
+    fs::write(
+        voices.join("M1.json"),
+        serde_json::to_vec(&wrong_row_count).unwrap(),
+    )
+    .unwrap();
+    assert!(read_voice_styles(&voices).is_err());
+
+    assert!(
+        flatten_style_component(
+            Path::new("non-finite.json"),
+            "style_ttl",
+            StyleComponentFile {
+                data: vec![vec![vec![f32::NAN]]],
+                dims: vec![1, 1, 1],
+                dtype: "float32".into(),
+            },
+        )
+        .is_err()
+    );
+
+    write_style_directory(&voices);
+    let different_dimensions = serde_json::json!({
+        "style_ttl": {"data": [[[1.0, 2.0]]], "dims": [1, 1, 2], "type": "float32"},
+        "style_dp": {"data": [[[1.0, 2.0]]], "dims": [1, 1, 2], "type": "float32"}
+    });
+    fs::write(
+        voices.join("M2.json"),
+        serde_json::to_vec(&different_dimensions).unwrap(),
+    )
+    .unwrap();
+    assert!(read_voice_styles(&voices).is_err());
 }
 
 #[test]
@@ -1819,7 +1910,7 @@ fn direct_openvino_backend_uses_injected_pipeline_without_native_libraries() {
     .unwrap();
     assert_eq!(openvino.kind(), "openvino");
     assert_eq!(openvino.sample_rate(), 100);
-    assert_eq!(openvino.num_voices(), 2);
+    assert_eq!(openvino.num_voices(), 10);
     assert!(!openvino.generate("hello", 1.0, 1).unwrap().is_empty());
 
     config.backend.device = "cpu".into();
@@ -1865,16 +1956,19 @@ fn installed_runtime_adapters_initialize_and_reject_invalid_graphs() {
         let backend = DirectOpenvinoBackend::create(&config, &app_paths, runtime.clone()).unwrap();
         assert_eq!(backend.kind(), "openvino");
         assert_eq!(backend.sample_rate(), 100);
-        assert_eq!(backend.num_voices(), 2);
+        assert_eq!(backend.num_voices(), 10);
         assert!(backend.generate("hello", 1.0, 0).is_err());
 
         let installed_model = std::env::var_os("HOME")
             .map(PathBuf::from)
-            .map(|home| home.join(".local/share/omaspeak/models/supertonic-3-int8"));
+            .map(|home| home.join(".local/share/omaspeak/models/supertonic-3-openvino"));
         if let Some(installed_model) =
-            installed_model.filter(|path| path.join("voice.bin").is_file())
+            installed_model.filter(|path| path.join("voice_styles/M1.json").is_file())
         {
             let mut real = Config::default();
+            crate::catalog::model("supertonic-3-openvino")
+                .unwrap()
+                .activate(&mut real);
             real.backend.runtime = Runtime::Openvino;
             real.backend.device = "cpu".into();
             real.model.directory = installed_model.display().to_string();

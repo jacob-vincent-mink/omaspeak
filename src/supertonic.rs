@@ -856,7 +856,6 @@ pub fn npu_cache_fingerprint(config: &Config, paths: &AppPaths) -> Result<String
         &config.model.vocoder,
         &config.model.tts_json,
         &config.model.unicode_indexer,
-        &config.model.voice_style,
     ];
     // Cache identity must follow the bytes OpenVINO will compile. File size and
     // timestamps are insufficient: a model can be replaced in place while
@@ -865,9 +864,13 @@ pub fn npu_cache_fingerprint(config: &Config, paths: &AppPaths) -> Result<String
     for name in configured_files {
         fingerprint_contents(&mut hasher, &directory.join(name))?;
     }
+    let voice_directory = directory.join(&config.model.voice_style);
+    for name in crate::catalog::SUPERTONIC_VOICE_NAMES {
+        fingerprint_contents(&mut hasher, &voice_directory.join(format!("{name}.json")))?;
+    }
     if let Some(spec) = crate::catalog::model(&config.model.name) {
         hasher.update(spec.source_revision.as_bytes());
-        for file in spec.required_files {
+        for file in spec.files {
             hasher.update(file.path.as_bytes());
             hasher.update(file.size.to_le_bytes());
             hasher.update(file.sha256.as_bytes());
@@ -1181,7 +1184,17 @@ impl SupertonicFrontend {
             bail!("Supertonic tts.json contains non-positive synthesis dimensions");
         }
         let indexer = read_indexer(&required(&config.model.unicode_indexer)?)?;
-        let style = read_voice_style(&required(&config.model.voice_style)?)?;
+        if config.model.voice_style.trim().is_empty() {
+            bail!("required Supertonic voice style directory is not configured");
+        }
+        let style_directory = directory.join(&config.model.voice_style);
+        if !style_directory.is_dir() {
+            bail!(
+                "required Supertonic voice style directory is missing: {}",
+                style_directory.display()
+            );
+        }
+        let style = read_voice_styles(&style_directory)?;
         let seed = config
             .model
             .options
@@ -1526,62 +1539,125 @@ impl TtsBackend for DirectOpenvinoBackend {
 }
 
 fn read_indexer(path: &Path) -> Result<Vec<i32>> {
-    let bytes = fs::read(path).with_context(|| format!("read {}", path.display()))?;
-    let (chunks, remainder) = bytes.as_chunks::<4>();
-    if chunks.is_empty() || !remainder.is_empty() {
-        bail!("{} is not a non-empty raw i32 indexer", path.display());
+    let values: Vec<i64> = serde_json::from_slice(
+        &fs::read(path).with_context(|| format!("read {}", path.display()))?,
+    )
+    .with_context(|| format!("parse official Supertonic indexer {}", path.display()))?;
+    if values.is_empty() {
+        bail!("{} contains an empty Unicode indexer", path.display());
     }
-    Ok(chunks
-        .iter()
-        .map(|bytes| i32::from_le_bytes(*bytes))
-        .collect())
+    values
+        .into_iter()
+        .map(|value| i32::try_from(value).context("Supertonic Unicode index exceeds i32"))
+        .collect()
 }
 
-fn read_voice_style(path: &Path) -> Result<VoiceStyle> {
-    let bytes = fs::read(path).with_context(|| format!("read {}", path.display()))?;
-    if bytes.len() < 48 {
+#[derive(Deserialize)]
+struct VoiceStyleFile {
+    style_ttl: StyleComponentFile,
+    style_dp: StyleComponentFile,
+}
+
+#[derive(Deserialize)]
+struct StyleComponentFile {
+    data: Vec<Vec<Vec<f32>>>,
+    dims: Vec<usize>,
+    #[serde(rename = "type")]
+    dtype: String,
+}
+
+fn flatten_style_component(
+    path: &Path,
+    component_name: &str,
+    component: StyleComponentFile,
+) -> Result<([i64; 3], Vec<f32>)> {
+    if component.dtype != "float32" || component.dims.len() != 3 {
         bail!(
-            "{} is shorter than the six-i64 voice header",
+            "{} {component_name} must declare three float32 dimensions",
             path.display()
         );
     }
-    let mut dimensions = [0_i64; 6];
-    for (index, bytes) in bytes[..48].as_chunks::<8>().0.iter().enumerate() {
-        dimensions[index] = i64::from_le_bytes(*bytes);
-    }
-    if dimensions.iter().any(|&dimension| dimension <= 0) || dimensions[0] != dimensions[3] {
+    let dimensions = [
+        i64::try_from(component.dims[0])?,
+        i64::try_from(component.dims[1])?,
+        i64::try_from(component.dims[2])?,
+    ];
+    if dimensions.iter().any(|dimension| *dimension <= 0) || dimensions[0] != 1 {
         bail!(
-            "{} has invalid voice dimensions {dimensions:?}",
-            path.display()
+            "{} {component_name} has invalid dimensions {:?}",
+            path.display(),
+            component.dims
         );
     }
-    let ttl_count = dimensions[..3]
-        .iter()
-        .try_fold(1_i64, |count, dimension| count.checked_mul(*dimension))
-        .and_then(|count| usize::try_from(count).ok())
-        .context("voice TTL dimensions overflow")?;
-    let dp_count = dimensions[3..]
-        .iter()
-        .try_fold(1_i64, |count, dimension| count.checked_mul(*dimension))
-        .and_then(|count| usize::try_from(count).ok())
-        .context("voice duration dimensions overflow")?;
-    let (chunks, remainder) = bytes[48..].as_chunks::<4>();
-    if !remainder.is_empty() || chunks.len() != ttl_count + dp_count {
+    if component.data.len() != component.dims[0]
+        || component
+            .data
+            .iter()
+            .any(|plane| plane.len() != component.dims[1])
+        || component
+            .data
+            .iter()
+            .flatten()
+            .any(|row| row.len() != component.dims[2])
+    {
         bail!(
-            "{} payload does not match voice dimensions {dimensions:?}",
-            path.display()
+            "{} {component_name} data does not match its dimensions {:?}",
+            path.display(),
+            component.dims
         );
     }
-    let values = chunks
-        .iter()
-        .map(|bytes| f32::from_le_bytes(*bytes))
+    let values = component
+        .data
+        .into_iter()
+        .flatten()
+        .flatten()
         .collect::<Vec<_>>();
+    if values.iter().any(|value| !value.is_finite()) {
+        bail!(
+            "{} {component_name} contains a non-finite value",
+            path.display()
+        );
+    }
+    Ok((dimensions, values))
+}
+
+fn read_voice_styles(directory: &Path) -> Result<VoiceStyle> {
+    let mut ttl = Vec::new();
+    let mut dp = Vec::new();
+    let mut ttl_dimensions = None;
+    let mut dp_dimensions = None;
+    for name in crate::catalog::SUPERTONIC_VOICE_NAMES {
+        let path = directory.join(format!("{name}.json"));
+        let style: VoiceStyleFile = serde_json::from_slice(
+            &fs::read(&path).with_context(|| format!("read {}", path.display()))?,
+        )
+        .with_context(|| format!("parse official Supertonic voice style {}", path.display()))?;
+        let (style_ttl_dimensions, style_ttl) =
+            flatten_style_component(&path, "style_ttl", style.style_ttl)?;
+        let (style_dp_dimensions, style_dp) =
+            flatten_style_component(&path, "style_dp", style.style_dp)?;
+        if ttl_dimensions.is_some_and(|dimensions| dimensions != style_ttl_dimensions)
+            || dp_dimensions.is_some_and(|dimensions| dimensions != style_dp_dimensions)
+        {
+            bail!(
+                "{} does not match the other voice style dimensions",
+                path.display()
+            );
+        }
+        ttl_dimensions = Some(style_ttl_dimensions);
+        dp_dimensions = Some(style_dp_dimensions);
+        ttl.extend(style_ttl);
+        dp.extend(style_dp);
+    }
+    let ttl_dimensions = ttl_dimensions.context("no Supertonic TTL voice styles were loaded")?;
+    let dp_dimensions = dp_dimensions.context("no Supertonic duration voice styles were loaded")?;
+    let speakers = crate::catalog::SUPERTONIC_VOICE_NAMES.len();
     Ok(VoiceStyle {
-        speakers: dimensions[0] as usize,
-        ttl_shape: [dimensions[0], dimensions[1], dimensions[2]],
-        ttl: values[..ttl_count].to_vec(),
-        dp_shape: [dimensions[3], dimensions[4], dimensions[5]],
-        dp: values[ttl_count..].to_vec(),
+        speakers,
+        ttl_shape: [speakers as i64, ttl_dimensions[1], ttl_dimensions[2]],
+        ttl,
+        dp_shape: [speakers as i64, dp_dimensions[1], dp_dimensions[2]],
+        dp,
     })
 }
 

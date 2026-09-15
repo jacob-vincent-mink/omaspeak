@@ -18,36 +18,30 @@ fn fixture(name: &str) -> (Config, AppPaths) {
 }
 
 #[test]
-fn supertonic_header_provides_stable_voice_ids() {
+fn official_style_directory_provides_stable_voice_ids() {
     let (mut config, paths) = fixture("supertonic");
     config.backend.kind = "supertonic".into();
     config.model.name = "custom-supertonic".into();
     config.model.family = "supertonic".into();
-    config.model.voice_style = "voice.bin".into();
+    config.model.voice_style = "voice_styles".into();
     let directory = config.model_directory(&paths);
-    fs::create_dir_all(&directory).unwrap();
-    let dimensions = [3_i64, 50, 256, 3, 8, 16];
-    fs::write(
-        directory.join("voice.bin"),
-        dimensions
-            .into_iter()
-            .flat_map(i64::to_le_bytes)
-            .collect::<Vec<_>>(),
-    )
-    .unwrap();
+    fs::create_dir_all(directory.join("voice_styles")).unwrap();
+    for name in SUPERTONIC_PRESET_NAMES {
+        fs::write(directory.join(format!("voice_styles/{name}.json")), b"{}").unwrap();
+    }
 
     let voices = installed(&config, &paths).unwrap();
-    assert_eq!(voices.len(), 3);
+    assert_eq!(voices.len(), 10);
     assert_eq!(
         voices[2],
         Voice {
             id: 2,
-            name: "Voice 3".into()
+            name: "M3".into()
         }
     );
-    config.model.voice = 2;
+    config.model.voice = 9;
     validate_selected(&config, &voices).unwrap();
-    config.model.voice = 3;
+    config.model.voice = 10;
     assert!(validate_selected(&config, &voices).is_err());
 }
 
@@ -96,38 +90,24 @@ fn installed_voice_metadata_rejects_unsupported_empty_and_corrupt_models() {
             .contains("not configured")
     );
 
-    config.model.voice_style = "voice.bin".into();
+    config.model.voice_style = "voice_styles".into();
     let directory = config.model_directory(&paths);
     fs::create_dir_all(&directory).unwrap();
-    let invalid_dimensions = [2_i64, 50, 256, 3, 8, 16];
-    fs::write(
-        directory.join("voice.bin"),
-        invalid_dimensions
-            .into_iter()
-            .flat_map(i64::to_le_bytes)
-            .collect::<Vec<_>>(),
-    )
-    .unwrap();
+    fs::create_dir_all(directory.join("voice_styles")).unwrap();
     assert!(
         installed(&config, &paths)
             .unwrap_err()
             .to_string()
-            .contains("invalid Supertonic voice dimensions")
+            .contains("voice style is missing")
     );
-
-    let oversized_dimensions = [i64::MAX, 50, 256, i64::MAX, 8, 16];
-    fs::write(
-        directory.join("voice.bin"),
-        oversized_dimensions
-            .into_iter()
-            .flat_map(i64::to_le_bytes)
-            .collect::<Vec<_>>(),
-    )
-    .unwrap();
+    for name in SUPERTONIC_PRESET_NAMES {
+        fs::write(directory.join(format!("voice_styles/{name}.json")), b"{}").unwrap();
+    }
+    fs::remove_file(directory.join("voice_styles/F5.json")).unwrap();
     assert!(
         installed(&config, &paths)
             .unwrap_err()
             .to_string()
-            .contains("voice count exceeds i32")
+            .contains("F5.json")
     );
 }

@@ -36,17 +36,22 @@ omaspeak setup runtime --runtime openvino --device gpu --dir /opt/intel/openvino
 omaspeak setup runtime --runtime openvino --device npu --dir /opt/intel/openvino --apply
 ```
 
-Direct OpenVINO consumes the official Supertonic graph files. Omaspeak does not
-publish a synthetic multi-file archive. Supply a directory whose files came
-from the official pinned Supertone revision:
+Direct OpenVINO consumes the official archived Supertonic graph and metadata
+files. Normal setup downloads every required file directly from the pinned
+catalog revision after license acceptance:
 
 ```bash
-omaspeak setup model --model supertonic-3-int8 \
-  --archive /path/to/official/files --accept-license OpenRAIL-M
+omaspeak setup model --model supertonic-3-openvino \
+  --accept-license OpenRAIL-M
 ```
 
-For NPU use `supertonic-3-npu`, whose pinned file set includes the official
-FP32 vector estimator. Setup verifies each file hash and compiles the fixed
+The catalog pins `supertone-oss-archive/supertonic-3` revision
+`aafc6e32416a594460b32413efc49d7fe4ce6d46`: four ONNX graphs, `tts.json`,
+`unicode_indexer.json`, and ten voice-style JSON files. `--source PATH` is an
+offline override for a directory with that exact layout and content.
+
+For NPU use `supertonic-3-openvino`, whose file set contains the official
+FP32 graphs. Setup verifies each file hash and compiles the fixed
 shape plan through OpenVINO's standard `CACHE_DIR` mechanism, then starts a
 fresh child and requires every graph to report a cache hit. The prepared latent
 buckets stop at 256 frames (about 17.8 seconds of 44.1 kHz output). Omaspeak

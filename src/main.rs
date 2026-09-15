@@ -158,8 +158,9 @@ enum SetupCommand {
     All {
         #[arg(long, default_value = "supertonic-3-gguf")]
         model: String,
-        #[arg(long)]
-        archive: Option<PathBuf>,
+        /// Use a local pinned file or model directory instead of downloading.
+        #[arg(long, value_name = "PATH")]
+        source: Option<PathBuf>,
         /// Confirm acceptance of the model license required for catalog installation.
         #[arg(long, value_name = "LICENSE")]
         accept_license: Option<String>,
@@ -171,13 +172,13 @@ enum SetupCommand {
         /// List catalog models and their local installation status.
         #[arg(
             long,
-            conflicts_with_all = ["json", "download", "set", "verify", "archive", "no_activate", "accept_license"]
+            conflicts_with_all = ["json", "download", "set", "verify", "source", "no_activate", "accept_license"]
         )]
         list: bool,
         /// Print the complete catalog as JSON.
         #[arg(
             long,
-            conflicts_with_all = ["list", "download", "set", "verify", "archive", "no_activate", "accept_license"]
+            conflicts_with_all = ["list", "download", "set", "verify", "source", "no_activate", "accept_license"]
         )]
         json: bool,
         /// Download, verify, install, and activate a catalog model.
@@ -202,9 +203,9 @@ enum SetupCommand {
             conflicts_with_all = ["list", "json", "download", "set"]
         )]
         verify: Option<String>,
-        /// Install from a local pinned model file, directory, or archive instead of downloading it.
+        /// Install from a local pinned file or model directory instead of downloading it.
         #[arg(long, requires = "download")]
-        archive: Option<PathBuf>,
+        source: Option<PathBuf>,
         /// Confirm acceptance of the model license required for catalog installation.
         #[arg(long, value_name = "LICENSE", requires = "download")]
         accept_license: Option<String>,
@@ -349,7 +350,7 @@ trait ModelSetupOperations {
         &self,
         paths: &AppPaths,
         spec: &omaspeak::catalog::ModelSpec,
-        archive: Option<&Path>,
+        source: Option<&Path>,
         progress: ProgressFormat,
         accepted_license: Option<&str>,
     ) -> Result<PathBuf>;
@@ -378,11 +379,11 @@ impl ModelSetupOperations for BuiltinModels {
         &self,
         paths: &AppPaths,
         spec: &omaspeak::catalog::ModelSpec,
-        archive: Option<&Path>,
+        source: Option<&Path>,
         progress: ProgressFormat,
         accepted_license: Option<&str>,
     ) -> Result<PathBuf> {
-        app_setup::model::install(paths, spec, archive, progress, accepted_license)
+        app_setup::model::install(paths, spec, source, progress, accepted_license)
     }
 
     fn prove(&self, config: &mut Config, paths: &AppPaths) -> Result<()> {
@@ -1710,7 +1711,7 @@ fn setup(command: Option<SetupCommand>, config_path: &Path, paths: &AppPaths) ->
             download,
             set,
             verify,
-            archive,
+            source,
             accept_license,
             no_activate,
             progress_format,
@@ -1720,7 +1721,7 @@ fn setup(command: Option<SetupCommand>, config_path: &Path, paths: &AppPaths) ->
                 && download.is_none()
                 && set.is_none()
                 && verify.is_none()
-                && archive.is_none()
+                && source.is_none()
                 && is_interactive_terminal()
             {
                 guided_model(
@@ -1740,7 +1741,7 @@ fn setup(command: Option<SetupCommand>, config_path: &Path, paths: &AppPaths) ->
                     download,
                     set,
                     verify,
-                    archive,
+                    source,
                     accept_license,
                     no_activate,
                     progress_format,
@@ -1786,7 +1787,7 @@ fn setup(command: Option<SetupCommand>, config_path: &Path, paths: &AppPaths) ->
         }
         SetupCommand::All {
             model,
-            archive,
+            source,
             accept_license,
             progress_format,
         } => setup_all(
@@ -1795,7 +1796,7 @@ fn setup(command: Option<SetupCommand>, config_path: &Path, paths: &AppPaths) ->
             &BuiltinModels,
             &model,
             None,
-            archive.as_deref(),
+            source.as_deref(),
             accept_license.as_deref(),
             progress_format,
             app_setup::menu::install,
@@ -2894,7 +2895,7 @@ fn choose_model(
             let status = if active && installed {
                 "● active"
             } else if active && !model.downloadable {
-                "● active · user-supplied archive required"
+                "● active · user-supplied source required"
             } else if active && model.requires_acceptance {
                 "● active · license acceptance required"
             } else if active {
@@ -2908,12 +2909,7 @@ fn choose_model(
             } else {
                 "· download"
             };
-            let bytes = model.single_file.map_or(model.archive_size, |file| file.size)
-                + model
-                    .supplemental_files
-                    .iter()
-                    .map(|file| file.size)
-                    .sum::<u64>();
+            let bytes = model.download_size();
             let npu = if model.npu_capable {
                 " · Intel NPU compatible"
             } else {
@@ -2941,7 +2937,7 @@ fn choose_model(
                 MenuItem::unavailable(
                     format!("{}  {status}", model.id),
                     if !selectable {
-                        format!("Use `omaspeak setup model --download {} --archive PATH` with a model archive you are licensed to use · {detail}", model.id)
+                        format!("Use `omaspeak setup model --download {} --source PATH` with a pinned model directory you are licensed to use · {detail}", model.id)
                     } else {
                         format!("Incompatible with the selected provider/runtime · {detail}")
                     },
@@ -2972,7 +2968,7 @@ fn setup_all(
     operations: &impl ModelSetupOperations,
     model: &str,
     voice: Option<i32>,
-    archive: Option<&Path>,
+    source: Option<&Path>,
     accepted_license: Option<&str>,
     progress_format: ProgressFormat,
     install_launcher: impl FnOnce(&AppPaths) -> Result<PathBuf>,
@@ -2985,7 +2981,7 @@ fn setup_all(
         operations,
         model,
         voice,
-        archive,
+        source,
         accepted_license,
         progress_format,
         install_launcher,
@@ -3002,7 +2998,7 @@ fn setup_all_with_validator(
     operations: &impl ModelSetupOperations,
     model: &str,
     voice: Option<i32>,
-    archive: Option<&Path>,
+    source: Option<&Path>,
     accepted_license: Option<&str>,
     progress_format: ProgressFormat,
     install_launcher: impl FnOnce(&AppPaths) -> Result<PathBuf>,
@@ -3036,7 +3032,7 @@ fn setup_all_with_validator(
         operations,
         model,
         voice,
-        archive,
+        source,
         accepted_license,
         progress_format,
         install_launcher,
@@ -3055,7 +3051,7 @@ fn setup_all_with_config(
     operations: &impl ModelSetupOperations,
     model: &str,
     voice: Option<i32>,
-    archive: Option<&Path>,
+    source: Option<&Path>,
     accepted_license: Option<&str>,
     progress_format: ProgressFormat,
     install_launcher: impl FnOnce(&AppPaths) -> Result<PathBuf>,
@@ -3071,7 +3067,7 @@ fn setup_all_with_config(
         operations,
         model,
         voice,
-        archive,
+        source,
         accepted_license,
         progress_format,
         install_launcher,
@@ -3091,7 +3087,7 @@ fn setup_all_with_config_and_preparer(
     operations: &impl ModelSetupOperations,
     model: &str,
     voice: Option<i32>,
-    archive: Option<&Path>,
+    source: Option<&Path>,
     accepted_license: Option<&str>,
     progress_format: ProgressFormat,
     install_launcher: impl FnOnce(&AppPaths) -> Result<PathBuf>,
@@ -3114,7 +3110,7 @@ fn setup_all_with_config_and_preparer(
     let mut restart_attempted = false;
     let result = (|| {
         let directory =
-            operations.install(paths, spec, archive, progress_format, accepted_license)?;
+            operations.install(paths, spec, source, progress_format, accepted_license)?;
         activate_model_for_setup(spec, &mut config)?;
         if let Some(voice) = voice {
             config.model.voice = voice;
@@ -3307,7 +3303,7 @@ fn setup_model(
     download: Option<String>,
     set: Option<String>,
     verify: Option<String>,
-    archive: Option<PathBuf>,
+    source: Option<PathBuf>,
     accepted_license: Option<String>,
     no_activate: bool,
     progress_format: ProgressFormat,
@@ -3357,7 +3353,7 @@ fn setup_model(
         let directory = operations.install(
             paths,
             spec,
-            archive.as_deref(),
+            source.as_deref(),
             progress_format,
             accepted_license.as_deref(),
         )?;

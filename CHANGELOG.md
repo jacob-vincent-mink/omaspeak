@@ -7,12 +7,16 @@
   HIP/ROCm.
 - Retained direct OpenVINO for Intel CPU, GPU, and NPU, including setup-time NPU
   cache preparation through OpenVINO's standard cache and a fresh-process
-  cache-hit proof. The validated NPU plan covers output buckets through 256
-  latent frames and uses shorter text chunks.
+  cache-hit proof. Replaced the former converted/mixed graph entries with one
+  device-neutral model containing only the official archived Supertonic 3 ONNX,
+  configuration, Unicode indexer, and ten voice-style JSON files.
+- Replaced archive extraction with per-file pinned downloads and made the model
+  manifest part of the staged atomic installation and subsequent verification.
 - Reworked guided and scriptable setup around exact provider discovery,
   ABI-only provisional setup, and model-backed file-only proof before final
   activation.
 - Removed the obsolete split runtime/plugin configuration and packaging.
+- Removed unused bzip2 and tar dependencies from model setup.
 - Framed NPU child results so native OpenVINO diagnostics cannot corrupt setup
   evidence, and preserved both stdout and stderr in actionable failures.
 - Added the exact PocketFFT-derived FFT notice to release archives and reduced

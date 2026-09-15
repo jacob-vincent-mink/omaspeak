@@ -52,8 +52,9 @@ omaspeak setup runtime --runtime default --device cpu \
 omaspeak setup model --model supertonic-3-gguf --accept-license OpenRAIL-M
 ```
 
-`--model` is the readable alias for `--download` in model setup. Local files
-can be supplied with `--archive`. Installation and activation are separate
+`--model` is the readable alias for `--download` in model setup. `--source`
+accepts a pinned local file for a one-file model or the catalog directory layout
+for a multi-file model. Installation and activation are separate
 commit points: if provider proof fails after verified files are installed,
 Omaspeak retains those files, leaves the active config unchanged, and tells you
 to configure the provider and retry with `omaspeak setup model --set MODEL`.

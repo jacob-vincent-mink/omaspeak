@@ -524,19 +524,14 @@ pub fn print_runtime(config_path: &Path, json: bool) -> Result<()> {
         }
         println!("\nCatalog models:");
         for model in catalog::models() {
-            let download = model.archive_size
-                + model
-                    .supplemental_files
-                    .iter()
-                    .map(|file| file.size)
-                    .sum::<u64>();
+            let download = model.download_size();
             println!(
                 "  {:<24} {:>4} MiB  {}{}",
                 model.id,
                 download.div_ceil(1024 * 1024),
                 model.description,
                 if model.npu_capable {
-                    " [Intel NPU validated]"
+                    " [Intel NPU setup available]"
                 } else {
                     ""
                 }

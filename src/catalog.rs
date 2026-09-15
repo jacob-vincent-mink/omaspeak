@@ -2,6 +2,12 @@ use serde::Serialize;
 
 use crate::config::Config;
 
+pub const SUPERTONIC_VOICE_NAMES: [&str; 10] =
+    ["M1", "M2", "M3", "M4", "M5", "F1", "F2", "F3", "F4", "F5"];
+
+const OFFICIAL_REVISION: &str = "aafc6e32416a594460b32413efc49d7fe4ce6d46";
+const OFFICIAL_SOURCE: &str = "https://huggingface.co/supertone-oss-archive/supertonic-3";
+
 #[derive(Clone, Copy, Debug, Serialize)]
 pub struct BackendSpec {
     pub kind: &'static str,
@@ -9,25 +15,10 @@ pub struct BackendSpec {
     pub description: &'static str,
 }
 
+/// One independently downloadable, content-addressed model file.
 #[derive(Clone, Copy, Debug, Serialize)]
-pub struct RequiredFile {
+pub struct ModelFile {
     pub path: &'static str,
-    pub size: u64,
-    pub sha256: &'static str,
-}
-
-#[derive(Clone, Copy, Debug, Serialize)]
-pub struct SingleFile {
-    pub path: &'static str,
-    pub url: &'static str,
-    pub size: u64,
-    pub sha256: &'static str,
-}
-
-#[derive(Clone, Copy, Debug, Serialize)]
-pub struct SupplementalFile {
-    pub path: &'static str,
-    pub supersedes: &'static str,
     pub url: &'static str,
     pub size: u64,
     pub sha256: &'static str,
@@ -56,29 +47,24 @@ pub struct ModelSpec {
     pub artifact_revision: &'static str,
     pub original_model_source: &'static str,
     pub original_model_revision: &'static str,
-    /// A directly downloadable model artifact. Archive-backed models leave
-    /// this empty and use the archive metadata below.
-    pub single_file: Option<SingleFile>,
     pub license_file: &'static str,
     pub license_sha256: &'static str,
-    pub archive_url: &'static str,
-    pub archive_size: u64,
-    pub archive_sha256: &'static str,
-    pub archive_root: &'static str,
+    /// The single model path passed to providers such as audio.cpp.
+    pub model_file: &'static str,
     pub duration_predictor: &'static str,
     pub text_encoder: &'static str,
     pub vector_estimator: &'static str,
     pub vocoder: &'static str,
     pub tts_json: &'static str,
     pub unicode_indexer: &'static str,
+    /// A single style file or a directory containing named style files.
     pub voice_style: &'static str,
     pub language: &'static str,
     pub steps: i32,
     pub voices: &'static [VoiceSpec],
     pub openvino_capable: bool,
     pub npu_capable: bool,
-    pub required_files: &'static [RequiredFile],
-    pub supplemental_files: &'static [SupplementalFile],
+    pub files: &'static [ModelFile],
 }
 
 const SUPERTONIC_VOICES: &[VoiceSpec] = &[
@@ -103,99 +89,115 @@ const BACKENDS: &[BackendSpec] = &[
     BackendSpec {
         kind: "supertonic",
         name: "Direct OpenVINO",
-        description: "Direct OpenVINO execution of the official Supertonic graphs on Intel hardware",
+        description: "Direct execution of official Supertonic ONNX graphs on Intel hardware",
     },
 ];
 
-const SUPERTONIC_GGUF_FILES: &[RequiredFile] = &[RequiredFile {
+const GGUF_FILES: &[ModelFile] = &[ModelFile {
     path: "supertonic-3-orig.gguf",
+    url: "https://huggingface.co/audio-cpp/audio.cpp-gguf/resolve/09fe073ba154561f4474162e8bd4ab233a848eca/Supertonic-3-GGUF/supertonic-3-orig.gguf?download=true",
     size: 454_072_836,
     sha256: "af814486a0bc9513fb36afabd9b1155ad14fb2c36a107ac6ffe62ea9adafb662",
 }];
 
-const SUPERTONIC_FILES: &[RequiredFile] = &[
-    RequiredFile {
-        path: "duration_predictor.int8.onnx",
+const OPENVINO_FILES: &[ModelFile] = &[
+    ModelFile {
+        path: "onnx/duration_predictor.onnx",
+        url: "https://huggingface.co/supertone-oss-archive/supertonic-3/resolve/aafc6e32416a594460b32413efc49d7fe4ce6d46/onnx/duration_predictor.onnx?download=true",
         size: 3_700_147,
         sha256: "c3eb91414d5ff8a7a239b7fe9e34e7e2bf8a8140d8375ffb14718b1c639325db",
     },
-    RequiredFile {
-        path: "text_encoder.int8.onnx",
+    ModelFile {
+        path: "onnx/text_encoder.onnx",
+        url: "https://huggingface.co/supertone-oss-archive/supertonic-3/resolve/aafc6e32416a594460b32413efc49d7fe4ce6d46/onnx/text_encoder.onnx?download=true",
         size: 36_416_150,
         sha256: "c7befd5ea8c3119769e8a6c1486c4edc6a3bc8365c67621c881bbb774b9902ff",
     },
-    RequiredFile {
-        path: "vector_estimator.int8.onnx",
-        size: 78_400_833,
-        sha256: "20cd86fa5c6effedfda0e7cffe5b0569ca401c440a0c3a1d72bf39286c0db3fd",
-    },
-    RequiredFile {
-        path: "vocoder.int8.onnx",
-        size: 25_991_073,
-        sha256: "e923d60f53f95eb1ce235f1dc33ec56d9c057823c96fa6f8acf98f32b0da6152",
-    },
-    RequiredFile {
-        path: "tts.json",
-        size: 8_253,
-        sha256: "42078d3aef1cd43ab43021f3c54f47d2d75ceb4e75f627f118890128b06a0d09",
-    },
-    RequiredFile {
-        path: "unicode_indexer.bin",
-        size: 262_144,
-        sha256: "8402ca48e5189a8950138580b0fff64db6f072f24ac07cd54ba8b2fbb9883b30",
-    },
-    RequiredFile {
-        path: "voice.bin",
-        size: 517_168,
-        sha256: "67d5209b0ee8ce6c74105ffbe12fe6a7628aea3b4ba2fcb308a4a67938a93ce8",
-    },
-];
-
-const SUPERTONIC_NPU_FILES: &[RequiredFile] = &[
-    RequiredFile {
-        path: "duration_predictor.int8.onnx",
-        size: 3_700_147,
-        sha256: "c3eb91414d5ff8a7a239b7fe9e34e7e2bf8a8140d8375ffb14718b1c639325db",
-    },
-    RequiredFile {
-        path: "text_encoder.int8.onnx",
-        size: 36_416_150,
-        sha256: "c7befd5ea8c3119769e8a6c1486c4edc6a3bc8365c67621c881bbb774b9902ff",
-    },
-    RequiredFile {
-        path: "vector_estimator.onnx",
+    ModelFile {
+        path: "onnx/vector_estimator.onnx",
+        url: "https://huggingface.co/supertone-oss-archive/supertonic-3/resolve/aafc6e32416a594460b32413efc49d7fe4ce6d46/onnx/vector_estimator.onnx?download=true",
         size: 256_534_781,
         sha256: "883ac868ea0275ef0e991524dc64f16b3c0376efd7c320af6b53f5b780d7c61c",
     },
-    RequiredFile {
-        path: "vocoder.int8.onnx",
-        size: 25_991_073,
-        sha256: "e923d60f53f95eb1ce235f1dc33ec56d9c057823c96fa6f8acf98f32b0da6152",
+    ModelFile {
+        path: "onnx/vocoder.onnx",
+        url: "https://huggingface.co/supertone-oss-archive/supertonic-3/resolve/aafc6e32416a594460b32413efc49d7fe4ce6d46/onnx/vocoder.onnx?download=true",
+        size: 101_424_195,
+        sha256: "085de76dd8e8d5836d6ca66826601f615939218f90e519f70ee8a36ed2a4c4ba",
     },
-    RequiredFile {
-        path: "tts.json",
+    ModelFile {
+        path: "onnx/tts.json",
+        url: "https://huggingface.co/supertone-oss-archive/supertonic-3/resolve/aafc6e32416a594460b32413efc49d7fe4ce6d46/onnx/tts.json?download=true",
         size: 8_253,
         sha256: "42078d3aef1cd43ab43021f3c54f47d2d75ceb4e75f627f118890128b06a0d09",
     },
-    RequiredFile {
-        path: "unicode_indexer.bin",
-        size: 262_144,
-        sha256: "8402ca48e5189a8950138580b0fff64db6f072f24ac07cd54ba8b2fbb9883b30",
+    ModelFile {
+        path: "onnx/unicode_indexer.json",
+        url: "https://huggingface.co/supertone-oss-archive/supertonic-3/resolve/aafc6e32416a594460b32413efc49d7fe4ce6d46/onnx/unicode_indexer.json?download=true",
+        size: 277_676,
+        sha256: "9bf7346e43883a81f8645c81224f786d43c5b57f3641f6e7671a7d6c493cb24f",
     },
-    RequiredFile {
-        path: "voice.bin",
-        size: 517_168,
-        sha256: "67d5209b0ee8ce6c74105ffbe12fe6a7628aea3b4ba2fcb308a4a67938a93ce8",
+    ModelFile {
+        path: "voice_styles/M1.json",
+        url: "https://huggingface.co/supertone-oss-archive/supertonic-3/resolve/aafc6e32416a594460b32413efc49d7fe4ce6d46/voice_styles/M1.json?download=true",
+        size: 291_748,
+        sha256: "e35604687f5d23694b8e91593a93eec0e4eca6c0b02bb8ed69139ab2ea6b0a5b",
+    },
+    ModelFile {
+        path: "voice_styles/M2.json",
+        url: "https://huggingface.co/supertone-oss-archive/supertonic-3/resolve/aafc6e32416a594460b32413efc49d7fe4ce6d46/voice_styles/M2.json?download=true",
+        size: 292_055,
+        sha256: "b76cbf62bac707c710cf0ae5aba5e31eea1a6339a9734bfae33ab98499534a50",
+    },
+    ModelFile {
+        path: "voice_styles/M3.json",
+        url: "https://huggingface.co/supertone-oss-archive/supertonic-3/resolve/aafc6e32416a594460b32413efc49d7fe4ce6d46/voice_styles/M3.json?download=true",
+        size: 290_198,
+        sha256: "ea1ac35ccb91b0d7ecad533a2fbd0eec10c91513d8951e3b25fbba99954e159b",
+    },
+    ModelFile {
+        path: "voice_styles/M4.json",
+        url: "https://huggingface.co/supertone-oss-archive/supertonic-3/resolve/aafc6e32416a594460b32413efc49d7fe4ce6d46/voice_styles/M4.json?download=true",
+        size: 291_522,
+        sha256: "ca8eefad4fcd989c9379032ff3e50738adc547eeb5e221b82593a6d7b3bac303",
+    },
+    ModelFile {
+        path: "voice_styles/M5.json",
+        url: "https://huggingface.co/supertone-oss-archive/supertonic-3/resolve/aafc6e32416a594460b32413efc49d7fe4ce6d46/voice_styles/M5.json?download=true",
+        size: 291_469,
+        sha256: "dd22b92740314321f8ae11c5e87f8dd60d060f15dd3a632b5adf77f471f77af2",
+    },
+    ModelFile {
+        path: "voice_styles/F1.json",
+        url: "https://huggingface.co/supertone-oss-archive/supertonic-3/resolve/aafc6e32416a594460b32413efc49d7fe4ce6d46/voice_styles/F1.json?download=true",
+        size: 292_046,
+        sha256: "bbdec6ee00231c2c742ad05483df5334cab3b52fda3ba38e6a07059c4563dbc2",
+    },
+    ModelFile {
+        path: "voice_styles/F2.json",
+        url: "https://huggingface.co/supertone-oss-archive/supertonic-3/resolve/aafc6e32416a594460b32413efc49d7fe4ce6d46/voice_styles/F2.json?download=true",
+        size: 292_423,
+        sha256: "7c722c6a72707b1a77f035d67f0d1351ba187738e06f7683e8c72b1df3477fc6",
+    },
+    ModelFile {
+        path: "voice_styles/F3.json",
+        url: "https://huggingface.co/supertone-oss-archive/supertonic-3/resolve/aafc6e32416a594460b32413efc49d7fe4ce6d46/voice_styles/F3.json?download=true",
+        size: 290_794,
+        sha256: "12f6ef2573baa2defa1128069cb59f203e3ab67c92af77b42df8a0e3a2f7c6ab",
+    },
+    ModelFile {
+        path: "voice_styles/F4.json",
+        url: "https://huggingface.co/supertone-oss-archive/supertonic-3/resolve/aafc6e32416a594460b32413efc49d7fe4ce6d46/voice_styles/F4.json?download=true",
+        size: 291_808,
+        sha256: "c2fa764c1225a76dfc3e2c73e8aa4f70d9ee48793860eb34c295fff01c2e032b",
+    },
+    ModelFile {
+        path: "voice_styles/F5.json",
+        url: "https://huggingface.co/supertone-oss-archive/supertonic-3/resolve/aafc6e32416a594460b32413efc49d7fe4ce6d46/voice_styles/F5.json?download=true",
+        size: 291_479,
+        sha256: "45966e73316415626cf41a7d1c6f3b4c70dbc1ba2bee5c1978ef0ce33244fc8d",
     },
 ];
-
-const SUPERTONIC_NPU_SUPPLEMENTS: &[SupplementalFile] = &[SupplementalFile {
-    path: "vector_estimator.onnx",
-    supersedes: "vector_estimator.int8.onnx",
-    url: "https://huggingface.co/Supertone/supertonic-3/resolve/724fb5abbf5502583fb520898d45929e62f02c0b/onnx/vector_estimator.onnx?download=true",
-    size: 256_534_781,
-    sha256: "883ac868ea0275ef0e991524dc64f16b3c0376efd7c320af6b53f5b780d7c61c",
-}];
 
 const MODELS: &[ModelSpec] = &[
     ModelSpec {
@@ -205,27 +207,18 @@ const MODELS: &[ModelSpec] = &[
         name: "supertonic-3-gguf",
         description: "Supertonic 3 original-precision GGUF for audio.cpp (31 languages)",
         license: "OpenRAIL-M",
-        license_url: "https://huggingface.co/Supertone/supertonic-3/blob/724fb5abbf5502583fb520898d45929e62f02c0b/LICENSE",
+        license_url: "https://huggingface.co/supertone-oss-archive/supertonic-3/blob/aafc6e32416a594460b32413efc49d7fe4ce6d46/LICENSE",
         license_status: "verified model license; conversion supplied by audio.cpp",
         downloadable: true,
         requires_acceptance: true,
         source_revision: "09fe073ba154561f4474162e8bd4ab233a848eca",
         artifact_source: "https://huggingface.co/audio-cpp/audio.cpp-gguf",
         artifact_revision: "09fe073ba154561f4474162e8bd4ab233a848eca",
-        original_model_source: "https://huggingface.co/Supertone/supertonic-3",
-        original_model_revision: "724fb5abbf5502583fb520898d45929e62f02c0b",
-        single_file: Some(SingleFile {
-            path: "supertonic-3-orig.gguf",
-            url: "https://huggingface.co/audio-cpp/audio.cpp-gguf/resolve/09fe073ba154561f4474162e8bd4ab233a848eca/Supertonic-3-GGUF/supertonic-3-orig.gguf?download=true",
-            size: 454_072_836,
-            sha256: "af814486a0bc9513fb36afabd9b1155ad14fb2c36a107ac6ffe62ea9adafb662",
-        }),
+        original_model_source: OFFICIAL_SOURCE,
+        original_model_revision: OFFICIAL_REVISION,
         license_file: "MODEL-LICENSE",
         license_sha256: "0d944a9110fed9a9602d60e0423a272903e7bd21ab060490774efc77c2275e9f",
-        archive_url: "",
-        archive_size: 0,
-        archive_sha256: "",
-        archive_root: "",
+        model_file: "supertonic-3-orig.gguf",
         duration_predictor: "",
         text_encoder: "",
         vector_estimator: "",
@@ -238,95 +231,49 @@ const MODELS: &[ModelSpec] = &[
         voices: SUPERTONIC_VOICES,
         openvino_capable: false,
         npu_capable: false,
-        required_files: SUPERTONIC_GGUF_FILES,
-        supplemental_files: &[],
+        files: GGUF_FILES,
     },
     ModelSpec {
-        id: "supertonic-3-int8",
+        id: "supertonic-3-openvino",
         backend: "supertonic",
         family: "supertonic",
-        name: "supertonic-3-int8",
-        description: "Supertonic 3 multilingual int8 (31 languages; OpenVINO evaluation model)",
+        name: "supertonic-3-openvino",
+        description: "Official Supertonic 3 ONNX graphs for direct OpenVINO (31 languages)",
         license: "OpenRAIL-M",
-        license_url: "https://huggingface.co/Supertone/supertonic-3/blob/724fb5abbf5502583fb520898d45929e62f02c0b/LICENSE",
-        license_status: "verified model license; user-supplied official files required",
-        downloadable: false,
+        license_url: "https://huggingface.co/supertone-oss-archive/supertonic-3/blob/aafc6e32416a594460b32413efc49d7fe4ce6d46/LICENSE",
+        license_status: "official archived model files; explicit acceptance required",
+        downloadable: true,
         requires_acceptance: true,
-        source_revision: "724fb5abbf5502583fb520898d45929e62f02c0b",
-        artifact_source: "https://huggingface.co/Supertone/supertonic-3",
-        artifact_revision: "724fb5abbf5502583fb520898d45929e62f02c0b",
-        original_model_source: "https://huggingface.co/Supertone/supertonic-3",
-        original_model_revision: "724fb5abbf5502583fb520898d45929e62f02c0b",
-        single_file: None,
+        source_revision: OFFICIAL_REVISION,
+        artifact_source: OFFICIAL_SOURCE,
+        artifact_revision: OFFICIAL_REVISION,
+        original_model_source: OFFICIAL_SOURCE,
+        original_model_revision: OFFICIAL_REVISION,
         license_file: "MODEL-LICENSE",
         license_sha256: "0d944a9110fed9a9602d60e0423a272903e7bd21ab060490774efc77c2275e9f",
-        archive_url: "",
-        archive_size: 0,
-        archive_sha256: "",
-        archive_root: "",
-        duration_predictor: "duration_predictor.int8.onnx",
-        text_encoder: "text_encoder.int8.onnx",
-        vector_estimator: "vector_estimator.int8.onnx",
-        vocoder: "vocoder.int8.onnx",
-        tts_json: "tts.json",
-        unicode_indexer: "unicode_indexer.bin",
-        voice_style: "voice.bin",
-        language: "en",
-        steps: 5,
-        voices: SUPERTONIC_VOICES,
-        openvino_capable: true,
-        npu_capable: false,
-        required_files: SUPERTONIC_FILES,
-        supplemental_files: &[],
-    },
-    ModelSpec {
-        id: "supertonic-3-npu",
-        backend: "supertonic",
-        family: "supertonic",
-        name: "supertonic-3-npu",
-        description: "Supertonic 3 for Intel NPU (FP32 vector estimator; 31 languages)",
-        license: "OpenRAIL-M",
-        license_url: "https://huggingface.co/Supertone/supertonic-3/blob/724fb5abbf5502583fb520898d45929e62f02c0b/LICENSE",
-        license_status: "verified model license; user-supplied official files required",
-        downloadable: false,
-        requires_acceptance: true,
-        source_revision: "724fb5abbf5502583fb520898d45929e62f02c0b",
-        artifact_source: "https://huggingface.co/Supertone/supertonic-3",
-        artifact_revision: "724fb5abbf5502583fb520898d45929e62f02c0b",
-        original_model_source: "https://huggingface.co/Supertone/supertonic-3",
-        original_model_revision: "724fb5abbf5502583fb520898d45929e62f02c0b",
-        single_file: None,
-        license_file: "MODEL-LICENSE",
-        license_sha256: "0d944a9110fed9a9602d60e0423a272903e7bd21ab060490774efc77c2275e9f",
-        archive_url: "",
-        archive_size: 0,
-        archive_sha256: "",
-        archive_root: "",
-        duration_predictor: "duration_predictor.int8.onnx",
-        text_encoder: "text_encoder.int8.onnx",
-        vector_estimator: "vector_estimator.onnx",
-        vocoder: "vocoder.int8.onnx",
-        tts_json: "tts.json",
-        unicode_indexer: "unicode_indexer.bin",
-        voice_style: "voice.bin",
+        model_file: "",
+        duration_predictor: "onnx/duration_predictor.onnx",
+        text_encoder: "onnx/text_encoder.onnx",
+        vector_estimator: "onnx/vector_estimator.onnx",
+        vocoder: "onnx/vocoder.onnx",
+        tts_json: "onnx/tts.json",
+        unicode_indexer: "onnx/unicode_indexer.json",
+        voice_style: "voice_styles",
         language: "en",
         steps: 5,
         voices: SUPERTONIC_VOICES,
         openvino_capable: true,
         npu_capable: true,
-        required_files: SUPERTONIC_NPU_FILES,
-        supplemental_files: SUPERTONIC_NPU_SUPPLEMENTS,
+        files: OPENVINO_FILES,
     },
 ];
 
 pub fn backends() -> &'static [BackendSpec] {
     BACKENDS
 }
-
 pub fn models() -> &'static [ModelSpec] {
     MODELS
 }
-
 pub fn model(id: &str) -> Option<&'static ModelSpec> {
     MODELS.iter().find(|item| item.id == id)
 }
@@ -336,14 +283,16 @@ pub fn model_license_text(spec: &ModelSpec) -> Option<&'static str> {
 }
 
 impl ModelSpec {
+    pub fn download_size(self) -> u64 {
+        self.files.iter().map(|file| file.size).sum()
+    }
+
     pub fn activate(self, config: &mut Config) {
         config.backend.kind = self.backend.into();
         config.model.family = self.family.into();
         config.model.name = self.name.into();
         config.model.directory.clear();
-        config.model.file = self
-            .single_file
-            .map_or_else(String::new, |file| file.path.into());
+        config.model.file = self.model_file.into();
         config.model.duration_predictor = self.duration_predictor.into();
         config.model.text_encoder = self.text_encoder.into();
         config.model.vector_estimator = self.vector_estimator.into();

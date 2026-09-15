@@ -811,14 +811,14 @@ fn runtime_commands_report_expected_failures_without_a_model_or_daemon() {
             "model",
             "--download",
             "unknown-model",
-            "--archive",
-            "/definitely/missing/archive.tar.bz2",
+            "--source",
+            "/definitely/missing/model-directory",
         ],
         &[
             "setup",
             "all",
-            "--archive",
-            "/definitely/missing/archive.tar.bz2",
+            "--source",
+            "/definitely/missing/model-directory",
         ],
     ] {
         assert!(!run(&root, args).status.success());
@@ -830,20 +830,15 @@ fn voices_enumerates_installed_supertonic_speakers_and_marks_the_active_one() {
     let root = sandbox();
     let config_path = root.join("config/omaspeak/config.toml");
     let model_dir = root.join("data/omaspeak/models/custom-supertonic");
-    fs::create_dir_all(&model_dir).unwrap();
-    fs::write(
-        model_dir.join("voice.bin"),
-        [2_i64, 1, 1, 2, 1, 1]
-            .into_iter()
-            .flat_map(i64::to_le_bytes)
-            .collect::<Vec<_>>(),
-    )
-    .unwrap();
+    fs::create_dir_all(model_dir.join("voice_styles")).unwrap();
+    for name in omaspeak::catalog::SUPERTONIC_VOICE_NAMES {
+        fs::write(model_dir.join(format!("voice_styles/{name}.json")), b"{}").unwrap();
+    }
     let mut config = Config::default();
     config.backend.kind = "supertonic".into();
     config.model.family = "supertonic".into();
     config.model.name = "custom-supertonic".into();
-    config.model.voice_style = "voice.bin".into();
+    config.model.voice_style = "voice_styles".into();
     config.model.voice = 1;
     config.save(&config_path).unwrap();
 
@@ -853,8 +848,11 @@ fn voices_enumerates_installed_supertonic_speakers_and_marks_the_active_one() {
     assert_eq!(
         voices,
         serde_json::json!([
-            {"id":0,"name":"Voice 1","active":false},
-            {"id":1,"name":"Voice 2","active":true}
+            {"id":0,"name":"M1","active":false}, {"id":1,"name":"M2","active":true},
+            {"id":2,"name":"M3","active":false}, {"id":3,"name":"M4","active":false},
+            {"id":4,"name":"M5","active":false}, {"id":5,"name":"F1","active":false},
+            {"id":6,"name":"F2","active":false}, {"id":7,"name":"F3","active":false},
+            {"id":8,"name":"F4","active":false}, {"id":9,"name":"F5","active":false}
         ])
     );
 }

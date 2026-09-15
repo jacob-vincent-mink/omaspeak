@@ -16,6 +16,13 @@ fn fixture(name: &str) -> (std::path::PathBuf, AppPaths) {
     (root, paths)
 }
 
+fn write_voice_directory(directory: &std::path::Path) {
+    fs::create_dir_all(directory).unwrap();
+    for name in crate::catalog::SUPERTONIC_VOICE_NAMES {
+        fs::write(directory.join(format!("{name}.json")), b"{}").unwrap();
+    }
+}
+
 #[test]
 fn ensure_config_creates_and_reloads_defaults() {
     let (_, paths) = fixture("ensure");
@@ -69,16 +76,9 @@ fn checks_report_malformed_missing_and_custom_states() {
             .any(|check| check.name == "model" && !check.ok)
     );
     fs::create_dir_all(&config.model.directory).unwrap();
-    config.model.voice_style = "voice.bin".into();
+    config.model.voice_style = "voice_styles".into();
     config.model.voice = 0;
-    fs::write(
-        std::path::Path::new(&config.model.directory).join("voice.bin"),
-        [1_i64, 1, 1, 1, 1, 1]
-            .into_iter()
-            .flat_map(i64::to_le_bytes)
-            .collect::<Vec<_>>(),
-    )
-    .unwrap();
+    write_voice_directory(&std::path::Path::new(&config.model.directory).join("voice_styles"));
     config.save(&paths.config_file).unwrap();
     let present = checks(&paths.config_file, &paths);
     assert!(
@@ -138,10 +138,10 @@ fn checks_accept_a_verified_catalog_model_and_initialized_openvino_engine() {
     let Some(home) = std::env::var_os("HOME").map(std::path::PathBuf::from) else {
         return;
     };
-    let source = home.join(".local/share/omaspeak/models/supertonic-3-int8");
+    let source = home.join(".local/share/omaspeak/models/supertonic-3-openvino");
     let openvino = std::path::PathBuf::from("/usr/lib/libopenvino_c.so");
     let plugins = std::path::PathBuf::from("/usr/lib/openvino/plugins.xml");
-    if !source.join("voice.bin").is_file() || !openvino.is_file() || !plugins.is_file() {
+    if !source.join("voice_styles/M1.json").is_file() || !openvino.is_file() || !plugins.is_file() {
         return;
     }
 
@@ -150,10 +150,11 @@ fn checks_accept_a_verified_catalog_model_and_initialized_openvino_engine() {
         .unwrap()
         .join(format!("target/setup-model-test-{}", std::process::id()));
     let _ = fs::remove_dir_all(&paths.data_dir);
-    let spec = crate::catalog::model("supertonic-3-int8").unwrap();
+    let spec = crate::catalog::model("supertonic-3-openvino").unwrap();
     let target = model::model_directory(&paths, spec);
     fs::create_dir_all(&target).unwrap();
-    for required in spec.required_files {
+    for required in spec.files {
+        fs::create_dir_all(target.join(required.path).parent().unwrap()).unwrap();
         fs::copy(source.join(required.path), target.join(required.path)).unwrap();
     }
     fs::write(
@@ -184,16 +185,9 @@ fn injected_checks_cover_healthy_runtime_device_and_engine_boundaries() {
     let (root, paths) = fixture("injected-healthy");
     let model = root.join("custom-model");
     fs::create_dir_all(&model).unwrap();
-    fs::write(
-        model.join("voice.bin"),
-        [1_i64, 1, 1, 1, 1, 1]
-            .into_iter()
-            .flat_map(i64::to_le_bytes)
-            .collect::<Vec<_>>(),
-    )
-    .unwrap();
+    write_voice_directory(&model.join("voice_styles"));
     let mut config = Config::default();
-    crate::catalog::model("supertonic-3-npu")
+    crate::catalog::model("supertonic-3-openvino")
         .unwrap()
         .activate(&mut config);
     config.backend.runtime = crate::backend::Runtime::Openvino;
@@ -256,7 +250,7 @@ fn checks_require_a_valid_compiled_cache_for_an_active_npu() {
     let model = root.join("custom-npu-model");
     fs::create_dir_all(&model).unwrap();
     let mut config = Config::default();
-    crate::catalog::model("supertonic-3-npu")
+    crate::catalog::model("supertonic-3-openvino")
         .unwrap()
         .activate(&mut config);
     config.backend.runtime = crate::backend::Runtime::Openvino;
@@ -271,14 +265,11 @@ fn checks_require_a_valid_compiled_cache_for_an_active_npu() {
         &config.model.tts_json,
         &config.model.unicode_indexer,
     ] {
-        fs::write(model.join(name), name.as_bytes()).unwrap();
+        let path = model.join(name);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, name.as_bytes()).unwrap();
     }
-    let mut voice = [1_i64; 6]
-        .into_iter()
-        .flat_map(i64::to_le_bytes)
-        .collect::<Vec<_>>();
-    voice.extend([0.0_f32, 0.0].into_iter().flat_map(f32::to_le_bytes));
-    fs::write(model.join(&config.model.voice_style), voice).unwrap();
+    write_voice_directory(&model.join(&config.model.voice_style));
     config.save(&paths.config_file).unwrap();
     let ready_probe = |_: &_, _: &_| crate::runtime_inventory::Probe {
         loadable: true,

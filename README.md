@@ -37,12 +37,12 @@ printf '%s' 'Piped input works too.' | omaspeak say --no-play --out /tmp/test.wa
 not install or start a service. `say` starts inference on demand when no daemon
 is running.
 
-The Supertonic 3 GGUF artifact is supplied by the audio.cpp model repository
-at revision `09fe073ba154561f4474162e8bd4ab233a848eca`. Its original model source
-is Supertone's `Supertone/supertonic-3` repository at revision
-`724fb5abbf5502583fb520898d45929e62f02c0b`. Setup verifies the artifact's
-pinned byte size and SHA-256, shows the OpenRAIL-M terms, and records acceptance
-and both provenance identities beside the model.
+The Supertonic 3 GGUF conversion is supplied by the audio.cpp model repository
+at revision `09fe073ba154561f4474162e8bd4ab233a848eca`. The archived upstream
+model source is `supertone-oss-archive/supertonic-3` at revision
+`aafc6e32416a594460b32413efc49d7fe4ce6d46`. Setup verifies every downloaded
+byte, shows the OpenRAIL-M terms, and records the conversion and upstream
+provenance beside the model.
 
 ## Optional native providers
 
@@ -85,18 +85,24 @@ omaspeak setup runtime --runtime openvino --device npu \
   --dir /opt/intel/openvino --apply
 ```
 
-The direct OpenVINO model entries are deliberately user-supplied. Download the
-official files from the pinned Supertone revision into one directory, then let
-Omaspeak verify each file while installing it:
+Install the direct OpenVINO model from the catalog after reviewing its license:
 
 ```bash
-omaspeak setup model --model supertonic-3-int8 \
-  --archive /path/to/official-supertonic-files \
+omaspeak setup model --model supertonic-3-openvino \
   --accept-license OpenRAIL-M
 ```
 
-Use `supertonic-3-npu` for NPU. NPU activation compiles and verifies the fixed
-shape cache during setup; first inference refuses to compile a missing cache.
+Omaspeak downloads the four official ONNX graphs, `tts.json`,
+`unicode_indexer.json`, and all ten official voice-style JSON files directly
+from `supertone-oss-archive/supertonic-3` at revision
+`aafc6e32416a594460b32413efc49d7fe4ce6d46`. Every URL, byte size, and SHA-256
+is pinned. The files and a canonical provenance/license-acceptance manifest are
+published together in one atomic install. Use `--source /path/to/files` only as
+an offline override with the same directory layout and pinned bytes.
+
+Use `supertonic-3-openvino` for Intel CPU, GPU, and NPU. NPU activation compiles
+and verifies the fixed shape cache during setup; first inference refuses to
+compile a missing cache.
 Omaspeak does not claim CUDA, Vulkan, HIP, GPU, or NPU placement until a
 model-backed provider proof succeeds on that machine.
 

@@ -32,7 +32,8 @@ Rust dependency graph with cargo-about.
 
 ## Models
 
-Models are downloaded separately. Supertonic 3 weights and converted GGUF
-artifacts remain under BigScience OpenRAIL-M. Setup requires explicit
-acceptance, verifies pinned bytes, and stores the license and provenance beside
-the installed weights.
+Models are downloaded separately. The direct OpenVINO files come from the
+official `supertone-oss-archive/supertonic-3` archive; the default GGUF is an
+audio.cpp conversion. Both remain under BigScience OpenRAIL-M. Setup requires
+explicit acceptance, verifies each pinned file, and atomically stores the model
+license and canonical provenance manifest beside the installed weights.

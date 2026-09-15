@@ -220,7 +220,7 @@ fn direct_openvino_fallback_keeps_provider_and_model_while_selecting_cpu() {
     let root = temp("openvino-fallback");
     let paths = paths(&root);
     let mut config = Config::default();
-    crate::catalog::model("supertonic-3-npu")
+    crate::catalog::model("supertonic-3-openvino")
         .unwrap()
         .activate(&mut config);
     config.backend.runtime = Runtime::Openvino;
@@ -252,7 +252,7 @@ fn direct_openvino_fallback_keeps_provider_and_model_while_selecting_cpu() {
             ("supertonic".into(), Runtime::Openvino, "cpu".into()),
         ]
     );
-    assert_eq!(loaded.model_name, "supertonic-3-npu");
+    assert_eq!(loaded.model_name, "supertonic-3-openvino");
     assert_eq!(loaded.effective_runtime, Runtime::Openvino);
     assert!(loaded.fallback_used);
 }
