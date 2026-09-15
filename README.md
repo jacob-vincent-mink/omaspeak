@@ -87,7 +87,7 @@ official files from the pinned Supertone revision into one directory, then let
 Omaspeak verify each file while installing it:
 
 ```bash
-omaspeak setup model --download supertonic-3-int8 \
+omaspeak setup model --model supertonic-3-int8 \
   --archive /path/to/official-supertonic-files \
   --accept-license OpenRAIL-M
 ```
@@ -150,7 +150,21 @@ git -C /tmp/audio.cpp submodule update --init --recursive
 
 Copy `libaudiocpp.so.0.1.0` plus `libaudiocpp.so.0` and `libaudiocpp.so`
 SONAME links beside `omaspeak` in `lib/`, or select the build directory through
-setup. See [INSTALL.md](INSTALL.md), [ACCELERATOR_SETUP.md](ACCELERATOR_SETUP.md),
+setup before installing the model:
+
+```bash
+omaspeak setup runtime --runtime default --device cpu \
+  --dir /tmp/audio.cpp-build/bin --apply
+omaspeak setup model --model supertonic-3-gguf --accept-license OpenRAIL-M
+```
+
+Runtime setup records an ABI-only selection when the model is absent. Model
+setup then runs the file-only synthesis proof and saves activation. If model
+installation succeeds but that proof fails, the installed files are retained,
+the active config remains unchanged, and the error gives the exact `--set`
+command to retry after runtime setup.
+
+See [INSTALL.md](INSTALL.md), [ACCELERATOR_SETUP.md](ACCELERATOR_SETUP.md),
 and [RUNTIME.md](RUNTIME.md) for the full contracts.
 
 ## License

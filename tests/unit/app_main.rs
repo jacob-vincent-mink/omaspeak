@@ -86,6 +86,8 @@ struct FakeModelOperations {
     installed: bool,
 }
 
+struct FailingProofOperations;
+
 struct MatrixModelOperations {
     models: &'static [omaspeak::catalog::ModelSpec],
     installed: &'static [&'static str],
@@ -171,6 +173,35 @@ impl ModelSetupOperations for FakeModelOperations {
         _: Option<&str>,
     ) -> Result<PathBuf> {
         Ok(paths.data_dir.join("models").join(spec.id))
+    }
+}
+
+impl ModelSetupOperations for FailingProofOperations {
+    fn models(&self) -> &'static [omaspeak::catalog::ModelSpec] {
+        omaspeak::catalog::models()
+    }
+
+    fn resolve(&self, id: &str) -> Result<&'static omaspeak::catalog::ModelSpec> {
+        model_spec(id)
+    }
+
+    fn verify(&self, _: &AppPaths, _: &omaspeak::catalog::ModelSpec) -> Result<()> {
+        Ok(())
+    }
+
+    fn install(
+        &self,
+        paths: &AppPaths,
+        spec: &omaspeak::catalog::ModelSpec,
+        _: Option<&Path>,
+        _: ProgressFormat,
+        _: Option<&str>,
+    ) -> Result<PathBuf> {
+        Ok(paths.data_dir.join("models").join(spec.id))
+    }
+
+    fn prove(&self, _: &mut Config, _: &AppPaths) -> Result<()> {
+        bail!("injected provider proof failure")
     }
 }
 
@@ -288,10 +319,10 @@ impl SpeechEngine for FakeEngine {
     }
 
     fn backend_kind(&self) -> &'static str {
-        if self.runtime == Runtime::Openvino {
-            "openvino"
-        } else {
-            "fake"
+        match self.runtime {
+            Runtime::Openvino => "openvino",
+            Runtime::Hip => "audiocpp",
+            _ => "fake",
         }
     }
 
@@ -1526,6 +1557,96 @@ fn model_setup_dispatches_list_verify_set_and_install_actions() {
         )
         .is_err()
     );
+}
+
+#[test]
+fn installed_model_with_failed_provider_proof_keeps_active_config_unchanged() {
+    let root = sandbox();
+    let paths = paths(&root);
+    let mut original = Config::default();
+    original.model.name = "previous-model".into();
+    original.save(&paths.config_file).unwrap();
+    let before = fs::read(&paths.config_file).unwrap();
+    let error = setup_model(
+        &paths.config_file,
+        &paths,
+        &FailingProofOperations,
+        false,
+        false,
+        Some("supertonic-3-gguf".into()),
+        None,
+        None,
+        None,
+        Some("OpenRAIL-M".into()),
+        false,
+        ProgressFormat::Human,
+    )
+    .unwrap_err();
+    let message = format!("{error:#}");
+    assert!(message.contains("model installation succeeded"));
+    assert!(message.contains("activation was not saved"));
+    assert!(message.contains("setup model --set supertonic-3-gguf"));
+    assert_eq!(fs::read(&paths.config_file).unwrap(), before);
+}
+
+#[test]
+fn native_provider_helpers_cover_setup_defaults_and_custom_models() {
+    let root = sandbox();
+    let paths = paths(&root);
+    let provider = root.join("libaudiocpp.so");
+    fs::write(&provider, b"fixture").unwrap();
+    let mut config = Config::default();
+    config.backend.library = Some(provider.canonicalize().unwrap());
+
+    let probe = TerminalSetupSelector
+        .probe_runtime(&config, &paths.config_file)
+        .unwrap();
+    assert!(probe.ready);
+    assert!(probe.evidence.versions[0].contains("libaudiocpp"));
+
+    pin_audio_cpp_library(&mut config, &paths.config_file).unwrap();
+    assert!(config.backend.library.as_deref().unwrap().is_file());
+    config.backend.kind = "supertonic".into();
+    config.backend.library = None;
+    pin_audio_cpp_library(&mut config, &paths.config_file).unwrap();
+    assert!(config.backend.library.is_none());
+
+    let audio = omaspeak::catalog::model("supertonic-3-gguf").unwrap();
+    config.backend.runtime = Runtime::Openvino;
+    activate_model_for_setup(audio, &mut config).unwrap();
+    assert_eq!(config.backend.runtime, Runtime::Default);
+    assert_eq!(config.backend.device, "cpu");
+    config.backend.runtime = Runtime::Cuda;
+    activate_model_for_setup(audio, &mut config).unwrap();
+    assert_eq!(config.backend.device, "gpu");
+
+    config.model.name = "custom-gguf".into();
+    config.model.directory = root.to_string_lossy().into_owned();
+    config.model.file = "custom.gguf".into();
+    config.backend.kind = "audiocpp".into();
+    assert!(!active_model_is_installed(&config, &paths));
+    fs::write(root.join("custom.gguf"), b"model").unwrap();
+    assert!(active_model_is_installed(&config, &paths));
+
+    config.backend.kind = "supertonic".into();
+    assert!(!active_model_is_installed(&config, &paths));
+
+    config.backend.runtime = Runtime::Openvino;
+    let openvino = FakeEngine {
+        fail: false,
+        runtime: Runtime::Openvino,
+    };
+    let status = serde_json::to_value(status_payload(&openvino, &config)).unwrap();
+    assert_eq!(status["backend"]["effective"]["provider"], "openvino");
+    assert_eq!(status["backend"]["placement_verified"], true);
+
+    let audiocpp = FakeEngine {
+        fail: false,
+        runtime: Runtime::Hip,
+    };
+    let status = serde_json::to_value(status_payload(&audiocpp, &config)).unwrap();
+    assert_eq!(status["backend"]["effective"]["provider"], "hip");
+    assert_eq!(status["backend"]["placement_verified"], true);
 }
 
 #[test]

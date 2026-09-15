@@ -7,13 +7,9 @@ use crate::{
 };
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
-#[cfg(not(test))]
 use std::io::Read;
-#[cfg(not(test))]
 use std::process::{Child, ExitStatus};
-#[cfg(not(test))]
 use std::thread;
-#[cfg(not(test))]
 use std::time::{Duration, Instant};
 use std::{
     env, fs,
@@ -531,14 +527,13 @@ fn run_npu_preparation_child(
     }
 }
 
-#[cfg(not(test))]
+#[derive(Debug)]
 struct ChildOutput {
     status: ExitStatus,
     stdout: Vec<u8>,
     stderr: Vec<u8>,
 }
 
-#[cfg(not(test))]
 fn collect_child_output(mut child: Child, timeout: Duration) -> Result<ChildOutput> {
     let mut child_stdout = child
         .stdout
@@ -586,7 +581,6 @@ fn collect_child_output(mut child: Child, timeout: Duration) -> Result<ChildOutp
     })
 }
 
-#[cfg(not(test))]
 fn decode_npu_preparation(output: ChildOutput) -> Result<crate::supertonic::NpuNativePreparation> {
     let detail = String::from_utf8_lossy(&output.stderr);
     if !output.status.success() {

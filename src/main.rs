@@ -181,6 +181,7 @@ enum SetupCommand {
         /// Download, verify, install, and activate a catalog model.
         #[arg(
             long,
+            visible_alias = "model",
             value_name = "MODEL",
             conflicts_with_all = ["list", "json", "set", "verify"]
         )]
@@ -3185,11 +3186,20 @@ fn setup_model(
             accepted_license.as_deref(),
         )?;
         if !no_activate {
-            let mut config = app_setup::ensure_config(config_path)?;
-            activate_model_for_setup(spec, &mut config)?;
-            prepare_npu_for_setup(&mut config, paths, progress_format)?;
-            operations.prove(&mut config, paths)?;
-            config.save(config_path)?;
+            let activation = (|| -> Result<()> {
+                let mut config = app_setup::ensure_config(config_path)?;
+                activate_model_for_setup(spec, &mut config)?;
+                prepare_npu_for_setup(&mut config, paths, progress_format)?;
+                operations.prove(&mut config, paths)?;
+                config.save(config_path)
+            })();
+            activation.with_context(|| {
+                format!(
+                    "model installation succeeded at {}, but activation was not saved because its provider proof failed; configure a complete provider with `omaspeak setup runtime`, then run `omaspeak setup model --set {}`",
+                    directory.display(),
+                    spec.id
+                )
+            })?;
         }
         match progress_format {
             ProgressFormat::Human => println!("model ready: {}", directory.display()),

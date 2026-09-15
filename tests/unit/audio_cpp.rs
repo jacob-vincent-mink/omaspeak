@@ -102,6 +102,50 @@ fn bounded_worker_reap_polling_reports_exit_and_timeout() {
 }
 
 #[test]
+fn worker_pipes_round_trip_without_socket_permissions() {
+    let mut child = Command::new("cat")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut input = TimedWriter {
+        writer: child.stdin.take().unwrap(),
+        timeout: Duration::from_secs(1),
+    };
+    let mut output = TimedReader {
+        reader: child.stdout.take().unwrap(),
+        timeout: Duration::from_secs(1),
+    };
+
+    input.write_all(b"worker pipe").unwrap();
+    input.flush().unwrap();
+    let mut echoed = [0_u8; 11];
+    output.read_exact(&mut echoed).unwrap();
+    assert_eq!(&echoed, b"worker pipe");
+
+    drop(input);
+    drop(output);
+    assert!(wait_for_exit(&mut child, Duration::from_secs(1)).unwrap());
+}
+
+#[test]
+fn worker_pipe_deadline_times_out_and_child_exits_normally() {
+    let mut child = Command::new("sleep")
+        .arg("0.05")
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut output = TimedReader {
+        reader: child.stdout.take().unwrap(),
+        timeout: Duration::from_millis(1),
+    };
+    let error = output.read(&mut [0_u8; 1]).unwrap_err();
+    assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+    assert!(wait_for_exit(&mut child, Duration::from_secs(1)).unwrap());
+    assert!(child.wait().unwrap().success());
+}
+
+#[test]
 fn backend_options_require_a_scope_and_reserve_model_owned_request_values() {
     let mut options = BTreeMap::new();
     options.insert("load.config".into(), "small".into());
@@ -114,6 +158,7 @@ fn backend_options_require_a_scope_and_reserve_model_owned_request_values() {
 
     for invalid in [
         "unscoped",
+        "load.",
         "unknown.value",
         "request.language",
         "request.num_inference_steps",
@@ -154,6 +199,7 @@ fn pcm_protocol_round_trips_finite_samples_and_rejects_bad_shapes() {
     assert!(write_pcm(Vec::new(), &[f32::NAN]).is_err());
     assert!(read_pcm([].as_slice(), 0).is_err());
     assert!(read_pcm([].as_slice(), MAX_PCM_SAMPLES + 1).is_err());
+    assert!(read_pcm(f32::NAN.to_le_bytes().as_slice(), 1).is_err());
 
     let sample = 0.0f32;
     assert_eq!(
@@ -164,6 +210,31 @@ fn pcm_protocol_round_trips_finite_samples_and_rejects_bad_shapes() {
     assert!(validate_audio_shape(&sample, 0, SUPERTONIC_SAMPLE_RATE, 1).is_err());
     assert!(validate_audio_shape(&sample, 1, 16_000, 1).is_err());
     assert!(validate_audio_shape(&sample, 1, SUPERTONIC_SAMPLE_RATE, 2).is_err());
+    assert!(validate_audio_shape(&sample, MAX_PCM_SAMPLES + 1, SUPERTONIC_SAMPLE_RATE, 1).is_err());
+}
+
+#[test]
+fn backend_creation_rejects_invalid_shapes_before_native_launch() {
+    let root = temp("create-validation");
+    let paths = AppPaths {
+        config_file: root.join("config.toml"),
+        data_dir: root.join("data"),
+        cache_dir: root.join("cache"),
+        state_dir: root.join("state"),
+        runtime_dir: root.join("run"),
+    };
+    let mut config = Config::default();
+    config.model.family = "other".into();
+    assert!(AudioCppBackend::create(&config, &paths, Runtime::Default).is_err());
+
+    config.model.family = "supertonic".into();
+    config.model.steps = 0;
+    assert!(AudioCppBackend::create(&config, &paths, Runtime::Default).is_err());
+    config.model.steps = 8;
+    assert!(AudioCppBackend::create(&config, &paths, Runtime::Openvino).is_err());
+    for runtime in [Runtime::Cuda, Runtime::Vulkan, Runtime::Hip] {
+        assert!(AudioCppBackend::create(&config, &paths, runtime).is_err());
+    }
 }
 
 #[test]

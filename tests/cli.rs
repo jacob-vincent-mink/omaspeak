@@ -16,6 +16,165 @@ use std::os::unix::fs::PermissionsExt;
 
 static NEXT: AtomicUsize = AtomicUsize::new(0);
 
+#[cfg(target_os = "linux")]
+fn build_audio_cpp_stub(root: &Path) -> PathBuf {
+    let output = root.join("native/libaudiocpp.so.0.1.0");
+    fs::create_dir_all(output.parent().unwrap()).unwrap();
+    let status = Command::new("cc")
+        .args(["-shared", "-fPIC", "-Wl,-soname,libaudiocpp.so.0"])
+        .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/audiocpp_stub.c"))
+        .arg("-o")
+        .arg(&output)
+        .status()
+        .unwrap();
+    assert!(status.success());
+    output
+}
+
+#[cfg(target_os = "linux")]
+fn audio_cpp_stub_config(root: &Path, library: PathBuf, model_file: &str) -> Config {
+    let model_dir = root.join("model");
+    fs::create_dir_all(&model_dir).unwrap();
+    fs::write(model_dir.join(model_file), b"stub model").unwrap();
+    let mut config = Config::default();
+    config.backend.device = "cpu".into();
+    config.backend.library_dirs = vec![library.parent().unwrap().to_owned()];
+    config.backend.library = Some(library);
+    config.model.name = "stub-supertonic".into();
+    config.model.directory = model_dir.to_string_lossy().into_owned();
+    config.model.file = model_file.into();
+    config
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn process_isolated_audio_cpp_provider_synthesizes_without_its_cli() {
+    let root = sandbox();
+    let library = build_audio_cpp_stub(&root);
+    let mut config = audio_cpp_stub_config(&root, library, "supertonic.gguf");
+    config
+        .backend
+        .options
+        .insert("load.stub".into(), "1".into());
+    config
+        .backend
+        .options
+        .insert("session.stub".into(), "1".into());
+    config
+        .backend
+        .options
+        .insert("request.stub".into(), "1".into());
+    config
+        .save(&root.join("config/omaspeak/config.toml"))
+        .unwrap();
+
+    let wav = root.join("spoken.wav");
+    let output = run(
+        &root,
+        &[
+            "say",
+            "coverage proof",
+            "--no-play",
+            "--out",
+            wav.to_str().unwrap(),
+        ],
+    );
+    assert!(output.status.success(), "{}", stderr(&output));
+    let bytes = fs::read(wav).unwrap();
+    assert!(bytes.starts_with(b"RIFF"));
+    assert_eq!(bytes.len(), 44 + 441 * 2);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn process_isolated_audio_cpp_provider_reports_native_failures_without_crashing() {
+    for model_file in [
+        "fail-load.gguf",
+        "null-model.gguf",
+        "unsupported.gguf",
+        "fail-session.gguf",
+        "null-session.gguf",
+    ] {
+        let root = sandbox();
+        let library = build_audio_cpp_stub(&root);
+        audio_cpp_stub_config(&root, library, model_file)
+            .save(&root.join("config/omaspeak/config.toml"))
+            .unwrap();
+        let output = run(&root, &["say", "native failure", "--no-play"]);
+        assert!(!output.status.success(), "{model_file}");
+        assert!(stderr(&output).contains("worker initialization failed"));
+    }
+
+    for (text, extra) in [
+        ("fail-text", None),
+        ("fail-run", None),
+        ("bad-rate", None),
+        ("bad-channels", None),
+        ("empty-audio", None),
+        ("nan-audio", None),
+        ("normal text", Some("3.75")),
+    ] {
+        let root = sandbox();
+        let library = build_audio_cpp_stub(&root);
+        audio_cpp_stub_config(&root, library, "supertonic.gguf")
+            .save(&root.join("config/omaspeak/config.toml"))
+            .unwrap();
+        let mut arguments = vec!["say", text, "--no-play"];
+        if let Some(speed) = extra {
+            arguments.extend(["--speed", speed]);
+        }
+        let output = run(&root, &arguments);
+        assert!(!output.status.success(), "{text}");
+        assert!(stderr(&output).contains("audio.cpp synthesis failed"));
+    }
+
+    for model_file in [
+        "null-request.gguf",
+        "fail-voice.gguf",
+        "fail-steps.gguf",
+        "null-result.gguf",
+        "fail-result.gguf",
+        "null-samples.gguf",
+        "huge-audio.gguf",
+    ] {
+        let root = sandbox();
+        let library = build_audio_cpp_stub(&root);
+        audio_cpp_stub_config(&root, library, model_file)
+            .save(&root.join("config/omaspeak/config.toml"))
+            .unwrap();
+        let output = run(&root, &["say", "native result failure", "--no-play"]);
+        assert!(!output.status.success(), "{model_file}");
+        assert!(stderr(&output).contains("audio.cpp synthesis failed"));
+    }
+
+    for option in ["load.fail", "session.fail"] {
+        let root = sandbox();
+        let library = build_audio_cpp_stub(&root);
+        let mut config = audio_cpp_stub_config(&root, library, "supertonic.gguf");
+        config.backend.options.insert(option.into(), "1".into());
+        config
+            .save(&root.join("config/omaspeak/config.toml"))
+            .unwrap();
+        let output = run(&root, &["say", "option failure", "--no-play"]);
+        assert!(!output.status.success(), "{option}");
+        assert!(stderr(&output).contains("worker initialization failed"));
+    }
+
+    let root = sandbox();
+    let library = build_audio_cpp_stub(&root);
+    let mut config = audio_cpp_stub_config(&root, library, "supertonic.gguf");
+    config
+        .backend
+        .options
+        .insert("request.fail".into(), "1".into());
+    config
+        .save(&root.join("config/omaspeak/config.toml"))
+        .unwrap();
+    let output = run(&root, &["say", "request option failure", "--no-play"]);
+    assert!(!output.status.success());
+    assert!(stderr(&output).contains("audio.cpp synthesis failed"));
+}
+
 #[test]
 fn runtime_apply_rejects_a_non_audiocpp_library_without_writes() {
     let root = sandbox();

@@ -42,7 +42,7 @@ publish a synthetic multi-file archive. Supply a directory whose files came
 from the official pinned Supertone revision:
 
 ```bash
-omaspeak setup model --download supertonic-3-int8 \
+omaspeak setup model --model supertonic-3-int8 \
   --archive /path/to/official/files --accept-license OpenRAIL-M
 ```
 

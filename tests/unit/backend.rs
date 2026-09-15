@@ -14,6 +14,15 @@ fn defaults_to_cpu_runtime() {
 }
 
 #[test]
+fn every_runtime_reports_its_public_capability() {
+    assert_eq!(Runtime::Default.capability(), "cpu");
+    assert_eq!(Runtime::Openvino.capability(), "openvino");
+    assert_eq!(Runtime::Cuda.capability(), "cuda");
+    assert_eq!(Runtime::Vulkan.capability(), "vulkan");
+    assert_eq!(Runtime::Hip.capability(), "hip");
+}
+
+#[test]
 fn validates_runtime_device_matrix() {
     for (runtime, accepted) in [
         (Runtime::Default, &["auto", "CPU"][..]),

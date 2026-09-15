@@ -6,11 +6,10 @@
 
 use std::collections::BTreeMap;
 use std::ffi::{CStr, CString, c_char, c_int, c_void};
-use std::io::{Read, Write};
-use std::os::fd::{FromRawFd, OwnedFd};
-use std::os::unix::net::UnixStream;
+use std::io::{self, Read, Write};
+use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -23,7 +22,6 @@ use crate::config::Config;
 use crate::engine::TtsBackend;
 use crate::paths::AppPaths;
 
-const WORKER_FD: c_int = libc::STDIN_FILENO;
 const AUDIOCPP_ABI_MAJOR: u32 = 0;
 const AUDIOCPP_ABI_MIN_MINOR: u32 = 1;
 const SUPERTONIC_SAMPLE_RATE: i32 = 44_100;
@@ -557,41 +555,136 @@ struct Audio {
 
 struct WorkerClient {
     child: Child,
-    stream: UnixStream,
+    input: Option<TimedWriter>,
+    output: Option<TimedReader>,
     stopped: bool,
+}
+
+struct TimedReader {
+    reader: ChildStdout,
+    timeout: Duration,
+}
+
+impl Read for TimedReader {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        wait_for_io(self.reader.as_raw_fd(), libc::POLLIN, self.timeout).map_err(|error| {
+            io::Error::new(
+                error.kind(),
+                format!("wait for audio.cpp worker IPC read: {error}"),
+            )
+        })?;
+        self.reader.read(buffer).map_err(|error| {
+            io::Error::new(
+                error.kind(),
+                format!("read audio.cpp worker IPC pipe: {error}"),
+            )
+        })
+    }
+}
+
+struct TimedWriter {
+    writer: ChildStdin,
+    timeout: Duration,
+}
+
+impl Write for TimedWriter {
+    fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+        wait_for_io(self.writer.as_raw_fd(), libc::POLLOUT, self.timeout).map_err(|error| {
+            io::Error::new(
+                error.kind(),
+                format!("wait for audio.cpp worker IPC write: {error}"),
+            )
+        })?;
+        self.writer.write(buffer).map_err(|error| {
+            io::Error::new(
+                error.kind(),
+                format!("write audio.cpp worker IPC pipe: {error}"),
+            )
+        })
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.writer.flush()
+    }
+}
+
+fn wait_for_io(fd: c_int, events: libc::c_short, timeout: Duration) -> io::Result<()> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        let milliseconds = if remaining.is_zero() {
+            0
+        } else {
+            i32::try_from(remaining.as_millis().max(1)).unwrap_or(i32::MAX)
+        };
+        let mut descriptor = libc::pollfd {
+            fd,
+            events,
+            revents: 0,
+        };
+        let status = unsafe { libc::poll(&mut descriptor, 1, milliseconds) };
+        if status > 0 {
+            if descriptor.revents & libc::POLLNVAL != 0 {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "audio.cpp worker IPC descriptor is invalid",
+                ));
+            }
+            return Ok(());
+        }
+        if status == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "audio.cpp worker IPC timed out",
+            ));
+        }
+        let error = io::Error::last_os_error();
+        if error.kind() != io::ErrorKind::Interrupted {
+            return Err(error);
+        }
+    }
 }
 
 impl WorkerClient {
     fn launch(spec: &WorkerSpec) -> Result<Self> {
-        let (stream, child_stream) = UnixStream::pair().context("create audio.cpp worker IPC")?;
-        set_worker_timeouts(&stream)?;
         let executable = std::env::current_exe().context("locate Omaspeak executable")?;
         let encoded =
             serde_json::to_string(spec).context("encode audio.cpp worker configuration")?;
-        let child_stream: OwnedFd = child_stream.into();
         let mut command = Command::new(executable);
         command
             .arg("__audiocpp-worker")
             .arg("--spec")
             .arg(encoded)
-            // A Unix socket is full duplex. Passing the private child endpoint
-            // as stdin avoids pre-exec descriptor mutation and remains usable
-            // for both framed requests and responses.
-            .stdin(Stdio::from(child_stream))
-            .stdout(Stdio::null())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
             .stderr(Stdio::null());
         let loader_path = std::env::join_paths(&spec.library_dirs)
             .context("encode audio.cpp worker native library path")?;
         command.env("LD_LIBRARY_PATH", loader_path);
-        let child = command
+        let mut child = command
             .spawn()
             .context("start supervised audio.cpp worker")?;
+        let input = child
+            .stdin
+            .take()
+            .context("audio.cpp worker stdin is unavailable")?;
+        let output = child
+            .stdout
+            .take()
+            .context("audio.cpp worker stdout is unavailable")?;
         let mut client = Self {
             child,
-            stream,
+            input: Some(TimedWriter {
+                writer: input,
+                timeout: WORKER_TIMEOUT,
+            }),
+            output: Some(TimedReader {
+                reader: output,
+                timeout: WORKER_TIMEOUT,
+            }),
             stopped: false,
         };
-        let ready: WorkerResponse = match read_json_frame(&mut client.stream) {
+        let ready: WorkerResponse = match client.read_response() {
             Ok(ready) => ready,
             Err(error) => {
                 let _ = client.stop();
@@ -614,9 +707,26 @@ impl WorkerClient {
         }
     }
 
+    fn write_request(&mut self, request: &WorkerRequest) -> Result<()> {
+        write_json_frame(
+            self.input
+                .as_mut()
+                .context("audio.cpp worker input is closed")?,
+            request,
+        )
+    }
+
+    fn read_response(&mut self) -> Result<WorkerResponse> {
+        read_json_frame(
+            self.output
+                .as_mut()
+                .context("audio.cpp worker output is closed")?,
+        )
+    }
+
     fn request(&mut self, request: &WorkerRequest) -> Result<std::result::Result<Audio, String>> {
-        write_json_frame(&mut self.stream, request)?;
-        let response: WorkerResponse = read_json_frame(&mut self.stream)?;
+        self.write_request(request)?;
+        let response = self.read_response()?;
         match response {
             WorkerResponse::Audio {
                 sample_rate,
@@ -627,7 +737,12 @@ impl WorkerClient {
                 }
                 Ok(Ok(Audio {
                     sample_rate,
-                    pcm: read_pcm(&mut self.stream, samples)?,
+                    pcm: read_pcm(
+                        self.output
+                            .as_mut()
+                            .context("audio.cpp worker output is closed")?,
+                        samples,
+                    )?,
                 }))
             }
             WorkerResponse::Error { message } => Ok(Err(message)),
@@ -640,13 +755,22 @@ impl WorkerClient {
             return Ok(());
         }
         self.stopped = true;
-        let _ = self.stream.set_read_timeout(Some(WORKER_STOP_TIMEOUT));
-        let _ = self.stream.set_write_timeout(Some(WORKER_STOP_TIMEOUT));
-        let _ = write_json_frame(&mut self.stream, &WorkerRequest::Shutdown);
-        let response = read_json_frame::<_, WorkerResponse>(&mut self.stream);
+        if let Some(input) = self.input.as_mut() {
+            input.timeout = WORKER_STOP_TIMEOUT;
+        }
+        if let Some(output) = self.output.as_mut() {
+            output.timeout = WORKER_STOP_TIMEOUT;
+        }
+        let _ = self.write_request(&WorkerRequest::Shutdown);
+        let response = self.read_response();
         if matches!(response, Ok(WorkerResponse::Shutdown))
             && wait_for_exit(&mut self.child, WORKER_STOP_TIMEOUT)?
         {
+            return Ok(());
+        }
+        self.input.take();
+        self.output.take();
+        if wait_for_exit(&mut self.child, WORKER_STOP_TIMEOUT)? {
             return Ok(());
         }
         match self.child.kill() {
@@ -662,21 +786,6 @@ impl WorkerClient {
         }
         Ok(())
     }
-}
-
-fn set_worker_timeouts(stream: &UnixStream) -> Result<()> {
-    for (operation, result) in [
-        ("read", stream.set_read_timeout(Some(WORKER_TIMEOUT))),
-        ("write", stream.set_write_timeout(Some(WORKER_TIMEOUT))),
-    ] {
-        if let Err(error) = result
-            && error.kind() != std::io::ErrorKind::PermissionDenied
-        {
-            return Err(error)
-                .with_context(|| format!("set audio.cpp worker IPC {operation} timeout"));
-        }
-    }
-    Ok(())
 }
 
 impl Drop for WorkerClient {
@@ -807,10 +916,13 @@ impl TtsBackend for AudioCppBackend {
 }
 
 pub fn run_worker(spec_json: &str) -> Result<()> {
-    let mut stream = unsafe { UnixStream::from_raw_fd(WORKER_FD) };
+    let stdin = io::stdin();
+    let stdout = io::stdout();
+    let mut input = stdin.lock();
+    let mut output = stdout.lock();
     if let Err(error) = disable_core_dumps() {
         let _ = write_json_frame(
-            &mut stream,
+            &mut output,
             &WorkerResponse::Error {
                 message: format!("{error:#}"),
             },
@@ -823,7 +935,7 @@ pub fn run_worker(spec_json: &str) -> Result<()> {
         Ok(engine) => engine,
         Err(error) => {
             let _ = write_json_frame(
-                &mut stream,
+                &mut output,
                 &WorkerResponse::Error {
                     message: format!("{error:#}"),
                 },
@@ -832,29 +944,29 @@ pub fn run_worker(spec_json: &str) -> Result<()> {
         }
     };
     write_json_frame(
-        &mut stream,
+        &mut output,
         &WorkerResponse::Ready {
             sample_rate: SUPERTONIC_SAMPLE_RATE,
             voices: SUPERTONIC_VOICES,
         },
     )?;
     loop {
-        let request: WorkerRequest = read_json_frame(&mut stream)?;
+        let request: WorkerRequest = read_json_frame(&mut input)?;
         match request {
             WorkerRequest::Generate { text, speed, voice } => {
                 match engine.generate(&text, speed, voice) {
                     Ok(audio) => {
                         write_json_frame(
-                            &mut stream,
+                            &mut output,
                             &WorkerResponse::Audio {
                                 sample_rate: audio.sample_rate,
                                 samples: audio.pcm.len(),
                             },
                         )?;
-                        write_pcm(&mut stream, &audio.pcm)?;
+                        write_pcm(&mut output, &audio.pcm)?;
                     }
                     Err(error) => write_json_frame(
-                        &mut stream,
+                        &mut output,
                         &WorkerResponse::Error {
                             message: format!("{error:#}"),
                         },
@@ -862,7 +974,7 @@ pub fn run_worker(spec_json: &str) -> Result<()> {
                 }
             }
             WorkerRequest::Shutdown => {
-                write_json_frame(&mut stream, &WorkerResponse::Shutdown)?;
+                write_json_frame(&mut output, &WorkerResponse::Shutdown)?;
                 return Ok(());
             }
         }

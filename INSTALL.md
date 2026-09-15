@@ -44,6 +44,20 @@ provider. Build the release-equivalent CPU provider separately with the pinned
 script shown in the README, or configure a compatible complete audio.cpp or
 OpenVINO installation with `omaspeak setup runtime --dir ...`.
 
+For a source-tree provider, configure its directory before model installation:
+
+```bash
+omaspeak setup runtime --runtime default --device cpu \
+  --dir /tmp/audio.cpp-build/bin --apply
+omaspeak setup model --model supertonic-3-gguf --accept-license OpenRAIL-M
+```
+
+`--model` is the readable alias for `--download` in model setup. Local files
+can be supplied with `--archive`. Installation and activation are separate
+commit points: if provider proof fails after verified files are installed,
+Omaspeak retains those files, leaves the active config unchanged, and tells you
+to configure the provider and retry with `omaspeak setup model --set MODEL`.
+
 ## Files
 
 - Config: `${XDG_CONFIG_HOME:-~/.config}/omaspeak/config.toml`

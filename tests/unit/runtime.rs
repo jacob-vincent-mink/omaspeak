@@ -148,3 +148,100 @@ fn runtime_names_and_provider_families_are_stable() {
     assert!(Runtime::Vulkan.uses_audiocpp());
     assert!(!Runtime::Openvino.uses_audiocpp());
 }
+
+#[test]
+fn remediation_and_openvino_resolution_cover_each_incomplete_shape() {
+    let empty = LibraryPathReport {
+        configured_library_dirs: Vec::new(),
+        environment_library_dirs: Vec::new(),
+        package_library_dirs: Vec::new(),
+        effective_library_dirs: Vec::new(),
+        missing_library_dirs: Vec::new(),
+        audiocpp_library: None,
+        openvino_library: None,
+        openvino_plugins: None,
+        runtime_loadable: BTreeMap::new(),
+        runtime_probe_errors: BTreeMap::new(),
+        runtime_device_accessible: BTreeMap::new(),
+        device_probe_errors: BTreeMap::new(),
+        remediation: Vec::new(),
+    };
+    for runtime in [
+        Runtime::Default,
+        Runtime::Cuda,
+        Runtime::Vulkan,
+        Runtime::Hip,
+        Runtime::Openvino,
+    ] {
+        assert!(!empty.remediation(runtime).unwrap().is_empty());
+    }
+    let mut failed_probe = empty.clone();
+    failed_probe
+        .runtime_probe_errors
+        .insert("cuda", "bad CUDA provider".into());
+    assert!(
+        failed_probe
+            .remediation(Runtime::Cuda)
+            .unwrap()
+            .contains("bad CUDA provider")
+    );
+
+    let root = temp("openvino-errors");
+    let path = root.join("config.toml");
+    let mut config = BackendConfig {
+        kind: "supertonic".into(),
+        runtime: Runtime::Openvino,
+        ..Default::default()
+    };
+    assert!(resolve_openvino_runtime(&config, &path, &empty).is_err());
+    config.openvino_library = Some(root.join("missing-openvino"));
+    assert!(resolve_openvino_runtime(&config, &path, &empty).is_err());
+    let library = root.join("libopenvino_c.so");
+    fs::write(&library, b"fixture").unwrap();
+    config.openvino_library = Some(library);
+    assert!(resolve_openvino_runtime(&config, &path, &empty).is_err());
+    config.openvino_plugins = Some(root.join("missing-plugins.xml"));
+    assert!(resolve_openvino_runtime(&config, &path, &empty).is_err());
+
+    let mut missing = empty;
+    missing.missing_library_dirs.push(root.join("missing"));
+    assert!(resolve_openvino_runtime(&config, &path, &missing).is_err());
+    assert!(augmented_loader_path_with(&missing, None).is_err());
+    assert!(effective_library_path(&missing).is_err());
+}
+
+#[test]
+fn discovery_helpers_cover_nested_openvino_and_empty_paths() {
+    let root = temp("nested-openvino");
+    let bin = root.join("bin");
+    let package = root.join("lib/omaspeak");
+    let nested = package.join("openvino");
+    fs::create_dir_all(&bin).unwrap();
+    fs::create_dir_all(&nested).unwrap();
+    fs::write(package.join("libopenvino_c.so.2"), b"library").unwrap();
+    fs::write(nested.join("plugins.xml"), b"plugins").unwrap();
+
+    let report = inspect_with(
+        &BackendConfig::default(),
+        &root.join("config.toml"),
+        Some(OsString::new()),
+        None,
+        Some(&bin.join("omaspeak")),
+    );
+    assert_eq!(
+        report.package_library_dirs,
+        [package.canonicalize().unwrap()]
+    );
+    assert!(report.openvino_library.is_some());
+    assert!(report.openvino_plugins.is_some());
+    assert!(package_library_dirs(None).is_empty());
+    assert_eq!(resolve(Path::new(""), &root), PathBuf::new());
+    assert!(
+        effective_library_path(&LibraryPathReport {
+            effective_library_dirs: Vec::new(),
+            ..report
+        })
+        .unwrap()
+        .is_none()
+    );
+}

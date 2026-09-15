@@ -130,6 +130,16 @@ fn engine_load_reports_shape_backend_and_runtime_errors() {
     config.backend.runtime = Runtime::Openvino;
     config.backend.device = "cpu".into();
     assert!(Engine::load(&config, &paths).is_err());
+
+    let native = root.join("native");
+    fs::create_dir_all(&native).unwrap();
+    let library = native.join("libopenvino_c.so");
+    let plugins = native.join("plugins.xml");
+    fs::write(&library, b"fixture").unwrap();
+    fs::write(&plugins, b"fixture").unwrap();
+    config.backend.openvino_library = Some(library);
+    config.backend.openvino_plugins = Some(plugins);
+    assert!(Engine::load(&config, &paths).is_err());
 }
 
 #[test]
@@ -192,6 +202,17 @@ fn injected_load_constructs_engine_and_exercises_cpu_fallback() {
     .unwrap();
     assert_eq!(attempts, 2);
     assert!(error.to_string().contains("CPU fallback also failed"));
+
+    config.backend.kind = "unknown".into();
+    let mut attempts = 0;
+    let error = Engine::load_with(&config, &paths, |_, _, _| {
+        attempts += 1;
+        Err(anyhow::anyhow!("unknown provider"))
+    })
+    .err()
+    .unwrap();
+    assert_eq!(attempts, 1);
+    assert_eq!(error.to_string(), "unknown provider");
 }
 
 #[test]
