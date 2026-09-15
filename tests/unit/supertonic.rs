@@ -887,6 +887,36 @@ fn cuda_plugin_selection_uses_device_ordinal_and_v2_provider_options() {
         .is_err()
     );
     assert!(<NativeOrtApi as OrtRuntimeApi>::cuda_provider(&BTreeMap::new()).is_err());
+
+    let session_options = cuda_plugin_session_options(&selection.options);
+    assert_eq!(
+        session_options,
+        [
+            (
+                "CUDAExecutionProvider.cudnn_conv_algo_search".into(),
+                "HEURISTIC".into(),
+            ),
+            ("CUDAExecutionProvider.gpu_mem_limit".into(), "2048".into()),
+        ]
+    );
+    assert!(cuda_plugin_session_options(&BTreeMap::new()).is_empty());
+}
+
+#[test]
+fn cuda_plugin_registration_is_idempotent_but_rejects_runtime_changes() {
+    let first = Path::new("/opt/ort/libonnxruntime_providers_cuda.so");
+    let second = Path::new("/run/ort/libonnxruntime_providers_cuda.so");
+
+    assert!(needs_cuda_plugin_registration(None, first).unwrap());
+    assert!(!needs_cuda_plugin_registration(Some(first), first).unwrap());
+    let error = needs_cuda_plugin_registration(Some(first), second).unwrap_err();
+    assert!(error.to_string().contains(first.to_str().unwrap()));
+    assert!(error.to_string().contains(second.to_str().unwrap()));
+    assert!(error.to_string().contains("restart the process"));
+
+    assert!(is_cuda_plugin_ep(Some("CUDAExecutionProvider")));
+    assert!(!is_cuda_plugin_ep(Some("CPUExecutionProvider")));
+    assert!(!is_cuda_plugin_ep(None));
 }
 
 #[test]
@@ -1089,6 +1119,9 @@ impl OrtRuntimeApi for FakeLowOrtApi {
     }
 
     fn f32_value(shape: Vec<i64>, values: Vec<f32>) -> Result<Self::Value> {
+        if values.iter().any(|value| value.is_infinite()) {
+            bail!("injected tensor conversion failure");
+        }
         Ok((shape, TensorData::F32(values)))
     }
 
@@ -1152,6 +1185,38 @@ fn ort_runtime_adapter_shares_initialization_provider_builder_and_session_semant
         .unwrap()
         .1;
     assert_eq!(values, [5.0, 3.0]);
+
+    let mut graph = OrtGraphAdapter::<FakeLowOrtApi> {
+        session: FakeLowOrtSession {
+            threads: 1,
+            provider_options: 0,
+        },
+        api: PhantomData,
+    };
+    assert!(
+        graph
+            .run(
+                Graph::Vocoder,
+                vec![NamedTensor::f32("signal", [1], vec![f32::INFINITY]).unwrap()],
+                "wav",
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("tensor conversion")
+    );
+
+    probe_onnx_runtime_with_api::<FakeLowOrtApi>(&paths, Runtime::Cuda).unwrap();
+
+    let mut openvino_adapter = OrtRuntimeAdapterImpl::<FakeLowOrtApi> {
+        _api: PhantomData,
+        execution_provider: None,
+        runtime: Runtime::Openvino,
+    };
+    assert!(
+        openvino_adapter
+            .initialize(&paths, Runtime::Openvino, 0, &BTreeMap::new())
+            .is_err()
+    );
 
     let mut adapter = OrtRuntimeAdapterImpl::<FakeLowOrtApi> {
         _api: PhantomData,

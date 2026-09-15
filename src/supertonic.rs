@@ -193,6 +193,29 @@ struct CudaPluginSelection {
 
 pub(crate) const CUDA_PLUGIN_EP: &str = "CUDAExecutionProvider";
 
+fn is_cuda_plugin_ep(name: Option<&str>) -> bool {
+    name == Some(CUDA_PLUGIN_EP)
+}
+
+fn needs_cuda_plugin_registration(previous: Option<&Path>, requested: &Path) -> Result<bool> {
+    match previous {
+        None => Ok(true),
+        Some(previous) if previous == requested => Ok(false),
+        Some(previous) => bail!(
+            "CUDA provider changed from {} to {}; restart the process before changing native runtimes",
+            previous.display(),
+            requested.display()
+        ),
+    }
+}
+
+fn cuda_plugin_session_options(options: &BTreeMap<String, String>) -> Vec<(String, String)> {
+    options
+        .iter()
+        .map(|(key, value)| (format!("{CUDA_PLUGIN_EP}.{key}"), value.clone()))
+        .collect()
+}
+
 struct OrtGraphAdapter<A: OrtRuntimeApi> {
     session: A::Session,
     api: PhantomData<A>,
@@ -364,14 +387,7 @@ impl OrtRuntimeApi for NativeOrtApi {
         let mut registered = PROVIDER
             .lock()
             .map_err(|_| anyhow!("CUDA provider registration lock poisoned"))?;
-        if let Some(previous) = registered.as_ref() {
-            if previous != &exact {
-                bail!(
-                    "CUDA provider changed from {} to {}; restart the process before changing native runtimes",
-                    previous.display(),
-                    exact.display()
-                );
-            }
+        if !needs_cuda_plugin_registration(registered.as_deref(), &exact)? {
             return Ok(());
         }
         Environment::current()?
@@ -384,7 +400,7 @@ impl OrtRuntimeApi for NativeOrtApi {
     fn cuda_available(_path: &Path) -> Result<bool> {
         Ok(Environment::current()?
             .devices()
-            .any(|device| device.ep().ok() == Some(CUDA_PLUGIN_EP)))
+            .any(|device| is_cuda_plugin_ep(device.ep().ok())))
     }
 
     fn cuda_provider(options: &BTreeMap<String, String>) -> Result<Self::ExecutionProvider> {
@@ -418,7 +434,7 @@ impl OrtRuntimeApi for NativeOrtApi {
             let environment = Environment::current()?;
             let device = environment
                 .devices()
-                .filter(|device| device.ep().ok() == Some(CUDA_PLUGIN_EP))
+                .filter(|device| is_cuda_plugin_ep(device.ep().ok()))
                 .nth(provider.device_ordinal as usize)
                 .with_context(|| {
                     format!(
@@ -426,11 +442,7 @@ impl OrtRuntimeApi for NativeOrtApi {
                         provider.device_ordinal
                     )
                 })?;
-            let options = provider
-                .options
-                .iter()
-                .map(|(key, value)| (format!("{CUDA_PLUGIN_EP}.{key}"), value.clone()))
-                .collect::<Vec<_>>();
+            let options = cuda_plugin_session_options(&provider.options);
             builder = builder
                 .with_devices(std::iter::once(device), Some(&options))
                 .map_err(|error| anyhow!("configure CUDA plugin execution provider: {error}"))?;
