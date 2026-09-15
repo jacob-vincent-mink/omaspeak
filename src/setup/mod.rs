@@ -153,11 +153,7 @@ fn checks_with(
         )),
     }
     let runtime_probe = probe_runtime(&config.backend, path);
-    let runtime_name = match config.backend.runtime {
-        crate::backend::Runtime::Default => "default",
-        crate::backend::Runtime::Openvino => "openvino",
-        crate::backend::Runtime::Cuda => "cuda",
-    };
+    let runtime_name = config.backend.runtime.name();
     if runtime_probe.loadable {
         result.push(ok(
             "runtime",
@@ -216,7 +212,11 @@ fn checks_with(
         true => {
             result.push(ok(
                 "engine",
-                "runtime/device probe passed; model inference is not verified by this check",
+                if runtime_probe.evidence.model_inference_verified {
+                    "runtime/device and model inference probe passed"
+                } else {
+                    "provider ABI passed; run model or full setup to prove the selected backend with a model"
+                },
             ));
         }
         false => result.push(fail(
@@ -358,6 +358,8 @@ pub fn print_runtime(config_path: &Path, json: bool) -> Result<()> {
         "runtime_device_matrix": {
             "default": ["auto", "cpu"],
             "cuda": ["auto", "gpu"],
+            "vulkan": ["auto", "gpu"],
+            "hip": ["auto", "gpu"],
             "openvino": ["auto", "cpu", "gpu", "npu"]
         },
         "inventory": inventory,
@@ -417,18 +419,11 @@ pub fn print_runtime(config_path: &Path, json: bool) -> Result<()> {
             display_paths(&locations.effective_library_dirs)
         );
         println!(
-            "Selected ONNX Runtime library: {}",
+            "Selected audio.cpp provider: {}",
             locations
-                .onnxruntime_library
+                .audiocpp_library
                 .as_deref()
                 .map_or_else(|| "not found".to_owned(), |path| path.display().to_string())
-        );
-        println!(
-            "Selected provider library: {}",
-            locations.provider_library.as_deref().map_or_else(
-                || "not selected".to_owned(),
-                |path| path.display().to_string()
-            )
         );
         println!(
             "Selected OpenVINO C library: {}",
@@ -475,6 +470,16 @@ pub fn print_runtime(config_path: &Path, json: bool) -> Result<()> {
                 "runtime not loadable"
             }
         );
+        for runtime in ["vulkan", "hip"] {
+            println!(
+                "  {runtime:<10} auto, gpu                 {}",
+                if locations.runtime_loadable.get(runtime) == Some(&true) {
+                    "provider found; model-backed setup proves capability"
+                } else {
+                    "provider not found"
+                }
+            );
+        }
         println!("\nCatalog models:");
         for model in catalog::models() {
             let download = model.archive_size

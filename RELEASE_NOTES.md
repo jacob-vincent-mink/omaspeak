@@ -1,22 +1,15 @@
-# Omaspeak 0.0.1-rc.2
+# Omaspeak 0.0.1 release candidate
 
-This release candidate provides local Supertonic 3 speech synthesis with ten
-speaker styles, WAV output, on-demand execution, a hot-model daemon, JSON
-benchmarks, and guided setup. Linux x86-64 and aarch64 archives include the
-default CPU runtime. The same executable can use an externally installed direct
-OpenVINO runtime or the standalone ONNX Runtime CUDA Plugin EP selected during
-setup.
+This candidate introduces the greenfield native-provider architecture:
 
-This release candidate supersedes 0.0.1-rc.1 and updates rustls to 0.23.45
-to address RUSTSEC-2026-0285.
+- audio.cpp GGUF synthesis is the default and ships as a small CPU provider;
+- complete external audio.cpp builds support CPU, CUDA, Vulkan, and HIP/ROCm;
+- direct OpenVINO remains available for Intel CPU, GPU, and NPU;
+- guided setup discovers exact provider paths and requires model-backed
+  file-only proof before final activation;
+- NPU model-cache compilation happens during setup;
+- ordinary setup does not install or start a systemd service;
+- the Rust executable has no load-time dependency on an inference runtime.
 
-Intel NPU setup prepares and verifies a fixed 12-graph cache before activation;
-normal synthesis requires those cache hits and will not compile an unprepared
-shape during first use. Successful native compiler diagnostics are captured by
-the setup worker, while actual failures retain their diagnostic detail.
-
-The default model is downloaded only after explicit acceptance of its
-OpenRAIL-M terms. Validated configurations include default and OpenVINO CPU
-plus Intel iGPU and NPU. Accelerator support requires matching external runtime
-libraries. See `INSTALL.md`, `RUNTIME.md`, and the benchmark reports for exact
-setup and evidence.
+Accelerator performance and placement results will be published only after
+fresh proof runs against this architecture.

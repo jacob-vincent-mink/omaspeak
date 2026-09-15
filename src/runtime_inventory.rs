@@ -7,15 +7,17 @@ use crate::{
 };
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
+#[cfg(not(test))]
+use std::io::Read;
+#[cfg(not(test))]
+use std::process::{Child, ExitStatus};
+#[cfg(not(test))]
+use std::thread;
+#[cfg(not(test))]
+use std::time::{Duration, Instant};
 use std::{
-    env,
-    ffi::CStr,
-    fs,
-    io::Read,
+    env, fs,
     path::{Path, PathBuf},
-    process::{Child, Command, ExitStatus, Stdio},
-    thread,
-    time::{Duration, Instant},
 };
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -33,6 +35,8 @@ pub struct Evidence {
     pub provider_registration: bool,
     pub available_devices: Vec<String>,
     pub selected_device: Option<String>,
+    pub provider_path: Option<PathBuf>,
+    pub model_inference_verified: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -92,21 +96,16 @@ pub struct State {
 }
 
 pub fn name(runtime: Runtime) -> &'static str {
-    match runtime {
-        Runtime::Default => "default",
-        Runtime::Openvino => "openvino",
-        Runtime::Cuda => "cuda",
-    }
+    runtime.name()
 }
 
 pub fn inventory(config: &BackendConfig, path: &Path) -> Vec<State> {
     [
         (Runtime::Default, &["auto", "cpu"][..]),
-        (
-            Runtime::Openvino,
-            &["auto", "cpu", "gpu", "npu"][..],
-        ),
         (Runtime::Cuda, &["auto", "gpu"][..]),
+        (Runtime::Vulkan, &["auto", "gpu"][..]),
+        (Runtime::Hip, &["auto", "gpu"][..]),
+        (Runtime::Openvino, &["auto", "cpu", "gpu", "npu"][..]),
     ]
     .into_iter()
     .flat_map(|(runtime, devices)| {
@@ -117,29 +116,32 @@ pub fn inventory(config: &BackendConfig, path: &Path) -> Vec<State> {
     .map(|(runtime, device)| {
         let mut candidate = config.clone();
         if runtime != config.runtime {
-            candidate.provider_library = None;
             candidate.device_id = 0;
         }
         candidate.runtime = runtime;
         candidate.device = device.into();
+        candidate.kind = if runtime.uses_audiocpp() {
+            "audiocpp".into()
+        } else {
+            "supertonic".into()
+        };
         let locations = runtime::discover(&candidate, path);
         let exact = resolve(&candidate, path);
         let anchor = match runtime {
-            Runtime::Default => exact.onnxruntime_library.as_deref(),
             Runtime::Openvino => exact.openvino_library.as_deref(),
-            Runtime::Cuda => exact.provider_library.as_deref(),
+            Runtime::Default | Runtime::Cuda | Runtime::Vulkan | Runtime::Hip => {
+                exact.library.as_deref()
+            }
         };
         let under = |dirs: &[PathBuf]| {
             anchor.is_some_and(|path| dirs.iter().any(|directory| path.starts_with(directory)))
         };
-        let explicitly_configured = match runtime {
-            Runtime::Default => config.onnxruntime_library.is_some(),
-            Runtime::Openvino => config.openvino_library.is_some(),
-            Runtime::Cuda => config.provider_library.is_some(),
+        let explicitly_configured = if runtime == Runtime::Openvino {
+            config.openvino_library.is_some()
+        } else {
+            config.library.is_some()
         };
         let explicit_environment = [
-            runtime::ONNXRUNTIME_LIBRARY_ENV,
-            runtime::PROVIDER_LIBRARY_ENV,
             runtime::OPENVINO_LIBRARY_ENV,
         ]
         .iter()
@@ -164,13 +166,13 @@ pub fn inventory(config: &BackendConfig, path: &Path) -> Vec<State> {
             anchor.is_some(),
         );
         let required = match runtime {
-            Runtime::Default => "ONNX Runtime 1.30.0 libonnxruntime.so",
+            Runtime::Default => "the packaged or an external complete audio.cpp CPU provider",
             Runtime::Openvino => {
                 "Intel OpenVINO libopenvino_c.so, plugins.xml and device plugins"
             }
-            Runtime::Cuda => {
-                "the CUDA Plugin EP libonnxruntime_providers_cuda.so and its NVIDIA vendor libraries; Omaspeak supplies the ONNX Runtime 1.30.0 core"
-            }
+            Runtime::Cuda => "a complete CUDA-enabled audio.cpp provider and CUDA libraries",
+            Runtime::Vulkan => "a complete Vulkan-enabled audio.cpp provider and Vulkan loader",
+            Runtime::Hip => "a complete HIP-enabled audio.cpp provider and ROCm libraries",
         };
         State {
             runtime: name(runtime),
@@ -221,29 +223,22 @@ fn resolve_with_locations(
     locations: runtime::LibraryPathReport,
 ) -> BackendConfig {
     let mut exact = config.clone();
-    exact.onnxruntime_library = locations.onnxruntime_library;
-    exact.provider_library = locations.provider_library;
+    exact.library = locations.audiocpp_library;
     exact.openvino_library = locations.openvino_library;
     exact.openvino_plugins = locations.openvino_plugins;
     match config.runtime {
-        Runtime::Default => {
-            exact.provider_library = None;
-            exact.openvino_library = None;
-            exact.openvino_plugins = None;
-        }
-        Runtime::Cuda => {
+        Runtime::Default | Runtime::Cuda | Runtime::Vulkan | Runtime::Hip => {
             exact.openvino_library = None;
             exact.openvino_plugins = None;
         }
         Runtime::Openvino => {
-            exact.onnxruntime_library = None;
-            exact.provider_library = None;
+            exact.library = None;
         }
     }
     // Carry the application-specific runtime overlay into the staged candidate.
     // The isolated child replaces LD_LIBRARY_PATH, so omitting these directories
-    // can make a valid split runtime (for example ORT/provider in one directory
-    // and CUDA vendor dependencies in another) fail only during setup. Ambient
+    // can make a complete provider plus adjacent vendor dependency directory
+    // fail only during setup. Ambient
     // LD_LIBRARY_PATH is deliberately absent from both of these collections.
     exact.library_dirs = locations.configured_library_dirs;
     for directory in locations.environment_library_dirs {
@@ -266,11 +261,9 @@ fn resolve_with_locations(
 
 fn required(config: &BackendConfig) -> Vec<Option<&Path>> {
     match config.runtime {
-        Runtime::Default => vec![config.onnxruntime_library.as_deref()],
-        Runtime::Cuda => vec![
-            config.onnxruntime_library.as_deref(),
-            config.provider_library.as_deref(),
-        ],
+        Runtime::Default | Runtime::Cuda | Runtime::Vulkan | Runtime::Hip => {
+            vec![config.library.as_deref()]
+        }
         Runtime::Openvino => vec![
             config.openvino_library.as_deref(),
             config.openvino_plugins.as_deref(),
@@ -283,24 +276,10 @@ pub fn probe(config: &BackendConfig, path: &Path) -> Probe {
     let attempt = (|| -> Result<Probe> {
         exact.validate_shape()?;
         let missing = match exact.runtime {
-            Runtime::Default
-                if !exact
-                    .onnxruntime_library
-                    .as_deref()
-                    .is_some_and(Path::is_file) =>
+            Runtime::Default | Runtime::Cuda | Runtime::Vulkan | Runtime::Hip
+                if !exact.library.as_deref().is_some_and(Path::is_file) =>
             {
-                Some("ONNX Runtime 1.30.0 core library")
-            }
-            Runtime::Cuda
-                if !exact
-                    .onnxruntime_library
-                    .as_deref()
-                    .is_some_and(Path::is_file) =>
-            {
-                Some("packaged ONNX Runtime 1.30.0 core library")
-            }
-            Runtime::Cuda if !exact.provider_library.as_deref().is_some_and(Path::is_file) => {
-                Some("CUDA Plugin EP libonnxruntime_providers_cuda.so")
+                Some("complete audio.cpp provider library")
             }
             Runtime::Openvino if !exact.openvino_library.as_deref().is_some_and(Path::is_file) => {
                 Some("OpenVINO C library")
@@ -333,13 +312,12 @@ fn isolated(config: &BackendConfig) -> Result<Probe> {
     #[cfg(not(test))]
     {
         let executable = env::current_exe()?;
-        let mut child = Command::new(executable)
+        let mut child = std::process::Command::new(executable)
             .arg("__inventory-probe")
             .arg(serde_json::to_string(config)?)
             .env("LD_LIBRARY_PATH", env::join_paths(&config.library_dirs)?)
-            .env("ORT_DISABLE_TELEMETRY", "1")
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
             .spawn()
             .context("start isolated native probe")?;
         let start = Instant::now();
@@ -540,13 +518,12 @@ fn run_npu_preparation_child(
     {
         let executable = env::current_exe().context("locate Omaspeak executable")?;
         let loader_path = env::join_paths(&request.config.backend.library_dirs)?;
-        let child = Command::new(executable)
+        let child = std::process::Command::new(executable)
             .arg("__npu-precompile")
             .arg(serde_json::to_string(request)?)
             .env("LD_LIBRARY_PATH", loader_path)
-            .env("ORT_DISABLE_TELEMETRY", "1")
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
             .spawn()
             .context("start isolated NPU cache preparation")?;
         let output = collect_child_output(child, Duration::from_secs(30 * 60))?;
@@ -554,12 +531,14 @@ fn run_npu_preparation_child(
     }
 }
 
+#[cfg(not(test))]
 struct ChildOutput {
     status: ExitStatus,
     stdout: Vec<u8>,
     stderr: Vec<u8>,
 }
 
+#[cfg(not(test))]
 fn collect_child_output(mut child: Child, timeout: Duration) -> Result<ChildOutput> {
     let mut child_stdout = child
         .stdout
@@ -607,6 +586,7 @@ fn collect_child_output(mut child: Child, timeout: Duration) -> Result<ChildOutp
     })
 }
 
+#[cfg(not(test))]
 fn decode_npu_preparation(output: ChildOutput) -> Result<crate::supertonic::NpuNativePreparation> {
     let detail = String::from_utf8_lossy(&output.stderr);
     if !output.status.success() {
@@ -629,58 +609,14 @@ fn decode_npu_preparation(output: ChildOutput) -> Result<crate::supertonic::NpuN
     })
 }
 
-/// Verify the exact core before the ORT crate initializes its process-global loader.
-pub(crate) fn initialize_ort(path: &Path) -> Result<()> {
-    static CORE: std::sync::Mutex<Option<PathBuf>> = std::sync::Mutex::new(None);
-    let exact = path.canonicalize().context("resolve ONNX Runtime core")?;
-    let mut loaded = CORE
-        .lock()
-        .map_err(|_| anyhow::anyhow!("ORT initialization lock poisoned"))?;
-    if let Some(previous) = loaded.as_ref() {
-        if previous != &exact {
-            bail!(
-                "ONNX Runtime core changed from {} to {}; restart the process before changing native runtimes",
-                previous.display(),
-                exact.display()
-            );
-        }
-        return Ok(());
-    }
-    verify_ort_version(&exact)?;
-    ort::init_from(&exact)?.with_name("omaspeak").commit();
-    *loaded = Some(exact);
-    Ok(())
-}
-
-pub(crate) fn verify_ort_version(path: &Path) -> Result<()> {
-    #[repr(C)]
-    struct ApiBase {
-        get_api: *const std::ffi::c_void,
-        version: unsafe extern "C" fn() -> *const std::ffi::c_char,
-    }
-    unsafe {
-        let library = libloading::Library::new(path)
-            .with_context(|| format!("load ONNX Runtime {}", path.display()))?;
-        let get: libloading::Symbol<unsafe extern "C" fn() -> *const ApiBase> =
-            library.get(b"OrtGetApiBase\0")?;
-        let base = get();
-        if base.is_null() {
-            bail!("ORT API base is null");
-        }
-        let version = ((*base).version)();
-        if version.is_null() {
-            bail!("ORT version is null");
-        }
-        let version = CStr::from_ptr(version).to_str()?;
-        if version != "1.30.0" {
-            bail!("ONNX Runtime version mismatch: expected 1.30.0, loaded {version}");
-        }
-    }
-    Ok(())
-}
-
 pub fn child(config: &BackendConfig) -> Probe {
-    child_with(config, native_openvino_probe, native_ort_probe)
+    child_with(config, native_openvino_probe, |config| {
+        let full = Config {
+            backend: config.clone(),
+            ..Default::default()
+        };
+        crate::audio_cpp::probe_provider(&full, Path::new("/nonexistent/config.toml"))
+    })
 }
 
 fn native_openvino_probe(paths: runtime::OpenvinoRuntimePaths) -> Result<(String, Vec<String>)> {
@@ -695,41 +631,10 @@ fn native_openvino_probe(paths: runtime::OpenvinoRuntimePaths) -> Result<(String
     ))
 }
 
-fn native_ort_probe(ort_path: &Path, provider: Option<&Path>) -> Result<Vec<(u32, u32, String)>> {
-    verify_ort_version(ort_path)?;
-    ort::init_from(ort_path)?
-        .with_name("omaspeak-probe")
-        .commit();
-    let Some(provider) = provider else {
-        return Ok(Vec::new());
-    };
-    let environment = ort::environment::Environment::current()?;
-    let _registration = environment
-        .register_ep_library(crate::supertonic::CUDA_PLUGIN_EP, provider)
-        .context("register selected CUDA provider library")?;
-    Ok(environment
-        .devices()
-        .filter(|device| device.ep().ok() == Some(crate::supertonic::CUDA_PLUGIN_EP))
-        .enumerate()
-        .map(|(ordinal, device)| {
-            let hardware = device.hardware_device();
-            (
-                ordinal as u32,
-                hardware.id(),
-                format!(
-                    "CUDA ordinal {ordinal}, hardware {} ({:?})",
-                    hardware.id(),
-                    hardware.ty()
-                ),
-            )
-        })
-        .collect())
-}
-
 fn child_with(
     config: &BackendConfig,
     mut openvino_probe: impl FnMut(runtime::OpenvinoRuntimePaths) -> Result<(String, Vec<String>)>,
-    mut ort_probe: impl FnMut(&Path, Option<&Path>) -> Result<Vec<(u32, u32, String)>>,
+    mut audiocpp_probe: impl FnMut(&BackendConfig) -> Result<PathBuf>,
 ) -> Probe {
     let mut result = Probe::default();
     let attempt = (|| -> Result<()> {
@@ -767,33 +672,18 @@ fn child_with(
                 result.evidence.selected_device = Some(selected);
             }
         } else {
-            let ort_path = config
-                .onnxruntime_library
-                .as_deref()
-                .context("missing ORT library")?;
-            let provider = if config.runtime == Runtime::Cuda {
-                Some(
-                    config
-                        .provider_library
-                        .as_deref()
-                        .context("missing CUDA provider")?,
-                )
-            } else {
-                None
-            };
-            let devices = ort_probe(ort_path, provider)?;
-            result.evidence.versions.push("ONNX Runtime 1.30.0".into());
-            if config.runtime == Runtime::Cuda {
-                result.loadable = true;
-                result.evidence.provider_registration = true;
-                let (available, selected) = cuda_device_evidence(devices, config.device_id)?;
-                result.evidence.available_devices = available;
-                result.evidence.selected_device = Some(selected);
-            } else {
-                result.loadable = true;
-                result.evidence.available_devices = vec!["cpu".into()];
-                result.evidence.selected_device = Some("cpu".into());
-            }
+            let provider = audiocpp_probe(config)?;
+            result.evidence.versions.push("audio.cpp C ABI 0.1".into());
+            result.evidence.provider_path = Some(provider);
+            result.evidence.provider_registration = true;
+            result.loadable = true;
+            // The public ABI cannot enumerate compiled backends without a
+            // model/session. Setup performs that proof with the selected GGUF.
+            result.evidence.selected_device = Some(config.canonical_device()?);
+            result.evidence.available_devices = vec![config.runtime.capability().into()];
+            result.device_accessible = false;
+            result.ready = true;
+            return Ok(());
         }
         result.device_accessible = true;
         result.ready = true;
@@ -803,24 +693,6 @@ fn child_with(
         result.errors.push(format!("{error:#}"));
     }
     result
-}
-
-fn cuda_device_evidence(
-    devices: Vec<(u32, u32, String)>,
-    selected_ordinal: u32,
-) -> Result<(Vec<String>, String)> {
-    let selected = devices
-        .iter()
-        .find(|(ordinal, _, _)| *ordinal == selected_ordinal)
-        .map(|(_, _, description)| description.clone())
-        .context("requested CUDA device is unavailable")?;
-    Ok((
-        devices
-            .into_iter()
-            .map(|(_, _, description)| description)
-            .collect(),
-        selected,
-    ))
 }
 
 pub fn apply_with(

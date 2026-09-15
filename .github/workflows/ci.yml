@@ -4,12 +4,16 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
+env:
+  AUDIOCPP_COMMIT: e9ff20042ec85af960a720368c6927cda19ad65f
+
 jobs:
   rust:
-    runs-on: ubuntu-latest
-    env:
-      ORT_VERSION: 1.30.0
-      ORT_ARCHIVE_SHA256: a5ed5a3cac51fbb2e90da632ae43d19212faaa20e76484e62bcb7c23ddb3b3fd
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -19,31 +23,30 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-about@0.9.2,cargo-deny@0.20.2
+      - name: Install native build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends cmake ninja-build g++ git binutils libgomp1
+      - name: Build the pinned default audio.cpp provider
+        run: |
+          set -euo pipefail
+          source="${RUNNER_TEMP}/audio.cpp"
+          build="${RUNNER_TEMP}/audio.cpp-build"
+          git clone --filter=blob:none https://github.com/0xShug0/audio.cpp.git "${source}"
+          git -C "${source}" checkout "${AUDIOCPP_COMMIT}"
+          git -C "${source}" submodule update --init --recursive
+          provider=$(./scripts/build-default-audiocpp-provider.sh "${source}" "${build}")
+          strip --strip-unneeded "${provider}"
+          echo "AUDIOCPP_SOURCE=${source}" >> "${GITHUB_ENV}"
+          echo "OMASPEAK_TEST_AUDIOCPP_LIBRARY=${provider}" >> "${GITHUB_ENV}"
       - run: cargo fmt --check
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo deny check licenses
       - run: cargo about generate about.hbs > /dev/null
-
-      # Exercise the real default-runtime path that every release ships. A clean
-      # runner otherwise skips those tests because the CPU ORT payload is absent,
-      # which makes line coverage depend on the developer machine.
-      - name: Stage the pinned CPU runtime fixture
+      - name: Reject obsolete inference dependencies
         run: |
           set -euo pipefail
-          archive="${RUNNER_TEMP}/onnxruntime-linux-x64-${ORT_VERSION}.tgz"
-          root="${RUNNER_TEMP}/onnxruntime-linux-x64-${ORT_VERSION}"
-          curl -fsSL --retry 3 -o "${archive}" \
-            "https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}/onnxruntime-linux-x64-${ORT_VERSION}.tgz"
-          printf '%s  %s\n' "${ORT_ARCHIVE_SHA256}" "${archive}" | sha256sum -c -
-          tar -C "${RUNNER_TEMP}" -xzf "${archive}"
-          fixture="${RUNNER_TEMP}/omaspeak-test-runtime"
-          mkdir -p "${fixture}"
-          cp "${root}/lib/libonnxruntime.so.${ORT_VERSION}" "${fixture}/"
-          ln -s "libonnxruntime.so.${ORT_VERSION}" "${fixture}/libonnxruntime.so.1"
-          ln -s libonnxruntime.so.1 "${fixture}/libonnxruntime.so"
-          echo "OMASPEAK_TEST_ONNXRUNTIME_LIBRARY=${fixture}/libonnxruntime.so" \
-            >> "${GITHUB_ENV}"
-
-      # Runtime inventory tests launch instrumented CLI child processes. Keep
-      # their profile writes ordered so every child is included in the report.
-      - run: cargo llvm-cov --all-targets --locked --fail-under-lines 90.01 -- --test-threads=1
+          ! rg -i 'onnxruntime|libsherpa|sherpa-onnx' Cargo.toml Cargo.lock src tests scripts README.md INSTALL.md ACCELERATOR_SETUP.md RUNTIME.md config.example.toml
+          ! readelf -d "${OMASPEAK_TEST_AUDIOCPP_LIBRARY}" | grep -Ei 'onnxruntime|sherpa'
+      - name: Coverage
+        run: cargo llvm-cov --all-targets --locked --fail-under-lines 90.01 -- --test-threads=1

@@ -1,86 +1,56 @@
-# Installing Omaspeak
-
-Omaspeak supports Linux x86-64 and aarch64. Each release archive contains one
-runtime-neutral executable and a bundled CPU ONNX Runtime. OpenVINO and CUDA
-remain external runtime choices configured after installation.
-
-Linux release CI produces x86-64 and aarch64 archives. There are no prebuilt
-artifacts for macOS or Windows.
+# Installation
 
 ## Release archive
 
-Download `omaspeak-0.0.1-rc.2-linux-x86_64.tar.xz` and `SHA256SUMS.txt` from the
-[v0.0.1-rc.2 release](https://github.com/jacob-vincent-mink/omaspeak/releases/tag/v0.0.1-rc.2),
-then verify and unpack it:
+Extract the release archive without separating the executable from its `lib/`
+directory:
 
 ```bash
-sha256sum --check --ignore-missing SHA256SUMS.txt
-tar -xJf omaspeak-0.0.1-rc.2-linux-x86_64.tar.xz
-cd omaspeak-0.0.1-rc.2-linux-x86_64
-./omaspeak --version
+tar -xf omaspeak-VERSION-linux-ARCH.tar.xz
+install -Dm755 omaspeak-VERSION-linux-ARCH/omaspeak ~/.local/bin/omaspeak
+mkdir -p ~/.local/lib/omaspeak
+cp -a omaspeak-VERSION-linux-ARCH/lib/. ~/.local/lib/omaspeak/
 ```
 
-You can run Omaspeak from the unpacked directory. To install it for one user
-while preserving runtime discovery:
+When the executable is installed in `~/.local/bin`, Omaspeak discovers the
+package provider in `~/.local/lib/omaspeak`. It also supports a `lib/` directory
+beside the executable, which makes the extracted archive runnable in place.
 
-```bash
-install -Dm755 omaspeak "$HOME/.local/bin/omaspeak"
-mkdir -p "$HOME/.local/lib/omaspeak"
-cp -a lib/. "$HOME/.local/lib/omaspeak/"
-```
-
-Ensure `$HOME/.local/bin` is on `PATH`, then install the default model with the
-guided setup or one command:
+Run the keyboard-driven setup:
 
 ```bash
 omaspeak setup
-
-# Scriptable equivalent; review and accept the model's OpenRAIL-M terms.
-omaspeak setup all --accept-license OpenRAIL-M
-omaspeak say "Installation complete" --no-play --out test.wav
 ```
 
-Setup installs a desktop launcher. It does not install, enable, or start a
-systemd service. `say` starts the configured engine on demand when no daemon is
-listening.
-
-Distribution packages may place the disabled vendor unit from
-`packaging/systemd/omaspeak.service` under `/usr/lib/systemd/user`. Installing
-that file does not enable or start the daemon.
-
-## OpenVINO or CUDA
-
-Install the vendor runtime, then point setup at its root or library directory.
-For CUDA, use the official standalone CUDA Plugin EP directory; the packaged
-ONNX Runtime core remains selected.
+Or install the default model and launcher without a TUI:
 
 ```bash
-omaspeak setup runtime --runtime openvino --device npu \
-  --dir /opt/intel/openvino --apply
-
-omaspeak setup runtime --runtime cuda --device gpu \
-  --dir /opt/omaspeak-cuda-runtime --apply
+omaspeak setup all --model supertonic-3-gguf --accept-license OpenRAIL-M
+omaspeak say --no-play --out /tmp/proof.wav "Installation proof"
 ```
 
-The probe must pass before configuration is saved. Omaspeak does not download
-or install accelerator runtimes. Use `omaspeak setup runtime --json` for exact
-library, device, and remediation details.
+Setup downloads models only after explicit model selection and license
+acceptance. It never installs a vendor runtime and never installs a systemd
+unit as part of ordinary or Full setup.
 
-See [ACCELERATOR_SETUP.md](ACCELERATOR_SETUP.md) for tested Arch/Omarchy Intel
-iGPU and NPU packages, setup-time NPU cache compilation, and official CUDA
-Plugin EP downloads and checksums.
-
-## Build from source
-
-Install a Rust toolchain and run:
+## Source build
 
 ```bash
-git clone https://github.com/jacob-vincent-mink/omaspeak.git
-cd omaspeak
 cargo build --release --locked
-cargo test --locked
 ```
 
-The source-built executable is runtime-neutral and does not contain the CPU
-library shipped in the release archive. Supply an exact ONNX Runtime 1.30.0
-through setup or copy the release `lib/` directory beside the executable.
+This builds the one runtime-neutral Rust executable. It does not build a native
+provider. Build the release-equivalent CPU provider separately with the pinned
+script shown in the README, or configure a compatible complete audio.cpp or
+OpenVINO installation with `omaspeak setup runtime --dir ...`.
+
+## Files
+
+- Config: `${XDG_CONFIG_HOME:-~/.config}/omaspeak/config.toml`
+- Models: `${XDG_DATA_HOME:-~/.local/share}/omaspeak/models/`
+- Cache: `${XDG_CACHE_HOME:-~/.cache}/omaspeak/`
+- Daemon state/socket: `${XDG_RUNTIME_DIR}/omaspeak/`
+- Optional user service: `${XDG_CONFIG_HOME:-~/.config}/systemd/user/omaspeak.service`
+
+`omaspeak setup menu` explicitly installs the desktop settings launcher.
+`omaspeak setup systemd` explicitly installs the user service.

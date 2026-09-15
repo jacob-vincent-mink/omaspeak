@@ -20,9 +20,9 @@ fn fixture(name: &str) -> (std::path::PathBuf, AppPaths) {
 fn ensure_config_creates_and_reloads_defaults() {
     let (_, paths) = fixture("ensure");
     let created = ensure_config(&paths.config_file).unwrap();
-    assert_eq!(created.model.name, "supertonic-3-int8");
+    assert_eq!(created.model.name, "supertonic-3-gguf");
     let loaded = ensure_config(&paths.config_file).unwrap();
-    assert_eq!(loaded.backend.kind, "supertonic");
+    assert_eq!(loaded.backend.kind, "audiocpp");
 }
 
 #[test]
@@ -35,7 +35,7 @@ fn setup_loader_uses_defaults_for_invalid_config_without_changing_the_file() {
     let issue = config_recovery(&paths.config_file).unwrap().unwrap();
     assert!(issue.contains("unknown field `removed_pre_release_field`"));
     let config = ensure_config(&paths.config_file).unwrap();
-    assert_eq!(config.backend.kind, "supertonic");
+    assert_eq!(config.backend.kind, "audiocpp");
     assert_eq!(fs::read(&paths.config_file).unwrap(), invalid);
 
     let unreadable = paths.config_file.with_file_name("config-directory");
@@ -113,30 +113,12 @@ fn check_printers_fail_when_remediation_is_required() {
 }
 
 #[test]
-fn human_runtime_catalog_reports_split_cuda_plugin_and_missing_directories() {
-    let Some(ort) = std::env::var_os("OMASPEAK_TEST_ONNXRUNTIME_LIBRARY") else {
-        return;
-    };
-    let (root, paths) = fixture("print-split-cuda");
-    let provider_source = root.join("provider.c");
-    let provider = root.join("libonnxruntime_providers_cuda.so");
-    fs::write(&provider_source, "int omaspeak_fixture(void) { return 0; }").unwrap();
-    assert!(
-        std::process::Command::new("cc")
-            .args(["-shared", "-fPIC"])
-            .arg(&provider_source)
-            .arg("-o")
-            .arg(&provider)
-            .status()
-            .unwrap()
-            .success()
-    );
-
+fn human_runtime_catalog_reports_complete_provider_and_missing_directories() {
+    let (root, paths) = fixture("print-audiocpp");
     let mut config = Config::default();
     config.backend.runtime = crate::backend::Runtime::Cuda;
     config.backend.device = "gpu".into();
-    config.backend.onnxruntime_library = Some(ort.into());
-    config.backend.provider_library = Some(provider);
+    config.backend.library = Some(root.join("missing-libaudiocpp.so"));
     config.backend.openvino_library = Some(root.join("missing-openvino.so"));
     config.backend.openvino_plugins = Some(root.join("missing-plugins.xml"));
     config.backend.library_dirs = vec![root.clone()];
@@ -181,6 +163,7 @@ fn checks_accept_a_verified_catalog_model_and_initialized_openvino_engine() {
     .unwrap();
 
     let mut config = Config::default();
+    spec.activate(&mut config);
     config.backend.runtime = crate::backend::Runtime::Openvino;
     config.backend.device = "cpu".into();
     config.backend.openvino_library = Some(openvino);
@@ -210,6 +193,9 @@ fn injected_checks_cover_healthy_runtime_device_and_engine_boundaries() {
     )
     .unwrap();
     let mut config = Config::default();
+    crate::catalog::model("supertonic-3-npu")
+        .unwrap()
+        .activate(&mut config);
     config.backend.runtime = crate::backend::Runtime::Openvino;
     config.backend.device = "cpu".into();
     config.model.name = "custom".into();
@@ -249,6 +235,9 @@ fn checks_require_a_valid_compiled_cache_for_an_active_npu() {
     let model = root.join("custom-npu-model");
     fs::create_dir_all(&model).unwrap();
     let mut config = Config::default();
+    crate::catalog::model("supertonic-3-npu")
+        .unwrap()
+        .activate(&mut config);
     config.backend.runtime = crate::backend::Runtime::Openvino;
     config.backend.device = "npu".into();
     config.model.name = "custom".into();

@@ -1,31 +1,35 @@
 # Third-party notices
 
-The MIT license in `LICENSE` applies to Omaspeak's project-authored source. It
-does not relicense the components and model files described below.
+The MIT license in `LICENSE` applies to Omaspeak-authored source. It does not
+relicense the components or models below.
+
+## audio.cpp default provider
+
+Linux releases include a pinned, stripped audio.cpp shared library built from
+commit `e9ff20042ec85af960a720368c6927cda19ad65f`. audio.cpp is Apache-2.0.
+Release archives include its license and the license of every third-party
+component statically linked into that provider, including ggml, sentencepiece,
+libyaml, cJSON, and cpp-httplib where present in the pinned source build.
+The pinned audio.cpp tree also compiles tokenizer sources derived from
+llama.cpp into its runtime archive. The Supertonic-only final shared library
+does not retain their symbols after static archive extraction, but releases
+conservatively include llama.cpp's MIT license as
+`LLAMA-CPP-LICENSE`.
 
 ## Supertonic reference code
 
-Portions of `src/supertonic.rs` are adapted from the Supertonic reference
-implementation, copyright 2025 Supertone Inc., under the MIT License. See
-`licenses/SUPERTONIC-CODE-LICENSE`. The Supertonic model weights use different
-terms described below.
-
-## ONNX Runtime
-
-Linux release archives may bundle the official CPU ONNX Runtime library under
-its MIT License. Each archive carries ONNX Runtime's `LICENSE` and
-`ThirdPartyNotices.txt` files alongside the native library.
+Parts of the direct OpenVINO frontend are derived from Supertone's MIT-licensed
+Supertonic reference implementation. The release retains
+`SUPERTONIC-CODE-LICENSE`.
 
 ## Rust dependencies
 
-Release archives contain a `RUST-DEPENDENCIES.txt` file generated from the
-locked, shipped dependency graph with cargo-about. CI rejects dependencies
-outside the repository's explicit permissive-license allowlist.
+Release archives contain `RUST-DEPENDENCIES.txt`, generated from the locked
+Rust dependency graph with cargo-about.
 
-## Text-to-speech models
+## Models
 
-Models are not part of the Omaspeak source license or release archive.
-
-- Supertonic 3 weights are licensed under BigScience OpenRAIL-M. An installer
-  must show those terms, require explicit acceptance, and preserve the exact
-  license beside the installed weights.
+Models are downloaded separately. Supertonic 3 weights and converted GGUF
+artifacts remain under BigScience OpenRAIL-M. Setup requires explicit
+acceptance, verifies pinned bytes, and stores the license and provenance beside
+the installed weights.

@@ -1,17 +1,19 @@
+//! Native provider discovery and loader-path construction.
+//!
+//! Omaspeak loads one complete audio.cpp provider or one complete OpenVINO
+//! installation. It never assembles providers from separate core/plugin files.
+
 use std::collections::BTreeMap;
 use std::env;
-use std::ffi::{OsStr, OsString};
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use anyhow::{Context, Result, bail};
 use serde::Serialize;
 
-use crate::backend::{BackendConfig, Runtime, supported_capabilities};
+use crate::backend::{BackendConfig, Runtime};
 
 pub const LIBRARY_PATH_ENV: &str = "OMASPEAK_LIBRARY_PATH";
-pub const ONNXRUNTIME_LIBRARY_ENV: &str = "OMASPEAK_ONNXRUNTIME_LIBRARY";
-pub const PROVIDER_LIBRARY_ENV: &str = "OMASPEAK_PROVIDER_LIBRARY";
 pub const OPENVINO_LIBRARY_ENV: &str = "OMASPEAK_OPENVINO_LIBRARY";
 pub const OPENVINO_PLUGINS_ENV: &str = "OMASPEAK_OPENVINO_PLUGINS";
 pub const REEXEC_SENTINEL: &str = "OMASPEAK_LIBRARY_PATH_READY";
@@ -23,8 +25,7 @@ pub struct LibraryPathReport {
     pub package_library_dirs: Vec<PathBuf>,
     pub effective_library_dirs: Vec<PathBuf>,
     pub missing_library_dirs: Vec<PathBuf>,
-    pub onnxruntime_library: Option<PathBuf>,
-    pub provider_library: Option<PathBuf>,
+    pub audiocpp_library: Option<PathBuf>,
     pub openvino_library: Option<PathBuf>,
     pub openvino_plugins: Option<PathBuf>,
     pub runtime_loadable: BTreeMap<&'static str, bool>,
@@ -35,58 +36,60 @@ pub struct LibraryPathReport {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct OnnxRuntimePaths {
-    pub onnxruntime: PathBuf,
-    pub provider: Option<PathBuf>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct OpenvinoRuntimePaths {
     pub library: PathBuf,
     pub plugins: PathBuf,
 }
 
+impl Runtime {
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Default => "default",
+            Self::Openvino => "openvino",
+            Self::Cuda => "cuda",
+            Self::Vulkan => "vulkan",
+            Self::Hip => "hip",
+        }
+    }
+
+    pub const fn uses_audiocpp(self) -> bool {
+        !matches!(self, Self::Openvino)
+    }
+}
+
 impl LibraryPathReport {
     pub fn remediation(&self, runtime: Runtime) -> Option<String> {
-        let runtime_name = match runtime {
-            Runtime::Default => "default",
-            Runtime::Openvino => "openvino",
-            Runtime::Cuda => "cuda",
-        };
-        if self.runtime_loadable.get(runtime_name) == Some(&true) {
+        if self.runtime_loadable.get(runtime.name()) == Some(&true) {
             return None;
         }
         if !self.missing_library_dirs.is_empty() {
             return Some(format!(
-                "create or correct missing/non-absolute directories in backend.library_dirs or {LIBRARY_PATH_ENV}: {}",
+                "correct missing native-provider directories in backend.library_dirs or {LIBRARY_PATH_ENV}: {}",
                 display_paths(&self.missing_library_dirs)
             ));
         }
-        if let Some(error) = self.runtime_probe_errors.get(runtime_name) {
-            return Some(format!("runtime validation failed: {error}"));
+        if let Some(error) = self.runtime_probe_errors.get(runtime.name()) {
+            return Some(format!("provider validation failed: {error}"));
         }
         Some(match runtime {
-            Runtime::Default => format!(
-                "set backend.onnxruntime_library, or use {LIBRARY_PATH_ENV}, for an ONNX Runtime library"
-            ),
             Runtime::Openvino => format!(
-                "set backend.openvino_library and backend.openvino_plugins (or {OPENVINO_LIBRARY_ENV} and {OPENVINO_PLUGINS_ENV}) to an installed OpenVINO C runtime"
+                "select a complete OpenVINO installation with backend.openvino_library and backend.openvino_plugins, or {OPENVINO_LIBRARY_ENV} and {OPENVINO_PLUGINS_ENV}"
             ),
-            Runtime::Cuda => "configure the official CUDA Plugin EP with its vendor dependencies; Omaspeak supplies ONNX Runtime 1.30.0 in release packages".to_owned(),
+            Runtime::Default => format!(
+                "install the packaged audio.cpp CPU provider or select a complete audio.cpp installation with backend.library or {LIBRARY_PATH_ENV}"
+            ),
+            Runtime::Cuda | Runtime::Vulkan | Runtime::Hip => format!(
+                "select a complete {}-enabled audio.cpp installation with backend.library or {LIBRARY_PATH_ENV}",
+                runtime.name()
+            ),
         })
     }
 }
 
 pub fn inspect(config: &BackendConfig, config_file: &Path) -> LibraryPathReport {
-    let mut report = discover(config, config_file);
-    probe_installed_runtimes(config, &mut report);
-    report
+    discover(config, config_file)
 }
 
-/// Resolve candidate runtime files without loading them into this process.
-///
-/// Interactive setup uses this for its choice list, then probes only the
-/// selected runtime immediately before persisting the staged configuration.
 pub fn discover(config: &BackendConfig, config_file: &Path) -> LibraryPathReport {
     inspect_with(
         config,
@@ -116,22 +119,12 @@ pub fn inspect_with(
         .map(env::split_paths)
         .into_iter()
         .flatten()
-        .map(|path| {
-            if path.is_absolute() {
-                canonical_or(path)
-            } else {
-                path
-            }
-        })
+        .map(canonical_or)
         .collect::<Vec<_>>();
     let package_library_dirs = package_library_dirs(executable);
-    let exact_library_dirs = [
+    let exact_files = [
         config
-            .onnxruntime_library
-            .as_deref()
-            .map(|path| resolve(path, config_base)),
-        config
-            .provider_library
+            .library
             .as_deref()
             .map(|path| resolve(path, config_base)),
         config
@@ -142,32 +135,29 @@ pub fn inspect_with(
             .openvino_plugins
             .as_deref()
             .map(|path| resolve(path, config_base)),
-        env::var_os(ONNXRUNTIME_LIBRARY_ENV).map(PathBuf::from),
-        env::var_os(PROVIDER_LIBRARY_ENV).map(PathBuf::from),
         env::var_os(OPENVINO_LIBRARY_ENV).map(PathBuf::from),
         env::var_os(OPENVINO_PLUGINS_ENV).map(PathBuf::from),
-    ]
-    .into_iter()
-    .flatten()
-    .filter(|path| path.is_absolute() && path.is_file())
-    .filter_map(|path| path.parent().map(Path::to_path_buf));
-
-    let candidates = configured_library_dirs
+    ];
+    let exact_dirs = exact_files
+        .iter()
+        .flatten()
+        .filter_map(|path| path.parent().map(Path::to_path_buf));
+    let requested_dirs = configured_library_dirs
         .iter()
         .chain(&environment_library_dirs)
         .cloned()
         .collect::<Vec<_>>();
     let missing_library_dirs = stable_unique(
-        candidates
+        requested_dirs
             .iter()
-            .filter(|directory| !directory.is_absolute() || !directory.is_dir())
+            .filter(|path| !path.is_absolute() || !path.is_dir())
             .cloned(),
     );
     let effective_library_dirs = stable_unique(
-        candidates
+        requested_dirs
             .into_iter()
-            .filter(|directory| directory.is_absolute() && directory.is_dir())
-            .chain(exact_library_dirs)
+            .filter(|path| path.is_absolute() && path.is_dir())
+            .chain(exact_dirs)
             .chain(package_library_dirs.iter().cloned()),
     );
     let ambient = loader_environment
@@ -184,76 +174,61 @@ pub fn inspect_with(
             .chain(ambient)
             .chain(system_library_dirs()),
     );
-    let exact = |configured: Option<&Path>, environment: &str| {
-        configured
-            .map(|path| resolve(path, config_base))
-            .or_else(|| env::var_os(environment).map(PathBuf::from))
-    };
-    let selected_onnxruntime = exact(
-        config.onnxruntime_library.as_deref(),
-        ONNXRUNTIME_LIBRARY_ENV,
-    );
-    let selected_provider = exact(config.provider_library.as_deref(), PROVIDER_LIBRARY_ENV);
-    let selected_openvino = exact(config.openvino_library.as_deref(), OPENVINO_LIBRARY_ENV);
-    let selected_plugins = exact(config.openvino_plugins.as_deref(), OPENVINO_PLUGINS_ENV);
-    let onnxruntime_library = locate_runtime_library(
-        selected_onnxruntime.as_ref(),
-        &search_dirs,
-        "libonnxruntime.so",
-    );
-    let provider_name = match config.runtime {
-        Runtime::Default => None,
-        Runtime::Openvino => None,
-        Runtime::Cuda => Some("libonnxruntime_providers_cuda.so"),
-    };
-    let provider_library = provider_name
-        .and_then(|name| locate_runtime_library(selected_provider.as_ref(), &search_dirs, name));
+    let audiocpp_library = config
+        .library
+        .as_deref()
+        .map(|path| resolve(path, config_base))
+        .filter(|path| path.is_file())
+        .map(canonical_or)
+        .or_else(|| find_versioned_library(&search_dirs, "libaudiocpp.so"));
+    let selected_openvino = config
+        .openvino_library
+        .as_deref()
+        .map(|path| resolve(path, config_base))
+        .or_else(|| env::var_os(OPENVINO_LIBRARY_ENV).map(PathBuf::from));
+    let selected_plugins = config
+        .openvino_plugins
+        .as_deref()
+        .map(|path| resolve(path, config_base))
+        .or_else(|| env::var_os(OPENVINO_PLUGINS_ENV).map(PathBuf::from));
     let openvino_library =
-        locate_runtime_library(selected_openvino.as_ref(), &search_dirs, "libopenvino_c.so");
+        locate_library(selected_openvino.as_ref(), &search_dirs, "libopenvino_c.so");
     let openvino_plugins = locate_openvino_plugins(selected_plugins.as_ref(), &search_dirs);
-    let runtime_loadable = runtime_loadability(RuntimeLoadabilityInput {
-        search_dirs: &search_dirs,
-        effective_dirs: &effective_library_dirs,
-        missing_dirs: &missing_library_dirs,
-        exact_onnxruntime: selected_onnxruntime,
-        exact_provider: selected_provider,
-        exact_openvino: selected_openvino,
-        exact_plugins: selected_plugins,
-        selected_runtime: config.runtime,
-    });
+    let audio_present = missing_library_dirs.is_empty() && audiocpp_library.is_some();
+    let openvino_present =
+        missing_library_dirs.is_empty() && openvino_library.is_some() && openvino_plugins.is_some();
+    let runtime_loadable = BTreeMap::from([
+        ("default", audio_present),
+        ("cuda", audio_present),
+        ("vulkan", audio_present),
+        ("hip", audio_present),
+        ("openvino", openvino_present),
+    ]);
     let mut remediation = Vec::new();
     if !missing_library_dirs.is_empty() {
         remediation.push(format!(
-            "create or correct missing/non-absolute directories in backend.library_dirs or {LIBRARY_PATH_ENV}: {}",
+            "correct missing native-provider directories: {}",
             display_paths(&missing_library_dirs)
         ));
     }
-    if runtime_loadable.get("default") != Some(&true) {
-        remediation.push(format!(
-            "set backend.onnxruntime_library, or use {LIBRARY_PATH_ENV}, for an ONNX Runtime library"
-        ));
+    if !audio_present {
+        remediation.push(
+            "select a complete audio.cpp provider; Omaspeak does not install optional vendor runtimes"
+                .into(),
+        );
     }
-    if runtime_loadable.get("openvino") != Some(&true) {
-        remediation.push(format!(
-            "set backend.openvino_library and backend.openvino_plugins (or {OPENVINO_LIBRARY_ENV} and {OPENVINO_PLUGINS_ENV}) to an installed OpenVINO C runtime"
-        ));
+    if !openvino_present {
+        remediation.push(
+            "select a complete OpenVINO installation; Omaspeak does not install OpenVINO".into(),
+        );
     }
-    let accelerated_runtime = Runtime::Cuda;
-    let name = accelerated_runtime.capability();
-    if supported_capabilities().contains(&name) && runtime_loadable.get(name) != Some(&true) {
-        remediation.push(format!(
-            "set backend.library_dirs or {LIBRARY_PATH_ENV} to directories containing the official CUDA Plugin EP and its vendor runtime libraries"
-        ));
-    }
-
     LibraryPathReport {
         configured_library_dirs,
         environment_library_dirs,
         package_library_dirs,
         effective_library_dirs,
         missing_library_dirs,
-        onnxruntime_library,
-        provider_library,
+        audiocpp_library,
         openvino_library,
         openvino_plugins,
         runtime_loadable,
@@ -264,88 +239,81 @@ pub fn inspect_with(
     }
 }
 
-fn probe_installed_runtimes(config: &BackendConfig, report: &mut LibraryPathReport) {
-    probe_installed_runtimes_with(
-        config,
-        report,
-        crate::supertonic::probe_onnx_runtime,
-        crate::supertonic::probe_runtime,
-    );
+pub(crate) fn resolve_openvino_runtime(
+    config: &BackendConfig,
+    config_file: &Path,
+    report: &LibraryPathReport,
+) -> Result<OpenvinoRuntimePaths> {
+    if !report.missing_library_dirs.is_empty() {
+        bail!(
+            "configured native library directories do not exist: {}",
+            display_paths(&report.missing_library_dirs)
+        );
+    }
+    let base = config_file.parent().unwrap_or_else(|| Path::new("."));
+    let library = config
+        .openvino_library
+        .as_deref()
+        .map(|path| resolve(path, base))
+        .or_else(|| env::var_os(OPENVINO_LIBRARY_ENV).map(PathBuf::from))
+        .or_else(|| report.openvino_library.clone())
+        .with_context(|| {
+            format!(
+                "OpenVINO C library was not found; set backend.openvino_library or {OPENVINO_LIBRARY_ENV}"
+            )
+        })?;
+    if !library.is_absolute() || !library.is_file() {
+        bail!(
+            "OpenVINO C library must be an absolute existing file: {}",
+            library.display()
+        );
+    }
+    let plugins = config
+        .openvino_plugins
+        .as_deref()
+        .map(|path| resolve(path, base))
+        .or_else(|| env::var_os(OPENVINO_PLUGINS_ENV).map(PathBuf::from))
+        .or_else(|| report.openvino_plugins.clone())
+        .with_context(|| {
+            format!(
+                "OpenVINO plugins.xml was not found; set backend.openvino_plugins or {OPENVINO_PLUGINS_ENV}"
+            )
+        })?;
+    if !plugins.is_absolute() || !plugins.is_file() {
+        bail!(
+            "OpenVINO plugins.xml must be an absolute existing file: {}",
+            plugins.display()
+        );
+    }
+    Ok(OpenvinoRuntimePaths {
+        library: canonical_or(library),
+        plugins: canonical_or(plugins),
+    })
 }
 
-fn probe_installed_runtimes_with(
-    config: &BackendConfig,
-    report: &mut LibraryPathReport,
-    mut probe_onnx: impl FnMut(&OnnxRuntimePaths, Runtime) -> Result<()>,
-    mut probe_openvino: impl FnMut(OpenvinoRuntimePaths, &str) -> Result<Vec<String>>,
-) {
-    if report.runtime_loadable.get("default") == Some(&true)
-        && let Some(onnxruntime) = report.onnxruntime_library.clone()
-    {
-        let paths = OnnxRuntimePaths {
-            onnxruntime,
-            provider: None,
-        };
-        if let Err(error) = probe_onnx(&paths, Runtime::Default) {
-            report.runtime_loadable.insert("default", false);
-            report
-                .runtime_probe_errors
-                .insert("default", format!("{error:#}"));
-        }
+fn package_library_dirs(executable: Option<&Path>) -> Vec<PathBuf> {
+    let Some(binary_dir) = executable.and_then(Path::parent) else {
+        return Vec::new();
+    };
+    let mut candidates = vec![binary_dir.join("lib")];
+    if let Some(prefix) = binary_dir.parent() {
+        candidates.push(prefix.join("lib/omaspeak"));
     }
-    if report.runtime_loadable.get("openvino") == Some(&true)
-        && let (Some(library), Some(plugins)) = (
-            report.openvino_library.clone(),
-            report.openvino_plugins.clone(),
-        )
-    {
-        match probe_openvino(OpenvinoRuntimePaths { library, plugins }, "auto") {
-            Ok(available) if config.runtime == Runtime::Openvino => {
-                let device = config
-                    .canonical_device()
-                    .unwrap_or_else(|_| "invalid".to_owned())
-                    .to_ascii_uppercase();
-                let accessible = device == "AUTO" || available.iter().any(|item| item == &device);
-                report
-                    .runtime_device_accessible
-                    .insert("openvino", accessible);
-                if !accessible {
-                    report.device_probe_errors.insert(
-                        "openvino",
-                        format!(
-                            "device {device} is not accessible; available devices: {}",
-                            available.join(", ")
-                        ),
-                    );
-                }
-            }
-            Ok(_) => {}
-            Err(error) => {
-                report.runtime_loadable.insert("openvino", false);
-                report
-                    .runtime_probe_errors
-                    .insert("openvino", format!("{error:#}"));
-            }
-        }
-    }
-    if config.runtime == Runtime::Cuda
-        && report.runtime_loadable.get("cuda") == Some(&true)
-        && let (Some(onnxruntime), Some(provider)) = (
-            report.onnxruntime_library.clone(),
-            report.provider_library.clone(),
-        )
-    {
-        let paths = OnnxRuntimePaths {
-            onnxruntime,
-            provider: Some(provider),
-        };
-        if let Err(error) = probe_onnx(&paths, Runtime::Cuda) {
-            report.runtime_loadable.insert("cuda", false);
-            report
-                .runtime_probe_errors
-                .insert("cuda", format!("{error:#}"));
-        }
-    }
+    stable_unique(
+        candidates
+            .into_iter()
+            .filter(|directory| {
+                directory.is_dir()
+                    && (find_versioned_library(std::slice::from_ref(directory), "libaudiocpp.so")
+                        .is_some()
+                        || find_versioned_library(
+                            std::slice::from_ref(directory),
+                            "libopenvino_c.so",
+                        )
+                        .is_some())
+            })
+            .map(canonical_or),
+    )
 }
 
 fn system_library_dirs() -> impl Iterator<Item = PathBuf> {
@@ -366,247 +334,11 @@ fn system_library_dirs() -> impl Iterator<Item = PathBuf> {
         .filter(|path| path.is_dir())
 }
 
-struct RuntimeLoadabilityInput<'a> {
-    search_dirs: &'a [PathBuf],
-    effective_dirs: &'a [PathBuf],
-    missing_dirs: &'a [PathBuf],
-    exact_onnxruntime: Option<PathBuf>,
-    exact_provider: Option<PathBuf>,
-    exact_openvino: Option<PathBuf>,
-    exact_plugins: Option<PathBuf>,
-    selected_runtime: Runtime,
-}
-
-fn runtime_loadability(input: RuntimeLoadabilityInput<'_>) -> BTreeMap<&'static str, bool> {
-    let RuntimeLoadabilityInput {
-        search_dirs,
-        effective_dirs,
-        missing_dirs,
-        exact_onnxruntime,
-        exact_provider,
-        exact_openvino,
-        exact_plugins,
-        selected_runtime,
-    } = input;
-    let supported = supported_capabilities();
-    let locate =
-        |exact: Option<&PathBuf>, name: &str| locate_runtime_library(exact, search_dirs, name);
-    let core = locate(exact_onnxruntime.as_ref(), "libonnxruntime.so");
-    let base_loadable = missing_dirs.is_empty()
-        && core
-            .as_deref()
-            .is_some_and(|path| dependencies_resolve(path, effective_dirs));
-    let openvino = locate(exact_openvino.as_ref(), "libopenvino_c.so");
-    let openvino_plugins = locate_openvino_plugins(exact_plugins.as_ref(), search_dirs);
-    let openvino_loadable = missing_dirs.is_empty()
-        && openvino
-            .as_deref()
-            .is_some_and(|path| dependencies_resolve(path, effective_dirs))
-        && openvino_plugins.is_some();
-    let mut result = BTreeMap::from([
-        ("default", base_loadable),
-        (
-            "openvino",
-            supported.contains(&"openvino") && openvino_loadable,
-        ),
-    ]);
-    let capability = "cuda";
-    let selected = (selected_runtime.capability() == capability)
-        .then_some(exact_provider.as_ref())
-        .flatten();
-    let provider = locate(selected, "libonnxruntime_providers_cuda.so");
-    let loadable = supported.contains(&capability)
-        && base_loadable
-        && provider
-            .as_deref()
-            .is_some_and(|path| dependencies_resolve(path, effective_dirs));
-    result.insert(capability, loadable);
-    result
-}
-
-fn locate_runtime_library(
-    exact: Option<&PathBuf>,
-    search_dirs: &[PathBuf],
-    name: &str,
-) -> Option<PathBuf> {
+fn locate_library(exact: Option<&PathBuf>, search_dirs: &[PathBuf], name: &str) -> Option<PathBuf> {
     if let Some(path) = exact {
         return (path.is_absolute() && path.is_file()).then(|| canonical_or(path.clone()));
     }
-    find_versioned_library(search_dirs, name).or_else(|| find_loader_cached_library(name))
-}
-
-pub(crate) fn resolve_onnx_runtime(
-    config: &BackendConfig,
-    config_file: &Path,
-    report: &LibraryPathReport,
-    runtime: Runtime,
-) -> Result<OnnxRuntimePaths> {
-    if runtime == Runtime::Openvino {
-        bail!("runtime=openvino uses the direct OpenVINO runner, not ONNX Runtime");
-    }
-    if !report.missing_library_dirs.is_empty() {
-        bail!(
-            "configured native library directories do not exist: {}",
-            display_paths(&report.missing_library_dirs)
-        );
-    }
-    let config_base = config_file.parent().unwrap_or_else(|| Path::new("."));
-    let selected = |configured: Option<&Path>, environment: &str| {
-        configured
-            .map(|path| resolve(path, config_base))
-            .or_else(|| env::var_os(environment).map(PathBuf::from))
-    };
-    let validate = |path: PathBuf, description: &str| -> Result<PathBuf> {
-        if !path.is_absolute() || !path.is_file() {
-            bail!(
-                "{description} must name an absolute existing library: {}",
-                path.display()
-            );
-        }
-        let path = canonical_or(path);
-        if !dependencies_resolve(&path, &report.effective_library_dirs) {
-            bail!(
-                "native library dependencies do not resolve: {}",
-                path.display()
-            );
-        }
-        Ok(path)
-    };
-    let onnxruntime = selected(
-        config.onnxruntime_library.as_deref(),
-        ONNXRUNTIME_LIBRARY_ENV,
-    )
-    .or_else(|| report.onnxruntime_library.clone())
-    .with_context(|| {
-        format!(
-            "ONNX Runtime was not found; set backend.onnxruntime_library or {ONNXRUNTIME_LIBRARY_ENV}"
-        )
-    })?;
-    let onnxruntime = validate(
-        onnxruntime,
-        "OMASPEAK_ONNXRUNTIME_LIBRARY or backend.onnxruntime_library",
-    )?;
-    let provider = if runtime == Runtime::Cuda {
-        Some(
-            selected(config.provider_library.as_deref(), PROVIDER_LIBRARY_ENV)
-                .or_else(|| report.provider_library.clone())
-                .with_context(|| {
-                    format!(
-                        "CUDA provider was not found; set backend.provider_library or {PROVIDER_LIBRARY_ENV}"
-                    )
-                })
-                .and_then(|path| {
-                    validate(
-                        path,
-                        "OMASPEAK_PROVIDER_LIBRARY or backend.provider_library",
-                    )
-                })?,
-        )
-    } else {
-        None
-    };
-    Ok(OnnxRuntimePaths {
-        onnxruntime,
-        provider,
-    })
-}
-
-pub(crate) fn resolve_openvino_runtime(
-    config: &BackendConfig,
-    config_file: &Path,
-    report: &LibraryPathReport,
-) -> Result<OpenvinoRuntimePaths> {
-    if !report.missing_library_dirs.is_empty() {
-        bail!(
-            "configured native library directories do not exist: {}",
-            display_paths(&report.missing_library_dirs)
-        );
-    }
-    let config_base = config_file.parent().unwrap_or_else(|| Path::new("."));
-    let selected_library = config
-        .openvino_library
-        .as_deref()
-        .map(|path| resolve(path, config_base))
-        .or_else(|| env::var_os(OPENVINO_LIBRARY_ENV).map(PathBuf::from));
-    let library = selected_library
-        .map(|path| {
-            if !path.is_absolute() || !path.is_file() {
-                bail!(
-                    "{OPENVINO_LIBRARY_ENV} or backend.openvino_library must name an absolute existing library: {}",
-                    path.display()
-                );
-            }
-            Ok(canonical_or(path))
-        })
-        .transpose()?
-        .or_else(|| report.openvino_library.clone())
-        .with_context(|| {
-            format!(
-                "OpenVINO C library was not found; set backend.openvino_library or {OPENVINO_LIBRARY_ENV}"
-            )
-        })?;
-    if !dependencies_resolve(&library, &report.effective_library_dirs) {
-        bail!(
-            "OpenVINO C library dependencies do not resolve: {}",
-            library.display()
-        );
-    }
-    let selected_plugins = config
-        .openvino_plugins
-        .as_deref()
-        .map(|path| resolve(path, config_base))
-        .or_else(|| env::var_os(OPENVINO_PLUGINS_ENV).map(PathBuf::from));
-    let plugins = selected_plugins
-        .map(|path| {
-            if !path.is_absolute() || !path.is_file() {
-                bail!(
-                    "{OPENVINO_PLUGINS_ENV} or backend.openvino_plugins must name an absolute existing plugins.xml: {}",
-                    path.display()
-                );
-            }
-            Ok(canonical_or(path))
-        })
-        .transpose()?
-        .or_else(|| report.openvino_plugins.clone())
-        .with_context(|| {
-            format!(
-                "OpenVINO plugins.xml was not found; set backend.openvino_plugins or {OPENVINO_PLUGINS_ENV}"
-            )
-        })?;
-    Ok(OpenvinoRuntimePaths { library, plugins })
-}
-
-fn package_library_dirs(executable: Option<&Path>) -> Vec<PathBuf> {
-    let Some(binary_dir) = executable.and_then(Path::parent) else {
-        return Vec::new();
-    };
-    // Keep package discovery to layouts owned by Omaspeak. Cargo and local
-    // validation commonly place transient native artifacts beside the binary
-    // in target/{debug,release}; treating that directory as a package makes
-    // those artifacts visible to setup long after the test that created them.
-    let mut candidates = vec![binary_dir.join("lib")];
-    if let Some(prefix) = binary_dir.parent() {
-        candidates.push(prefix.join("lib/omaspeak"));
-    }
-    stable_unique(
-        candidates
-            .into_iter()
-            .filter(|directory| directory.is_dir() && contains_runtime_anchor(directory))
-            .map(canonical_or),
-    )
-}
-
-fn contains_runtime_anchor(directory: &Path) -> bool {
-    [
-        "libonnxruntime.so",
-        "libonnxruntime_providers_cuda.so",
-        "libopenvino_c.so",
-        "libaudiocpp.so",
-    ]
-    .iter()
-    .any(|name| {
-        find_versioned_library(std::slice::from_ref(&directory.to_path_buf()), name).is_some()
-    })
+    find_versioned_library(search_dirs, name)
 }
 
 fn locate_openvino_plugins(exact: Option<&PathBuf>, search_dirs: &[PathBuf]) -> Option<PathBuf> {
@@ -625,85 +357,36 @@ fn locate_openvino_plugins(exact: Option<&PathBuf>, search_dirs: &[PathBuf]) -> 
         .map(canonical_or)
 }
 
-fn find_loader_cached_library(name: &str) -> Option<PathBuf> {
-    let output = Command::new("ldconfig").arg("-p").output().ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let prefix = format!("{name} ");
-    String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .filter_map(|line| line.trim().strip_prefix(&prefix))
-        .filter_map(|line| {
-            line.rsplit_once("=>")
-                .map(|(_, path)| PathBuf::from(path.trim()))
-        })
-        .find(|path| path.is_file())
-}
-
-fn find_versioned_library(directories: &[PathBuf], name: &str) -> Option<PathBuf> {
+pub(crate) fn find_versioned_library(directories: &[PathBuf], name: &str) -> Option<PathBuf> {
     for directory in directories {
         let direct = directory.join(name);
         if direct.is_file() {
-            return Some(direct);
+            return Some(canonical_or(direct));
         }
         let prefix = format!("{name}.");
-        let Ok(entries) = std::fs::read_dir(directory) else {
-            continue;
-        };
-        let mut matches = entries
+        let mut matches = std::fs::read_dir(directory)
+            .into_iter()
+            .flatten()
             .flatten()
             .map(|entry| entry.path())
-            .filter(|path| {
-                path.file_name()
-                    .and_then(OsStr::to_str)
-                    .is_some_and(|file| file.starts_with(&prefix))
-                    && path.is_file()
+            .filter_map(|path| {
+                let version = path
+                    .is_file()
+                    .then(|| path.file_name()?.to_str()?.strip_prefix(&prefix))
+                    .flatten()?
+                    .split('.')
+                    .map(str::parse::<u64>)
+                    .collect::<std::result::Result<Vec<_>, _>>()
+                    .ok()?;
+                (!version.is_empty()).then_some((version, path))
             })
             .collect::<Vec<_>>();
-        matches.sort();
-        if let Some(path) = matches.pop() {
-            return Some(path);
+        matches.sort_by(|(left, _), (right, _)| left.cmp(right));
+        if let Some((_, path)) = matches.pop() {
+            return Some(canonical_or(path));
         }
     }
     None
-}
-
-fn dependencies_resolve(provider: &Path, effective_dirs: &[PathBuf]) -> bool {
-    let Some(loader) = native_dynamic_loader() else {
-        return false;
-    };
-    let mut command = Command::new(loader);
-    command.arg("--list").arg(provider);
-    let mut loader_dirs = effective_dirs.to_vec();
-    if let Some(existing) = env::var_os("LD_LIBRARY_PATH") {
-        loader_dirs.extend(env::split_paths(&existing));
-    }
-    if let Ok(joined) = env::join_paths(stable_unique(loader_dirs)) {
-        command.env("LD_LIBRARY_PATH", joined);
-    }
-    command.output().is_ok_and(|output| {
-        output.status.success()
-            && !String::from_utf8_lossy(&output.stdout).contains("not found")
-            && !String::from_utf8_lossy(&output.stderr).contains("not found")
-    })
-}
-
-fn native_dynamic_loader() -> Option<&'static Path> {
-    #[cfg(target_arch = "x86_64")]
-    const CANDIDATES: &[&str] = &[
-        "/lib64/ld-linux-x86-64.so.2",
-        "/usr/lib64/ld-linux-x86-64.so.2",
-    ];
-    #[cfg(target_arch = "aarch64")]
-    const CANDIDATES: &[&str] = &[
-        "/lib/ld-linux-aarch64.so.1",
-        "/usr/lib/ld-linux-aarch64.so.1",
-    ];
-    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-    const CANDIDATES: &[&str] = &[];
-
-    CANDIDATES.iter().map(Path::new).find(|path| path.is_file())
 }
 
 pub fn augmented_loader_path(report: &LibraryPathReport) -> Result<Option<OsString>> {
@@ -711,23 +394,11 @@ pub fn augmented_loader_path(report: &LibraryPathReport) -> Result<Option<OsStri
 }
 
 pub fn reexec_loader_path(report: &LibraryPathReport) -> Result<Option<OsString>> {
-    reexec_loader_path_with(
-        report,
-        env::var_os(REEXEC_SENTINEL),
-        env::var_os("LD_LIBRARY_PATH"),
-    )
-}
-
-fn reexec_loader_path_with(
-    report: &LibraryPathReport,
-    sentinel: Option<OsString>,
-    loader_environment: Option<OsString>,
-) -> Result<Option<OsString>> {
-    let augmented = augmented_loader_path_with(report, loader_environment)?;
-    if sentinel.is_some() {
+    let augmented = augmented_loader_path(report)?;
+    if env::var_os(REEXEC_SENTINEL).is_some() {
         if augmented.is_some() {
             bail!(
-                "{REEXEC_SENTINEL} is set but the effective native library directories are absent from LD_LIBRARY_PATH"
+                "{REEXEC_SENTINEL} is set but native provider directories are absent from LD_LIBRARY_PATH"
             );
         }
         Ok(None)
@@ -746,9 +417,6 @@ fn augmented_loader_path_with(
             display_paths(&report.missing_library_dirs)
         );
     }
-    if report.effective_library_dirs.is_empty() {
-        return Ok(None);
-    }
     let ambient = loader_environment
         .as_deref()
         .map(env::split_paths)
@@ -756,17 +424,17 @@ fn augmented_loader_path_with(
         .flatten()
         .map(canonical_or)
         .collect::<Vec<_>>();
-    let missing = report
+    if report
         .effective_library_dirs
         .iter()
-        .any(|directory| !ambient.contains(directory));
-    if !missing {
+        .all(|path| ambient.contains(path))
+    {
         return Ok(None);
     }
     let paths = stable_unique(report.effective_library_dirs.iter().cloned().chain(ambient));
-    env::join_paths(paths).map(Some).context(
-        "native library path contains a value that cannot be represented by LD_LIBRARY_PATH",
-    )
+    env::join_paths(paths)
+        .map(Some)
+        .context("native library path cannot be represented by LD_LIBRARY_PATH")
 }
 
 pub fn effective_library_path(report: &LibraryPathReport) -> Result<Option<OsString>> {
@@ -781,7 +449,7 @@ pub fn effective_library_path(report: &LibraryPathReport) -> Result<Option<OsStr
     } else {
         env::join_paths(&report.effective_library_dirs)
             .map(Some)
-            .context("native library path contains a value that cannot be represented by LD_LIBRARY_PATH")
+            .context("native library path cannot be represented by LD_LIBRARY_PATH")
     }
 }
 
@@ -789,12 +457,11 @@ fn resolve(path: &Path, base: &Path) -> PathBuf {
     if path.as_os_str().is_empty() {
         return PathBuf::new();
     }
-    let absolute = if path.is_absolute() {
+    canonical_or(if path.is_absolute() {
         path.to_owned()
     } else {
         base.join(path)
-    };
-    canonical_or(absolute)
+    })
 }
 
 fn canonical_or(path: PathBuf) -> PathBuf {

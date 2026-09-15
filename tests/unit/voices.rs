@@ -20,6 +20,7 @@ fn fixture(name: &str) -> (Config, AppPaths) {
 #[test]
 fn supertonic_header_provides_stable_voice_ids() {
     let (mut config, paths) = fixture("supertonic");
+    config.backend.kind = "supertonic".into();
     config.model.name = "custom-supertonic".into();
     config.model.family = "supertonic".into();
     config.model.voice_style = "voice.bin".into();
@@ -55,9 +56,10 @@ fn catalog_inventory_is_available_before_download() {
     let (mut config, paths) = fixture("catalog");
     assert_eq!(
         available(&config, &paths).unwrap(),
-        from_catalog(crate::catalog::model("supertonic-3-int8").unwrap())
+        from_catalog(crate::catalog::model("supertonic-3-gguf").unwrap())
     );
     config.model.name = "missing".into();
+    config.backend.kind = "supertonic".into();
     assert!(available(&config, &paths).is_err());
 }
 
@@ -76,6 +78,7 @@ fn audiocpp_exposes_the_stable_supertonic_presets_without_sidecar_files() {
 #[test]
 fn installed_voice_metadata_rejects_unsupported_empty_and_corrupt_models() {
     let (mut config, paths) = fixture("invalid");
+    config.backend.kind = "supertonic".into();
     config.model.family = "other".into();
     assert!(
         installed(&config, &paths)

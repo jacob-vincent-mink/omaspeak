@@ -125,6 +125,10 @@ fn spec(archive_bytes: &[u8], url: &str) -> &'static ModelSpec {
         downloadable: true,
         requires_acceptance: false,
         source_revision: "test-revision",
+        artifact_source: "https://example.invalid/artifact",
+        artifact_revision: "test-revision",
+        original_model_source: "https://example.invalid/original",
+        original_model_revision: "original-revision",
         single_file: None,
         license_file: "",
         license_sha256: "",
@@ -279,6 +283,51 @@ fn restricted_models_are_user_supplied_only() {
         None,
     )
     .unwrap();
+}
+
+#[test]
+fn user_supplied_model_directory_is_verified_and_copied() {
+    let root = temp("user-supplied-directory");
+    let archive_bytes = archive("tiny-root", "model.bin", b"tiny model");
+    let mut restricted = *spec(&archive_bytes, "https://example.invalid/model");
+    restricted.downloadable = false;
+    restricted.archive_url = "";
+    restricted.archive_size = 0;
+    restricted.archive_sha256 = "";
+    restricted.archive_root = "";
+    let restricted = Box::leak(Box::new(restricted));
+    let source = root.join("official-source");
+    fs::create_dir_all(&source).unwrap();
+    fs::write(source.join("model.bin"), b"tiny model").unwrap();
+    let app_paths = paths(&root);
+
+    let installed = install(
+        &app_paths,
+        restricted,
+        Some(&source),
+        ProgressFormat::Human,
+        None,
+    )
+    .unwrap();
+    assert_eq!(
+        fs::read(installed.join("model.bin")).unwrap(),
+        b"tiny model"
+    );
+    let manifest = fs::read_to_string(installed.join(".omaspeak-model.json")).unwrap();
+    assert!(manifest.contains("user-supplied-directory"));
+
+    fs::write(source.join("model.bin"), b"tampered").unwrap();
+    fs::remove_dir_all(&installed).unwrap();
+    assert!(
+        install(
+            &app_paths,
+            restricted,
+            Some(&source),
+            ProgressFormat::Human,
+            None,
+        )
+        .is_err()
+    );
 }
 
 #[test]

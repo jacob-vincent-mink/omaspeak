@@ -33,39 +33,26 @@ pub struct Synthesis {
 
 impl Engine {
     pub fn load(config: &Config, paths: &AppPaths) -> Result<Self> {
-        Self::load_with(config, paths, |config, paths, runtime| {
+        Self::load_configured_with(config, paths, |config, paths, runtime| {
             let backend: Box<dyn TtsBackend> = match config.backend.kind.as_str() {
                 "audiocpp" => Box::new(crate::audio_cpp::AudioCppBackend::create(
                     config, paths, runtime,
                 )?),
                 "supertonic" => {
                     let locations = crate::runtime::inspect(&config.backend, &paths.config_file);
-                    if runtime == Runtime::Openvino {
-                        let runtime = crate::runtime::resolve_openvino_runtime(
-                            &config.backend,
-                            &paths.config_file,
-                            &locations,
-                        )?;
-                        Box::new(crate::supertonic::DirectOpenvinoBackend::create(
-                            config, paths, runtime,
-                        )?)
-                    } else {
-                        if config.model.family != "supertonic" {
-                            bail!(
-                                "the direct ONNX Runtime backend supports Supertonic models; configured family is {:?}",
-                                config.model.family
-                            );
-                        }
-                        let libraries = crate::runtime::resolve_onnx_runtime(
-                            &config.backend,
-                            &paths.config_file,
-                            &locations,
-                            runtime,
-                        )?;
-                        Box::new(crate::supertonic::DirectOrtBackend::create(
-                            config, paths, libraries, runtime,
-                        )?)
+                    if runtime != Runtime::Openvino {
+                        bail!(
+                            "backend.kind=\"supertonic\" is the direct OpenVINO provider; select runtime=openvino"
+                        )
                     }
+                    let runtime = crate::runtime::resolve_openvino_runtime(
+                        &config.backend,
+                        &paths.config_file,
+                        &locations,
+                    )?;
+                    Box::new(crate::supertonic::DirectOpenvinoBackend::create(
+                        config, paths, runtime,
+                    )?)
                 }
                 kind => bail!("unsupported TTS backend {kind:?}"),
             };
@@ -81,23 +68,45 @@ impl Engine {
         paths: &AppPaths,
         mut create_backend: impl FnMut(&Config, &AppPaths, Runtime) -> Result<Box<dyn TtsBackend>>,
     ) -> Result<Self> {
+        Self::load_configured_with(config, paths, |config, paths, runtime| {
+            create_backend(config, paths, runtime)
+        })
+    }
+
+    fn load_configured_with(
+        config: &Config,
+        paths: &AppPaths,
+        mut create_backend: impl FnMut(&Config, &AppPaths, Runtime) -> Result<Box<dyn TtsBackend>>,
+    ) -> Result<Self> {
         config.backend.validate_shape()?;
-        let mut effective_runtime = config.backend.runtime;
+        let mut effective = config.clone();
         let mut fallback_used = false;
 
         let started = Instant::now();
-        let backend = match create_backend(config, paths, effective_runtime) {
+        let backend = match create_backend(&effective, paths, effective.backend.runtime) {
             Ok(backend) => backend,
             Err(accelerator_error)
-                if effective_runtime != Runtime::Default
+                if (effective.backend.runtime != Runtime::Default
+                    || (effective.backend.kind == "supertonic"
+                        && !effective.backend.device.eq_ignore_ascii_case("cpu")))
                     && config.backend.fallback == Fallback::Cpu =>
             {
                 eprintln!(
                     "omaspeak: warning: accelerated backend initialization failed: {accelerator_error:#}; falling back to cpu"
                 );
-                effective_runtime = Runtime::Default;
+                if effective.backend.kind == "audiocpp" {
+                    effective.backend.runtime = Runtime::Default;
+                } else if effective.backend.kind == "supertonic"
+                    && effective.backend.runtime == Runtime::Openvino
+                {
+                    effective.backend.runtime = Runtime::Openvino;
+                } else {
+                    return Err(accelerator_error);
+                }
+                effective.backend.device = "cpu".into();
+                effective.backend.device_id = 0;
                 fallback_used = true;
-                create_backend(config, paths, Runtime::Default).with_context(|| {
+                create_backend(&effective, paths, effective.backend.runtime).with_context(|| {
                     format!(
                         "accelerated backend initialization failed ({accelerator_error:#}); CPU fallback also failed"
                     )
@@ -115,7 +124,7 @@ impl Engine {
             model_name: config.model.name.clone(),
             sample_rate,
             load_time,
-            effective_runtime,
+            effective_runtime: effective.backend.runtime,
             fallback_used,
         })
     }

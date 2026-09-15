@@ -564,8 +564,7 @@ struct WorkerClient {
 impl WorkerClient {
     fn launch(spec: &WorkerSpec) -> Result<Self> {
         let (stream, child_stream) = UnixStream::pair().context("create audio.cpp worker IPC")?;
-        stream.set_read_timeout(Some(WORKER_TIMEOUT))?;
-        stream.set_write_timeout(Some(WORKER_TIMEOUT))?;
+        set_worker_timeouts(&stream)?;
         let executable = std::env::current_exe().context("locate Omaspeak executable")?;
         let encoded =
             serde_json::to_string(spec).context("encode audio.cpp worker configuration")?;
@@ -665,6 +664,21 @@ impl WorkerClient {
     }
 }
 
+fn set_worker_timeouts(stream: &UnixStream) -> Result<()> {
+    for (operation, result) in [
+        ("read", stream.set_read_timeout(Some(WORKER_TIMEOUT))),
+        ("write", stream.set_write_timeout(Some(WORKER_TIMEOUT))),
+    ] {
+        if let Err(error) = result
+            && error.kind() != std::io::ErrorKind::PermissionDenied
+        {
+            return Err(error)
+                .with_context(|| format!("set audio.cpp worker IPC {operation} timeout"));
+        }
+    }
+    Ok(())
+}
+
 impl Drop for WorkerClient {
     fn drop(&mut self) {
         let _ = self.stop();
@@ -711,6 +725,8 @@ impl AudioCppBackend {
         let backend = match runtime {
             Runtime::Default => "cpu",
             Runtime::Cuda => "cuda",
+            Runtime::Vulkan => "vulkan",
+            Runtime::Hip => "hip",
             Runtime::Openvino => {
                 bail!("runtime=openvino uses Omaspeak's direct OpenVINO provider")
             }
@@ -920,7 +936,8 @@ pub fn run_provider_probe(spec_json: &str) -> Result<()> {
     Api::load(&spec.library).map(|_| ())
 }
 
-fn disable_core_dumps() -> Result<()> {
+/// Disable core collection before a hidden process touches optional native code.
+pub fn disable_core_dumps() -> Result<()> {
     #[cfg(target_os = "linux")]
     let dumpable_result = unsafe { libc::prctl(libc::PR_SET_DUMPABLE, 0) };
     #[cfg(target_os = "linux")]

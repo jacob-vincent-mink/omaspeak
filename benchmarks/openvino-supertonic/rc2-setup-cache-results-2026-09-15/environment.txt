@@ -1,4 +1,0 @@
-openvino=2026.3.1
-device=NPU
-model=supertonic-3-npu
-playback=false

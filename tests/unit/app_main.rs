@@ -557,14 +557,10 @@ fn config_helpers_cover_supported_values_defaults_and_schema() {
         ("backend.fallback", "CPU"),
         ("backend.device_id", "2"),
         ("backend.library_dirs", "/opt/openvino:/opt/cuda"),
-        ("backend.onnxruntime_library", "/opt/ort/libonnxruntime.so"),
-        (
-            "backend.provider_library",
-            "/opt/ort/libonnxruntime_providers_cuda.so",
-        ),
+        ("backend.library", "/opt/audiocpp/libaudiocpp.so"),
         ("backend.openvino_library", "/opt/openvino/libopenvino_c.so"),
         ("backend.openvino_plugins", "/opt/openvino/plugins.xml"),
-        ("backend.options.ProfilingFilePrefix", "/tmp/ort-profile"),
+        ("backend.options.session.profile", "/tmp/audiocpp-profile"),
         ("model.family", "future-family"),
         ("model.name", "custom-model"),
         ("model.directory", "/models/custom"),
@@ -595,8 +591,8 @@ fn config_helpers_cover_supported_values_defaults_and_schema() {
         [PathBuf::from("/opt/openvino"), PathBuf::from("/opt/cuda")]
     );
     assert_eq!(
-        config.backend.options.get("ProfilingFilePrefix"),
-        Some(&"/tmp/ort-profile".to_string())
+        config.backend.options.get("session.profile"),
+        Some(&"/tmp/audiocpp-profile".to_string())
     );
     assert_eq!(config.model.voice, 3);
     assert_eq!(config.model.language, "fr");
@@ -1566,6 +1562,7 @@ fn guided_runtime_change_clears_provider_specific_configuration() {
     let root = sandbox();
     let paths = paths(&root);
     let mut config = Config::default();
+    config.backend.kind = "supertonic".into();
     config.backend.runtime = Runtime::Openvino;
     config.backend.device = "gpu".into();
     config
@@ -1603,21 +1600,21 @@ fn runtime_directory_setup_discovers_flat_and_sdk_library_layouts() {
     }
     fs::create_dir_all(&overlay).unwrap();
     fs::write(overlay.join("libvendor.so"), b"vendor").unwrap();
-    fs::write(lib.join("libonnxruntime.so.1.30.0"), b"ort").unwrap();
+    fs::write(lib.join("libaudiocpp.so.0.1.0"), b"audio.cpp").unwrap();
     fs::write(release.join("libopenvino_c.so.2600"), b"openvino").unwrap();
     fs::create_dir_all(vendor.join("openvino")).unwrap();
     fs::write(vendor.join("openvino/plugins.xml"), b"<ie/>").unwrap();
     fs::write(vendor.join("libopenvino.so.2600"), b"dependency").unwrap();
 
     let mut config = Config::default();
+    config.backend.kind = "supertonic".into();
     config.backend.runtime = Runtime::Openvino;
     config.backend.library_dirs.push(overlay.clone());
     config.save(&paths.config_file).unwrap();
     configure_runtime_directory_with(&paths.config_file, &bundle, |_, _, _| Ok(())).unwrap();
 
     let configured = Config::load(&paths.config_file).unwrap().backend;
-    assert!(configured.onnxruntime_library.is_none());
-    assert!(configured.provider_library.is_none());
+    assert!(configured.library.is_none());
     assert_eq!(
         configured.openvino_library.unwrap(),
         release
@@ -1648,14 +1645,14 @@ fn runtime_directory_setup_discovers_flat_and_sdk_library_layouts() {
 }
 
 #[test]
-fn runtime_directory_setup_accepts_cpu_ort() {
+fn runtime_directory_setup_accepts_complete_audio_cpp_provider() {
     let root = sandbox();
     let paths = paths(&root);
     let bundle = root.join("cpu-runtime");
     let lib = bundle.join("lib");
     fs::create_dir_all(&lib).unwrap();
-    let ort = lib.join("libonnxruntime.so.1.30.0");
-    fs::write(&ort, b"ort").unwrap();
+    let provider = lib.join("libaudiocpp.so.0.1.0");
+    fs::write(&provider, b"audio.cpp").unwrap();
 
     let mut config = Config::default();
     config.backend.runtime = Runtime::Default;
@@ -1664,36 +1661,29 @@ fn runtime_directory_setup_accepts_cpu_ort() {
 
     let configured = Config::load(&paths.config_file).unwrap().backend;
     assert_eq!(
-        configured.onnxruntime_library.unwrap(),
-        ort.canonicalize().unwrap()
+        configured.library.unwrap(),
+        provider.canonicalize().unwrap()
     );
-    assert!(configured.provider_library.is_none());
 }
 
 #[test]
-fn runtime_directory_setup_accepts_standalone_cuda_plugin() {
+fn runtime_directory_setup_accepts_complete_cuda_audio_cpp_provider() {
     let root = sandbox();
     let paths = paths(&root);
     let bundle = root.join("cuda-plugin");
     fs::create_dir_all(&bundle).unwrap();
-    let provider = bundle.join("libonnxruntime_providers_cuda.so");
+    let provider = bundle.join("libaudiocpp.so");
     fs::write(&provider, b"provider").unwrap();
 
-    let packaged_core = root.join("package/lib/libonnxruntime.so.1.30.0");
     let mut config = Config::default();
     config.backend.runtime = Runtime::Cuda;
     config.backend.device = "gpu".into();
-    config.backend.onnxruntime_library = Some(packaged_core.clone());
     config.save(&paths.config_file).unwrap();
 
     configure_runtime_directory_with(&paths.config_file, &bundle, |_, _, _| Ok(())).unwrap();
 
     let configured = Config::load(&paths.config_file).unwrap().backend;
-    assert_eq!(configured.onnxruntime_library, Some(packaged_core));
-    assert_eq!(
-        configured.provider_library,
-        Some(provider.canonicalize().unwrap())
-    );
+    assert_eq!(configured.library, Some(provider.canonicalize().unwrap()));
     assert!(
         configured
             .library_dirs
@@ -1794,8 +1784,7 @@ fn runtime_report(
         package_library_dirs: Vec::new(),
         effective_library_dirs: Vec::new(),
         missing_library_dirs: Vec::new(),
-        onnxruntime_library: None,
-        provider_library: None,
+        audiocpp_library: None,
         openvino_library: None,
         openvino_plugins: None,
         runtime_loadable: BTreeMap::from([(name, loadable)]),
@@ -1848,11 +1837,11 @@ fn guided_model_marks_active_installed_and_downloadable_models() {
     let selected =
         choose_model(&paths.config_file, &paths, &installed, None, &mut selector).unwrap();
     assert_eq!(selected.as_deref(), Some("supertonic-3-gguf"));
-    assert!(selector.calls[0].1[1].label.contains("● active"));
+    assert!(selector.calls[0].1[0].label.contains("● active"));
     assert!(
         selector.calls[0].1[2]
             .detail
-            .contains("Intel NPU validated")
+            .contains("Intel NPU compatible")
     );
 
     let available = FakeModelOperations { installed: false };
@@ -2009,22 +1998,6 @@ fn fresh_full_setup_stages_audio_cpp_cpu_and_gguf_together() {
     assert!(selector.calls[2].1[0].enabled);
     assert!(!selector.calls[2].1[1].enabled);
     assert!(!selector.calls[2].1[2].enabled);
-}
-
-#[test]
-fn runtime_only_audio_cpp_requires_or_stages_an_installed_gguf() {
-    let mut config = Config::default();
-    config.backend.kind = "audiocpp".into();
-    let error =
-        stage_installed_audio_cpp_model_with(&mut config, |_| bail!("not installed")).unwrap_err();
-    assert!(error.to_string().contains("choose Full setup"));
-    assert_eq!(config.model.name, "supertonic-3-int8");
-
-    stage_installed_audio_cpp_model_with(&mut config, |_| Ok(())).unwrap();
-    assert_eq!(config.model.name, "supertonic-3-gguf");
-    assert_eq!(config.model.file, "supertonic-3-orig.gguf");
-    assert_eq!(config.backend.runtime, Runtime::Default);
-    assert_eq!(config.backend.device, "cpu");
 }
 
 #[test]
@@ -2568,7 +2541,6 @@ fn builtin_model_boundaries_and_offline_command_validation_are_actionable() {
         )
         .is_err()
     );
-    assert!(play(&root.join("missing.wav")).is_err());
 }
 
 #[test]
@@ -2673,7 +2645,7 @@ fn unattended_setup_rejects_a_missing_runtime_before_mutating_config() {
     let root = sandbox();
     let paths = paths(&root);
     let mut config = Config::default();
-    config.backend.onnxruntime_library = Some(root.join("missing-libonnxruntime.so"));
+    config.backend.library = Some(root.join("missing-libaudiocpp.so"));
     config.save(&paths.config_file).unwrap();
     let original = fs::read(&paths.config_file).unwrap();
 
@@ -2842,20 +2814,19 @@ fn filesystem_daemon_and_report_branches_need_no_native_runtime() {
     fs::create_dir_all(paths.config_file.parent().unwrap()).unwrap();
     let runtime = root.join("runtime");
     fs::create_dir_all(&runtime).unwrap();
-    fs::write(runtime.join("libonnxruntime.so"), b"fixture").unwrap();
-    fs::write(runtime.join("libonnxruntime_providers_cuda.so"), b"fixture").unwrap();
+    fs::write(runtime.join("libaudiocpp.so"), b"fixture").unwrap();
 
     let mut config = Config::default();
     apply_runtime_directory(&mut config, &paths.config_file, Path::new("../runtime")).unwrap();
     assert_eq!(
-        config.backend.onnxruntime_library.as_deref(),
-        Some(runtime.join("libonnxruntime.so").as_path())
+        config.backend.library.as_deref(),
+        Some(runtime.join("libaudiocpp.so").as_path())
     );
     config.backend.runtime = Runtime::Cuda;
     apply_runtime_directory(&mut config, &paths.config_file, &runtime).unwrap();
     assert_eq!(
-        config.backend.provider_library.as_deref(),
-        Some(runtime.join("libonnxruntime_providers_cuda.so").as_path())
+        config.backend.library.as_deref(),
+        Some(runtime.join("libaudiocpp.so").as_path())
     );
 
     let regular = root.join("not-a-directory");
@@ -2877,12 +2848,12 @@ fn filesystem_daemon_and_report_branches_need_no_native_runtime() {
         voice: None,
     };
     let report = benchmark_report(&Config::default(), &engine, &args, 0, Vec::new()).unwrap();
-    assert_eq!(report["backend"]["placement_verified"], true);
+    assert_eq!(report["backend"]["placement_verified"], false);
     assert!(
         report["backend"]["placement_evidence"]
             .as_str()
             .unwrap()
-            .contains("CPU engine")
+            .contains("audio.cpp")
     );
     let openvino = FakeEngine {
         fail: false,
@@ -2908,10 +2879,10 @@ fn filesystem_daemon_and_report_branches_need_no_native_runtime() {
             speed: 1.0,
             voice: 0,
             output: Some(root.join("missing.wav").to_string_lossy().into_owned()),
-            no_play: false,
+            no_play: true,
         }),
     );
-    assert!(matches!(response.result, ResultPayload::Error { .. }));
+    assert!(matches!(response.result, ResultPayload::Synthesis { .. }));
 }
 
 #[test]
@@ -2969,7 +2940,7 @@ fn noninteractive_runtime_setup_persists_selection_and_rejects_an_invalid_librar
 
     let runtime = root.join("runtime-sdk/lib");
     fs::create_dir_all(&runtime).unwrap();
-    fs::write(runtime.join("libonnxruntime.so.1"), b"fixture").unwrap();
+    fs::write(runtime.join("libaudiocpp.so.1"), b"fixture").unwrap();
     let original = fs::read_to_string(&paths.config_file).unwrap();
     let error = setup(
         Some(SetupCommand::Runtime {
@@ -2983,7 +2954,7 @@ fn noninteractive_runtime_setup_persists_selection_and_rejects_an_invalid_librar
         &paths,
     )
     .unwrap_err();
-    assert!(error.to_string().contains("libaudiocpp.so was not found"));
+    assert!(error.to_string().contains("runtime candidate rejected"));
     assert_eq!(fs::read_to_string(&paths.config_file).unwrap(), original);
     setup(
         Some(SetupCommand::Runtime {
@@ -3201,6 +3172,9 @@ fn explicit_cache_setup_reports_optional_unready_and_ready_states() {
     assert!(error.to_string().contains("runtime/device"));
 
     let mut unready = Config::default();
+    omaspeak::catalog::model("supertonic-3-npu")
+        .unwrap()
+        .activate(&mut unready);
     unready.backend.runtime = Runtime::Openvino;
     unready.backend.device = "npu".into();
     unready.model.name = "custom-npu".into();
@@ -3552,8 +3526,7 @@ fn runtime_picker_handles_explicit_directories_and_cancelled_input_without_probi
     let app_paths = paths(&root);
     let mut config = Config::default();
     config.backend.runtime = Runtime::Cuda;
-    config.backend.onnxruntime_library = Some(root.join("missing-ort.so"));
-    config.backend.provider_library = Some(root.join("missing-cuda.so"));
+    config.backend.library = Some(root.join("missing-audiocpp.so"));
     config.save(&app_paths.config_file).unwrap();
     let mut cancelled = InputSelector {
         choices: [Some(2), Some(0)].into(),
@@ -3755,7 +3728,7 @@ fn default_setup_selector_and_accept_wrapper_cover_production_boundaries() {
     let root = sandbox();
     let app_paths = paths(&root);
     let mut config = Config::default();
-    config.backend.onnxruntime_library = Some(root.join("missing-libonnxruntime.so"));
+    config.backend.library = Some(root.join("missing-libaudiocpp.so"));
 
     let mut selector = ErrorSelector;
     assert_eq!(

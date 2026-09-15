@@ -6,7 +6,11 @@ fn defaults_to_cpu_runtime() {
     assert_eq!(config.runtime, Runtime::Default);
     assert_eq!(config.canonical_device().unwrap(), "auto");
     assert!(config.validate_shape().is_ok());
-    assert_eq!(supported_capabilities(), &["cpu", "openvino", "cuda"]);
+    assert_eq!(config.kind, "audiocpp");
+    assert_eq!(
+        supported_capabilities(),
+        &["cpu", "cuda", "vulkan", "hip", "openvino"]
+    );
 }
 
 #[test]
@@ -14,6 +18,8 @@ fn validates_runtime_device_matrix() {
     for (runtime, accepted) in [
         (Runtime::Default, &["auto", "CPU"][..]),
         (Runtime::Cuda, &["auto", "GPU"][..]),
+        (Runtime::Vulkan, &["auto", "GPU"][..]),
+        (Runtime::Hip, &["auto", "GPU"][..]),
         (Runtime::Openvino, &["auto", "npu", "GPU", "cpu"][..]),
     ] {
         for device in accepted {
@@ -25,6 +31,7 @@ fn validates_runtime_device_matrix() {
     }
     assert!(canonical_device(Runtime::Default, "gpu").is_err());
     assert!(canonical_device(Runtime::Cuda, "cpu").is_err());
+    assert!(canonical_device(Runtime::Vulkan, "cpu").is_err());
     assert!(canonical_device(Runtime::Openvino, "tpu").is_err());
 
     let invalid_device_id = BackendConfig {

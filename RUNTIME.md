@@ -1,24 +1,31 @@
-Omaspeak ships one executable and CPU ONNX Runtime 1.30.0 under lib/.
-The Rust Supertonic frontend uses this runtime automatically without configured
-native paths. The release includes no sherpa, Piper, eSpeak or accelerator DSOs.
+# Native runtime contract
 
-`omaspeak setup runtime --json` is a read-only inventory of every supported
-runtime/device. It distinguishes supported, discovered, configured, loadable,
-device_accessible and ready, and reports exact paths, source, evidence, errors
-and remediation. Runtime/device readiness does not prove model placement.
+Omaspeak is one Rust executable with runtime-loaded native providers.
 
-OpenVINO requires an external libopenvino_c.so, plugins.xml and Intel plugins.
-CUDA reuses that core and requires Microsoft's standalone CUDA Plugin EP plus
-matching NVIDIA dependencies.
-Setup never downloads, builds, copies or installs native runtimes.
+The default release includes one stripped CPU-only `libaudiocpp.so.0.1.0` built
+from audio.cpp commit `e9ff20042ec85af960a720368c6927cda19ad65f`, with SONAME
+`libaudiocpp.so.0` and the normal SONAME links. The executable dynamically loads
+the public audio.cpp C ABI. It does not invoke the audio.cpp CLI. Omaspeak
+re-executes itself as a hidden supervised worker to isolate native faults and
+reuse a loaded session.
 
-`omaspeak setup runtime --runtime openvino --device npu --dir /absolute/runtime`
-previews and probes a candidate in an isolated process. Add `--apply` to save
-after success. Guided setup offers an Apply/Cancel review. Failures and
-cancellation leave config unchanged; ambient LD_LIBRARY_PATH is never saved.
+CUDA, Vulkan, and HIP/ROCm selections point to a complete external audio.cpp
+provider. Omaspeak passes the exact backend and device ID requested in config.
+It never assembles plugins into a differently built provider and never installs
+vendor software.
 
-Install models separately with explicit OpenRAIL-M acceptance. Only
-`omaspeak setup systemd` installs or starts the optional user service.
+OpenVINO is a separate direct provider. Omaspeak loads the external OpenVINO C
+API and plugins manifest, owns the Supertonic pre/post-processing, and keeps
+NPU compilation in setup.
 
-See `ACCELERATOR_SETUP.md` for tested Arch/Omarchy Intel packages, NPU
-setup-time cache preparation, and the official standalone CUDA Plugin EP.
+Search order is:
+
+1. exact configured library;
+2. configured application-owned library directories;
+3. `OMASPEAK_LIBRARY_PATH` directories;
+4. package directories beside the executable and under its prefix.
+
+The ambient system loader remains responsible for a provider's dependencies.
+Runtime inventory reports exact paths and missing configured directories. The
+release executable itself must have no load-time dependency on any inference
+runtime or accelerator library.

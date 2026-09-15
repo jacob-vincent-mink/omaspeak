@@ -124,9 +124,6 @@ fn engine_load_reports_shape_backend_and_runtime_errors() {
 
     config.backend.kind = "supertonic".into();
     config.model.family = "unknown".into();
-    if let Some(library) = std::env::var_os("OMASPEAK_TEST_ONNXRUNTIME_LIBRARY") {
-        config.backend.onnxruntime_library = Some(library.into());
-    }
     assert!(Engine::load(&config, &paths).is_err());
 
     config.model.family = "supertonic".into();
@@ -195,6 +192,48 @@ fn injected_load_constructs_engine_and_exercises_cpu_fallback() {
     .unwrap();
     assert_eq!(attempts, 2);
     assert!(error.to_string().contains("CPU fallback also failed"));
+}
+
+#[test]
+fn direct_openvino_fallback_keeps_provider_and_model_while_selecting_cpu() {
+    let root = temp("openvino-fallback");
+    let paths = paths(&root);
+    let mut config = Config::default();
+    crate::catalog::model("supertonic-3-npu")
+        .unwrap()
+        .activate(&mut config);
+    config.backend.runtime = Runtime::Openvino;
+    config.backend.device = "npu".into();
+    config.backend.fallback = Fallback::Cpu;
+
+    let mut attempts = Vec::new();
+    let loaded = Engine::load_with(&config, &paths, |attempt, _, runtime| {
+        attempts.push((
+            attempt.backend.kind.clone(),
+            runtime,
+            attempt.backend.device.clone(),
+        ));
+        if attempt.backend.device == "npu" {
+            Err(anyhow::anyhow!("NPU unavailable"))
+        } else {
+            Ok(Box::new(FakeBackend {
+                voices: 1,
+                samples: Ok(vec![0.0]),
+            }))
+        }
+    })
+    .unwrap();
+
+    assert_eq!(
+        attempts,
+        [
+            ("supertonic".into(), Runtime::Openvino, "npu".into()),
+            ("supertonic".into(), Runtime::Openvino, "cpu".into()),
+        ]
+    );
+    assert_eq!(loaded.model_name, "supertonic-3-npu");
+    assert_eq!(loaded.effective_runtime, Runtime::Openvino);
+    assert!(loaded.fallback_used);
 }
 
 #[test]

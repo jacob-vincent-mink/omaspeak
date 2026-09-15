@@ -1,41 +1,12 @@
-# Omaspeak demo
-
-Run guided setup, accept the Supertonic model license, and choose a runtime,
-device, model, and voice:
+# File-only demo
 
 ```bash
-omaspeak setup
+omaspeak setup all --model supertonic-3-gguf --accept-license OpenRAIL-M
+omaspeak voices
+omaspeak say --voice M1 --no-play --out /tmp/m1.wav "Testing one, two, three."
+omaspeak say --voice F1 --no-play --out /tmp/f1.wav "Omaspeak runs locally."
+omaspeak benchmark --text "A warm inference benchmark." --out-dir /tmp/omaspeak-bench
 ```
 
-Generate audio without playing it through speakers:
-
-```bash
-omaspeak say \
-  "Omaspeak generated this sentence locally." \
-  --no-play --out /tmp/omaspeak-demo.wav
-```
-
-Inspect the selected runtime and model readiness:
-
-```bash
-omaspeak status --json
-omaspeak setup check
-```
-
-`say` loads the engine on demand and exits when no daemon is listening. For
-repeated synthesis, start the daemon explicitly in one terminal:
-
-```bash
-omaspeak daemon
-```
-
-Then use a second terminal to send requests to its hot model:
-
-```bash
-omaspeak say "The model is already warm." --no-play --out /tmp/omaspeak-hot.wav
-omaspeak stop
-```
-
-`status` and `setup check` confirm the requested configuration and device
-availability. The checked-in benchmark reports contain the separate execution
-placement evidence.
+No command above opens a playback device. `setup all` performs its own
+file-only model-backed proof and leaves systemd untouched.

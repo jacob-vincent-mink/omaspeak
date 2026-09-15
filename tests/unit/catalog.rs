@@ -56,6 +56,23 @@ fn catalog_enforces_current_model_license_policy() {
         gguf.source_revision,
         "09fe073ba154561f4474162e8bd4ab233a848eca"
     );
+    assert_eq!(
+        gguf.artifact_source,
+        "https://huggingface.co/audio-cpp/audio.cpp-gguf"
+    );
+    assert_eq!(
+        gguf.artifact_revision,
+        "09fe073ba154561f4474162e8bd4ab233a848eca"
+    );
+    assert_eq!(
+        gguf.original_model_source,
+        "https://huggingface.co/Supertone/supertonic-3"
+    );
+    assert_eq!(
+        gguf.original_model_revision,
+        "724fb5abbf5502583fb520898d45929e62f02c0b"
+    );
+    assert!(!gguf.license_status.contains("verified-converted"));
     let file = gguf.single_file.unwrap();
     assert_eq!(file.size, 454_072_836);
     assert_eq!(

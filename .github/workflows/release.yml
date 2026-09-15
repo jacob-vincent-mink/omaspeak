@@ -14,6 +14,9 @@ defaults:
   run:
     shell: bash
 
+env:
+  AUDIOCPP_COMMIT: e9ff20042ec85af960a720368c6927cda19ad65f
+
 jobs:
   linux:
     name: linux-${{ matrix.package_arch }}
@@ -22,20 +25,12 @@ jobs:
       matrix:
         include:
           - runner: ubuntu-22.04
-            ort_arch: x64
             package_arch: x86_64
-            ort_archive_sha256: a5ed5a3cac51fbb2e90da632ae43d19212faaa20e76484e62bcb7c23ddb3b3fd
           - runner: ubuntu-22.04-arm
-            ort_arch: aarch64
             package_arch: aarch64
-            ort_archive_sha256: e16a27a8ed330bbc698df7330b0cf56e722f354e3bcc92118682c74ef3c3e3da
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
     env:
-      OMA_ORT_ROOT: /tmp/onnxruntime-linux-${{ matrix.ort_arch }}-1.30.0
-      ORT_ARCH: ${{ matrix.ort_arch }}
-      ORT_ARCHIVE_SHA256: ${{ matrix.ort_archive_sha256 }}
-      ORT_VERSION: 1.30.0
       PACKAGE_ARCH: ${{ matrix.package_arch }}
     steps:
       - uses: actions/checkout@v4
@@ -45,29 +40,31 @@ jobs:
           set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            ca-certificates curl xz-utils
+            binutils ca-certificates cmake curl g++ git libgomp1 ninja-build xz-utils
 
       - uses: dtolnay/rust-toolchain@stable
-
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-about@0.9.2
 
-      - name: Download the pinned CPU ONNX Runtime SDK
+      - name: Build the pinned default audio.cpp provider
         run: |
           set -euo pipefail
-          archive="/tmp/onnxruntime-linux-${ORT_ARCH}-${ORT_VERSION}.tgz"
-          curl -fsSL --retry 3 -o "${archive}" \
-            "https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}/onnxruntime-linux-${ORT_ARCH}-${ORT_VERSION}.tgz"
-          printf '%s  %s\n' "${ORT_ARCHIVE_SHA256}" "${archive}" | sha256sum -c -
-          tar -C /tmp -xzf "${archive}"
-          test -f "${OMA_ORT_ROOT}/include/onnxruntime_cxx_api.h"
-          test -f "${OMA_ORT_ROOT}/lib/libonnxruntime.so.${ORT_VERSION}"
+          source="${RUNNER_TEMP}/audio.cpp"
+          build="${RUNNER_TEMP}/audio.cpp-build"
+          git clone --filter=blob:none https://github.com/0xShug0/audio.cpp.git "${source}"
+          git -C "${source}" checkout "${AUDIOCPP_COMMIT}"
+          git -C "${source}" submodule update --init --recursive
+          provider=$(./scripts/build-default-audiocpp-provider.sh "${source}" "${build}")
+          strip --strip-unneeded "${provider}"
+          test "$(git -C "${source}" rev-parse HEAD)" = "${AUDIOCPP_COMMIT}"
+          echo "AUDIOCPP_SOURCE=${source}" >> "${GITHUB_ENV}"
+          echo "AUDIOCPP_PROVIDER=${provider}" >> "${GITHUB_ENV}"
+          echo "OMASPEAK_TEST_AUDIOCPP_LIBRARY=${provider}" >> "${GITHUB_ENV}"
 
       - name: Test and build the runtime-neutral executable
         run: |
-          OMASPEAK_TEST_ONNXRUNTIME_LIBRARY="${OMA_ORT_ROOT}/lib/libonnxruntime.so.${ORT_VERSION}" \
-            cargo test --locked
+          cargo test --locked -- --test-threads=1
           cargo build --release --locked
 
       - name: Stage the release
@@ -84,21 +81,27 @@ jobs:
             version=${tag_version}
           fi
           package="omaspeak-${version}-linux-${PACKAGE_ARCH}"
-          mkdir -p "dist/${package}/lib" "dist/${package}/licenses"
-          cargo about generate about.hbs > "dist/${package}/licenses/RUST-DEPENDENCIES.txt"
-          cp target/release/omaspeak "dist/${package}/omaspeak"
-          cp "${OMA_ORT_ROOT}/lib/libonnxruntime.so.${ORT_VERSION}" "dist/${package}/lib/"
-          ln -s "libonnxruntime.so.${ORT_VERSION}" "dist/${package}/lib/libonnxruntime.so.1"
-          ln -s libonnxruntime.so.1 "dist/${package}/lib/libonnxruntime.so"
-          cp "${OMA_ORT_ROOT}/LICENSE" "dist/${package}/licenses/ONNX-RUNTIME-LICENSE"
-          cp "${OMA_ORT_ROOT}/ThirdPartyNotices.txt" \
-            "dist/${package}/licenses/ONNX-RUNTIME-THIRD-PARTY-NOTICES"
-          cp LICENSE "dist/${package}/licenses/OMASPEAK-LICENSE"
-          cp THIRD_PARTY_NOTICES.md "dist/${package}/licenses/OMASPEAK-THIRD-PARTY-NOTICES"
-          cp licenses/SUPERTONIC-CODE-LICENSE "dist/${package}/licenses/SUPERTONIC-CODE-LICENSE"
-          cp RUNTIME.md "dist/${package}/RUNTIME.md"
-          cp README.md INSTALL.md ACCELERATOR_SETUP.md CHANGELOG.md RELEASE_NOTES.md DEMO.md config.example.toml "dist/${package}/"
-          cp -a assets benchmarks packaging "dist/${package}/"
+          root="dist/${package}"
+          mkdir -p "${root}/lib" "${root}/licenses/AUDIOCPP-THIRD-PARTY"
+          cargo about generate about.hbs > "${root}/licenses/RUST-DEPENDENCIES.txt"
+          cp target/release/omaspeak "${root}/omaspeak"
+          cp "${AUDIOCPP_PROVIDER}" "${root}/lib/libaudiocpp.so.0.1.0"
+          ln -s libaudiocpp.so.0.1.0 "${root}/lib/libaudiocpp.so.0"
+          ln -s libaudiocpp.so.0 "${root}/lib/libaudiocpp.so"
+          while IFS= read -r -d '' license; do
+            relative=${license#"${AUDIOCPP_SOURCE}/"}
+            destination="${root}/licenses/AUDIOCPP-THIRD-PARTY/${relative}"
+            mkdir -p "$(dirname "${destination}")"
+            cp "${license}" "${destination}"
+          done < <(find "${AUDIOCPP_SOURCE}" -type f \
+            \( -iname 'license' -o -iname 'license.*' -o -iname 'copying*' -o -iname 'notice*' \) \
+            -not -path '*/.git/*' -print0)
+          cp LICENSE "${root}/licenses/OMASPEAK-LICENSE"
+          cp THIRD_PARTY_NOTICES.md "${root}/licenses/OMASPEAK-THIRD-PARTY-NOTICES"
+          cp licenses/SUPERTONIC-CODE-LICENSE "${root}/licenses/SUPERTONIC-CODE-LICENSE"
+          cp licenses/LLAMA-CPP-LICENSE "${root}/licenses/LLAMA-CPP-LICENSE"
+          cp README.md INSTALL.md ACCELERATOR_SETUP.md RUNTIME.md CHANGELOG.md RELEASE_NOTES.md DEMO.md config.example.toml "${root}/"
+          cp -a assets benchmarks packaging "${root}/"
           tar -C dist -cJf "dist/${package}.tar.xz" "${package}"
           (cd dist && sha256sum "${package}.tar.xz" > "${package}.sha256")
           echo "name=${package}" >> "${GITHUB_OUTPUT}"
@@ -107,73 +110,61 @@ jobs:
         run: |
           set -euo pipefail
           package='${{ steps.package.outputs.name }}'
-          smoke_root="${RUNNER_TEMP}/${package}-smoke"
-          mkdir -p "${smoke_root}"
-          tar -C "${smoke_root}" -xJf "dist/${package}.tar.xz"
-          binary="${smoke_root}/${package}/omaspeak"
-          for document in README.md INSTALL.md ACCELERATOR_SETUP.md CHANGELOG.md RELEASE_NOTES.md DEMO.md config.example.toml RUNTIME.md; do
-            test -s "${smoke_root}/${package}/${document}"
-          done
-          test -s "${smoke_root}/${package}/assets/omaspeak-mark.svg"
-          test -s "${smoke_root}/${package}/benchmarks/cuda-gb10-ort130-2026-09-15.md"
-          test -s "${smoke_root}/${package}/benchmarks/openvino-supertonic/RC2-SETUP-CACHE-2026-09-15.md"
-          test -s "${smoke_root}/${package}/packaging/systemd/omaspeak.service"
+          root="dist/${package}"
+          binary="${root}/omaspeak"
+          provider="${root}/lib/libaudiocpp.so.0.1.0"
           expected_version="${package#omaspeak-}"
           expected_version="${expected_version%-linux-${PACKAGE_ARCH}}"
           [[ "$("${binary}" --version)" == "omaspeak ${expected_version}" ]]
-          "${binary}" setup runtime --json > /tmp/runtime.json
-          python3 - <<'PY'
-          import json
-          with open("/tmp/runtime.json", encoding="utf-8") as handle:
-              report = json.load(handle)
-          actual = set(report["supported_capabilities"])
-          expected = {"cpu", "openvino", "cuda"}
-          if actual != expected:
-              raise SystemExit(f"capabilities {sorted(actual)} != {sorted(expected)}")
-          if not report["libraries"]["runtime_loadable"]["default"]:
-              raise SystemExit("packaged CPU default is not reported loadable")
-          cpu = next(item for item in report["inventory"] if item["runtime"] == "default" and item["device"] == "cpu")
-          assert cpu["ready"] and cpu["loadable"] and cpu["device_accessible"]
-          assert cpu["source"] == "package" and not cpu["configured"]
-          PY
-          if readelf -d "${binary}" | grep -E 'NEEDED.*(onnxruntime|sherpa|openvino|cuda|cudnn|cublas|nvinfer)'; then
-            echo "release executable must not link an inference runtime" >&2
+          [[ "$(readelf -d "${provider}" | sed -n 's/.*Library soname: \[\([^]]*\)\].*/\1/p')" == "libaudiocpp.so.0" ]]
+          test -L "${root}/lib/libaudiocpp.so.0"
+          test -L "${root}/lib/libaudiocpp.so"
+          for symbol in audiocpp_abi_version audiocpp_registry_create audiocpp_model_load audiocpp_session_create audiocpp_session_run audiocpp_result_audio; do
+            nm -D --defined-only "${provider}" | grep "${symbol}@@AUDIOCPP_0" >/dev/null
+          done
+          if readelf -d "${binary}" | grep -Ei 'NEEDED.*(audiocpp|onnxruntime|sherpa|openvino|cuda|cudnn|hip|vulkan)'; then
+            echo "release executable has a forbidden inference-runtime dependency" >&2
             exit 1
           fi
-          lib="dist/${package}/lib"
-          for required in \
-            libonnxruntime.so \
-            libonnxruntime.so.1 \
-            "libonnxruntime.so.${ORT_VERSION}"; do
-            test -e "${lib}/${required}"
-          done
-          [[ $(find "${lib}" -maxdepth 1 \( -type f -o -type l \) | wc -l) == 3 ]]
-          ! compgen -G "${lib}/libonnxruntime_providers_*.so*" >/dev/null
-          ! compgen -G "${lib}/libsherpa-onnx*.so*" >/dev/null
-          while IFS= read -r -d '' dso; do
-            case "${dso#dist/${package}/}" in
-              lib/libonnxruntime.so|lib/libonnxruntime.so.1|lib/libonnxruntime.so.${ORT_VERSION}) ;;
-              *) echo "Forbidden bundled DSO: ${dso}" >&2; exit 1 ;;
-            esac
-          done < <(find "dist/${package}" -name '*.so*' -print0)
-          licenses="dist/${package}/licenses"
-          [[ $(find "${licenses}" -maxdepth 1 -type f | wc -l) == 6 ]]
-          cmp "${OMA_ORT_ROOT}/LICENSE" "${licenses}/ONNX-RUNTIME-LICENSE"
-          cmp "${OMA_ORT_ROOT}/ThirdPartyNotices.txt" \
-            "${licenses}/ONNX-RUNTIME-THIRD-PARTY-NOTICES"
-          cmp LICENSE "${licenses}/OMASPEAK-LICENSE"
-          cmp THIRD_PARTY_NOTICES.md "${licenses}/OMASPEAK-THIRD-PARTY-NOTICES"
-          cmp licenses/SUPERTONIC-CODE-LICENSE "${licenses}/SUPERTONIC-CODE-LICENSE"
-          test -s "${licenses}/RUST-DEPENDENCIES.txt"
-          LIB="${lib}" python3 - <<'PY'
-          import ctypes
-          import os
-
-          lib = os.environ["LIB"]
-          runtime = ctypes.CDLL(os.path.join(lib, "libonnxruntime.so"), mode=ctypes.RTLD_GLOBAL)
-          runtime.OrtGetApiBase.restype = ctypes.c_void_p
-          assert runtime.OrtGetApiBase()
+          ! readelf -d "${provider}" | grep -Ei 'NEEDED.*(onnxruntime|sherpa)'
+          ! find "${root}" -iname '*onnxruntime*' -o -iname '*sherpa*' | grep .
+          test -s "${root}/licenses/AUDIOCPP-THIRD-PARTY/LICENSE"
+          test -s "${root}/licenses/AUDIOCPP-THIRD-PARTY/external/ggml/LICENSE"
+          test -s "${root}/licenses/AUDIOCPP-THIRD-PARTY/external/sentencepiece/LICENSE"
+          test -s "${root}/licenses/AUDIOCPP-THIRD-PARTY/external/sentencepiece/third_party/protobuf-lite/LICENSE"
+          test -s "${root}/licenses/LLAMA-CPP-LICENSE"
+          test "$(find "${root}/licenses/AUDIOCPP-THIRD-PARTY" -type f | wc -l)" -ge 10
+          export XDG_CONFIG_HOME="${RUNNER_TEMP}/omaspeak-release/config"
+          export XDG_DATA_HOME="${RUNNER_TEMP}/omaspeak-release/data"
+          export XDG_CACHE_HOME="${RUNNER_TEMP}/omaspeak-release/cache"
+          export XDG_RUNTIME_DIR="${RUNNER_TEMP}/omaspeak-release/run"
+          mkdir -p "${XDG_RUNTIME_DIR}"
+          "${binary}" setup runtime --json > "${RUNNER_TEMP}/runtime.json"
+          python3 - "${RUNNER_TEMP}/runtime.json" "${provider}" <<'PY'
+          import json, pathlib, sys
+          report = json.load(open(sys.argv[1], encoding="utf-8"))
+          expected = pathlib.Path(sys.argv[2]).resolve()
+          assert set(report["supported_capabilities"]) == {"cpu", "cuda", "vulkan", "hip", "openvino"}
+          cpu = next(item for item in report["inventory"] if item["runtime"] == "default" and item["device"] == "cpu")
+          assert cpu["loadable"] and cpu["ready"]
+          assert not cpu["device_accessible"] and not cpu["evidence"]["model_inference_verified"]
+          assert pathlib.Path(cpu["evidence"]["provider_path"]).resolve() == expected
           PY
+
+      - name: File-only Supertonic GGUF smoke
+        if: matrix.package_arch == 'x86_64'
+        run: |
+          set -euo pipefail
+          package='${{ steps.package.outputs.name }}'
+          binary="dist/${package}/omaspeak"
+          export XDG_CONFIG_HOME="${RUNNER_TEMP}/omaspeak-smoke/config"
+          export XDG_DATA_HOME="${RUNNER_TEMP}/omaspeak-smoke/data"
+          export XDG_CACHE_HOME="${RUNNER_TEMP}/omaspeak-smoke/cache"
+          export XDG_RUNTIME_DIR="${RUNNER_TEMP}/omaspeak-smoke/run"
+          mkdir -p "${XDG_RUNTIME_DIR}"
+          "${binary}" setup model --download supertonic-3-gguf --accept-license OpenRAIL-M
+          "${binary}" say --no-play --out "${RUNNER_TEMP}/omaspeak-smoke.wav" "Release file only proof."
+          test -s "${RUNNER_TEMP}/omaspeak-smoke.wav"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -189,22 +180,17 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/download-artifact@v4
         with:
           pattern: omaspeak-*-linux-*
           path: dist
           merge-multiple: true
-
       - name: Verify and combine checksums
         run: |
           set -euo pipefail
           cd dist
-          for checksum in omaspeak-*.sha256; do
-            sha256sum -c "${checksum}"
-          done
+          for checksum in omaspeak-*.sha256; do sha256sum -c "${checksum}"; done
           sha256sum omaspeak-*.tar.xz > SHA256SUMS.txt
-
       - uses: actions/upload-artifact@v4
         with:
           name: omaspeak-linux-release-assets
@@ -212,7 +198,6 @@ jobs:
             dist/omaspeak-*.tar.xz
             dist/SHA256SUMS.txt
           if-no-files-found: error
-
       - name: Publish GitHub release
         if: github.ref_type == 'tag'
         uses: softprops/action-gh-release@v2

@@ -1,35 +1,27 @@
 [backend]
-kind = "supertonic"
-runtime = "default"
-device = "auto"
+kind = "audiocpp"
+runtime = "default" # default | cuda | vulkan | hip | openvino
+device = "cpu"      # cpu for default; gpu/auto for accelerators; cpu/gpu/npu/auto for OpenVINO
 threads = 2
-fallback = "error"
-device_id = 0
+fallback = "error"  # error | cpu; fallback stays within the selected provider/model
+# device_id = 0
+# library = "/opt/audiocpp/lib/libaudiocpp.so"
+# library_dirs = ["/opt/audiocpp/lib"]
+# openvino_library = "/opt/intel/openvino/runtime/lib/intel64/libopenvino_c.so"
+# openvino_plugins = "/opt/intel/openvino/runtime/lib/intel64/plugins.xml"
 
 [backend.options]
-# CUDA EP V2 examples (used when runtime = "cuda"):
-# cudnn_conv_algo_search = "HEURISTIC"
-# gpu_mem_limit = "4294967296"
-# do_copy_in_default_stream = "1"
-# Direct OpenVINO property examples (used when runtime = "openvino"):
-# PERFORMANCE_HINT = "LATENCY"
-# NPU_PLATFORM = "5010" # optional host-specific NPU property
+# audio.cpp options use a scope: load.NAME, session.NAME, or request.NAME.
+# Direct OpenVINO options are passed as device properties.
 
 [model]
 family = "supertonic"
-name = "supertonic-3-int8"
+name = "supertonic-3-gguf"
 directory = ""
-duration_predictor = "duration_predictor.int8.onnx"
-text_encoder = "text_encoder.int8.onnx"
-vector_estimator = "vector_estimator.int8.onnx"
-vocoder = "vocoder.int8.onnx"
-tts_json = "tts.json"
-unicode_indexer = "unicode_indexer.bin"
-voice_style = "voice.bin"
+file = "supertonic-3-orig.gguf"
 language = "en"
-steps = 5
-# Speaker ID shown by `omaspeak voices` (Supertonic: M1-M5 = 0-4, F1-F5 = 5-9).
-voice = 0
+steps = 8
+voice = 0 # M1-M5 = 0-4, F1-F5 = 5-9
 
 [model.options]
 

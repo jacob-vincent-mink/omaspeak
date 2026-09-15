@@ -61,12 +61,18 @@ pub fn install(
         Some(path) => path.to_owned(),
         None => download_archive(paths, spec, progress)?,
     };
-    verify_archive(&archive, spec)?;
-    let supplemental_files = spec
-        .supplemental_files
-        .iter()
-        .map(|asset| download_supplemental(paths, spec, asset, progress))
-        .collect::<Result<Vec<_>>>()?;
+    let directory_source = archive.is_dir();
+    if !directory_source {
+        verify_archive(&archive, spec)?;
+    }
+    let supplemental_files = if directory_source {
+        Vec::new()
+    } else {
+        spec.supplemental_files
+            .iter()
+            .map(|asset| download_supplemental(paths, spec, asset, progress))
+            .collect::<Result<Vec<_>>>()?
+    };
 
     let staging =
         paths
@@ -157,7 +163,7 @@ fn validate_install_authorization(
 ) -> Result<()> {
     if archive_override.is_none() && !spec.downloadable {
         bail!(
-            "{} is user-supplied only because its model terms are {}; Omaspeak will not download it; supply an archive you have the right to use with --archive",
+            "{} is user-supplied only because its model terms are {}; Omaspeak will not download it; supply a directory or archive you have the right to use with --archive",
             spec.id,
             spec.license_status
         );
@@ -210,10 +216,14 @@ fn write_install_manifest(
     let manifest = serde_json::json!({
         "catalog": spec,
         "provenance": {
-            "source": if archive_override.is_some() {
-                if spec.single_file.is_some() { "user-supplied-file" } else { "user-supplied-archive" }
+            "source": if let Some(source) = archive_override {
+                if source.is_dir() { "user-supplied-directory" } else if spec.single_file.is_some() { "user-supplied-file" } else { "user-supplied-archive" }
             } else { "catalog-download" },
             "source_revision": spec.source_revision,
+            "artifact_source": spec.artifact_source,
+            "artifact_revision": spec.artifact_revision,
+            "original_model_source": spec.original_model_source,
+            "original_model_revision": spec.original_model_revision,
             "artifact_url": artifact_url(spec),
             "artifact_sha256": artifact_sha256(spec),
             "supplemental_assets": spec.supplemental_files,
@@ -510,6 +520,25 @@ fn verify_archive(path: &Path, spec: &ModelSpec) -> Result<()> {
 }
 
 fn materialize_artifact(archive: &Path, staging: &Path, spec: &ModelSpec) -> Result<PathBuf> {
+    if archive.is_dir() {
+        let directory = staging.join("model");
+        fs::create_dir_all(&directory)?;
+        for required in spec.required_files {
+            validate_relative_file(required.path)?;
+            let source = archive.join(required.path);
+            verify_pinned_file(&source, required.size, required.sha256)?;
+            let target = directory.join(required.path);
+            fs::create_dir_all(target.parent().context("model asset has no parent")?)?;
+            fs::copy(&source, &target).with_context(|| {
+                format!(
+                    "copy model asset {} to {}",
+                    source.display(),
+                    target.display()
+                )
+            })?;
+        }
+        return Ok(directory);
+    }
     if let Some(file) = spec.single_file {
         validate_relative_file(file.path)?;
         let directory = staging.join(spec.id);

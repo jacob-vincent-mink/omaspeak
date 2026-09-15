@@ -18,9 +18,9 @@ fn partial_config_uses_defaults() {
     assert_eq!(cfg.model.voice, 2);
     assert_eq!(cfg.model.family, "supertonic");
     assert_eq!(cfg.model.language, "en");
-    assert_eq!(cfg.model.steps, 5);
-    assert_eq!(cfg.model.duration_predictor, "duration_predictor.int8.onnx");
-    assert!(cfg.model.file.is_empty());
+    assert_eq!(cfg.model.steps, 8);
+    assert!(cfg.model.duration_predictor.is_empty());
+    assert_eq!(cfg.model.file, "supertonic-3-orig.gguf");
     assert_eq!(cfg.backend.threads, 2);
     assert!(cfg.backend.library.is_none());
 }
@@ -31,6 +31,11 @@ fn missing_save_load_and_model_paths_round_trip() {
     let path = root.join("nested/config.toml");
     let _ = fs::remove_dir_all(&root);
     let defaults = Config::load(&path).unwrap();
+    assert_eq!(defaults.backend.kind, "audiocpp");
+    assert_eq!(defaults.backend.runtime, crate::backend::Runtime::Default);
+    assert_eq!(defaults.model.name, "supertonic-3-gguf");
+    assert_eq!(defaults.model.file, "supertonic-3-orig.gguf");
+    assert!(defaults.model.duration_predictor.is_empty());
     assert_eq!(defaults.audio.device, "default");
     assert_eq!(defaults.audio.volume, 1.0);
     assert_eq!(defaults.daemon.queue_capacity, 8);
@@ -47,7 +52,7 @@ fn missing_save_load_and_model_paths_round_trip() {
     };
     assert_eq!(
         defaults.model_directory(&paths),
-        root.join("data/models/supertonic-3-int8")
+        root.join("data/models/supertonic-3-gguf")
     );
     let mut custom = defaults;
     custom.model.directory = root.join("custom").display().to_string();

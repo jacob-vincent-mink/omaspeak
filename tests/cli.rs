@@ -17,40 +17,6 @@ use std::os::unix::fs::PermissionsExt;
 static NEXT: AtomicUsize = AtomicUsize::new(0);
 
 #[test]
-fn audiocpp_worker_reports_a_clean_loader_error_without_a_core_dump() {
-    let library = [
-        "/usr/lib/libm.so.6",
-        "/usr/lib64/libm.so.6",
-        "/lib/x86_64-linux-gnu/libm.so.6",
-    ]
-    .into_iter()
-    .map(PathBuf::from)
-    .find(|path| path.is_file());
-    let Some(library) = library else {
-        return;
-    };
-    let root = sandbox();
-    let model = root.join("model.gguf");
-    fs::write(&model, b"model is never reached").unwrap();
-    let config_path = root.join("config/omaspeak/config.toml");
-    let mut config = Config::default();
-    config.backend.kind = "audiocpp".into();
-    config.backend.library = Some(library);
-    config.model.file = model.display().to_string();
-    config.save(&config_path).unwrap();
-
-    let output = run(&root, &["say", "loader check", "--no-play"]);
-    assert_eq!(output.status.code(), Some(1), "{}", stderr(&output));
-    let error = stderr(&output);
-    assert!(
-        error.contains("audio.cpp worker initialization failed"),
-        "{error}"
-    );
-    assert!(error.contains("audiocpp_abi_version"), "{error}");
-    assert!(!root.join("core").exists());
-}
-
-#[test]
 fn runtime_apply_rejects_a_non_audiocpp_library_without_writes() {
     let root = sandbox();
     let directory = root.join("native");
@@ -210,10 +176,7 @@ fn guided_setup_accepts_arrow_keys_and_enter_in_a_real_pty() {
         .env("XDG_STATE_HOME", root.join("state"))
         .env("XDG_RUNTIME_DIR", root.join("run"))
         .env("TERM", "xterm-256color")
-        .env(
-            "OMASPEAK_ONNXRUNTIME_LIBRARY",
-            root.join("missing-runtime.so"),
-        )
+        .env("OMASPEAK_LIBRARY_PATH", root.join("missing-runtime"))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -356,7 +319,7 @@ fn setup_can_inspect_an_invalid_config_without_weakening_runtime_parsing() {
     assert_eq!(checks[0]["ok"], false);
     assert_eq!(fs::read(&config_path).unwrap(), invalid);
 
-    let Some(library) = std::env::var_os("OMASPEAK_TEST_ONNXRUNTIME_LIBRARY")
+    let Some(library) = std::env::var_os("OMASPEAK_TEST_AUDIOCPP_LIBRARY")
         .map(PathBuf::from)
         .filter(|path| path.is_file())
     else {
@@ -379,7 +342,7 @@ fn setup_can_inspect_an_invalid_config_without_weakening_runtime_parsing() {
     assert!(applied.status.success(), "{}", stderr(&applied));
     assert!(stderr(&applied).contains("successful setup apply will replace it"));
     let repaired = Config::load(&config_path).unwrap();
-    assert_eq!(repaired.backend.kind, "supertonic");
+    assert_eq!(repaired.backend.kind, "audiocpp");
     assert_eq!(repaired.backend.device, "cpu");
     assert!(
         !fs::read_to_string(&config_path)
@@ -415,7 +378,7 @@ fn successful_setup_replaces_an_invalid_config_and_failed_setup_restores_it() {
     assert!(stderr(&service).contains("successful setup apply will replace it"));
 
     let repaired = Config::load(&config_path).unwrap();
-    assert_eq!(repaired.backend.kind, "supertonic");
+    assert_eq!(repaired.backend.kind, "audiocpp");
     assert_eq!(repaired.audio.volume, 1.0);
     assert!(
         !fs::read_to_string(&config_path)
@@ -488,8 +451,10 @@ fn runtime_discovery_reports_invalid_paths_without_reexecing() {
     );
     assert!(report["libraries"]["runtime_loadable"].is_object());
 
-    let explicit_core = root.join("libonnxruntime.so.1.30.0");
-    fs::write(&explicit_core, b"invalid ORT fixture").unwrap();
+    let explicit_dir = root.join("explicit-provider");
+    fs::create_dir_all(&explicit_dir).unwrap();
+    let explicit_provider = explicit_dir.join("libaudiocpp.so.0.1.0");
+    fs::write(&explicit_provider, b"invalid audio.cpp fixture").unwrap();
     let explicit = Command::new(env!("CARGO_BIN_EXE_omaspeak"))
         .args(["setup", "runtime", "--json"])
         .env("HOME", &root)
@@ -497,7 +462,7 @@ fn runtime_discovery_reports_invalid_paths_without_reexecing() {
         .env("XDG_DATA_HOME", root.join("data"))
         .env("XDG_STATE_HOME", root.join("state"))
         .env("XDG_RUNTIME_DIR", root.join("run"))
-        .env("OMASPEAK_ONNXRUNTIME_LIBRARY", &explicit_core)
+        .env("OMASPEAK_LIBRARY_PATH", &explicit_dir)
         .output()
         .unwrap();
     assert!(explicit.status.success(), "{}", stderr(&explicit));
@@ -530,7 +495,7 @@ fn config_commands_round_trip_and_reject_invalid_values() {
     let root = sandbox();
     let get = run(&root, &["config", "get", "backend.kind"]);
     assert!(get.status.success());
-    assert_eq!(stdout(&get).trim(), "supertonic");
+    assert_eq!(stdout(&get).trim(), "audiocpp");
     assert!(run(&root, &["config", "get", "--json"]).status.success());
     assert!(run(&root, &["config", "schema"]).status.success());
     assert!(run(&root, &["config", "schema", "--json"]).status.success());
@@ -661,6 +626,7 @@ fn voices_enumerates_installed_supertonic_speakers_and_marks_the_active_one() {
     )
     .unwrap();
     let mut config = Config::default();
+    config.backend.kind = "supertonic".into();
     config.model.family = "supertonic".into();
     config.model.name = "custom-supertonic".into();
     config.model.voice_style = "voice.bin".into();

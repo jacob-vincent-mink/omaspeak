@@ -199,7 +199,7 @@ enum SetupCommand {
             conflicts_with_all = ["list", "json", "download", "set"]
         )]
         verify: Option<String>,
-        /// Install from a local pinned model file or archive instead of downloading it.
+        /// Install from a local pinned model file, directory, or archive instead of downloading it.
         #[arg(long, requires = "download")]
         archive: Option<PathBuf>,
         /// Confirm acceptance of the model license required for catalog installation.
@@ -272,10 +272,6 @@ trait SetupSelector {
     fn input(&mut self, _title: &str, _help: &str) -> Result<Option<String>> {
         Ok(Some(String::new()))
     }
-
-    fn prove_candidate(&mut self, _config: &mut Config, _paths: &AppPaths) -> Result<()> {
-        Ok(())
-    }
 }
 
 struct TerminalSetupSelector;
@@ -327,12 +323,6 @@ impl SetupSelector for TerminalSetupSelector {
             return Ok(None);
         }
         Ok(Some(value.trim().to_owned()))
-    }
-
-    fn prove_candidate(&mut self, config: &mut Config, paths: &AppPaths) -> Result<()> {
-        stage_installed_audio_cpp_model(config, paths)?;
-        pin_audio_cpp_library(config, &paths.config_file)?;
-        prove_setup_synthesis(config, paths)
     }
 }
 
@@ -433,6 +423,8 @@ fn run_with_paths_and_prepare(
         TopCommand::AudioCppProbe { spec } => omaspeak::audio_cpp::run_provider_probe(&spec),
         TopCommand::AudioCppWorker { spec } => omaspeak::audio_cpp::run_worker(&spec),
         TopCommand::InventoryProbe { candidate } => {
+            #[cfg(not(test))]
+            omaspeak::audio_cpp::disable_core_dumps()?;
             println!(
                 "{}",
                 serde_json::to_string(&omaspeak::runtime_inventory::child(&serde_json::from_str(
@@ -442,6 +434,8 @@ fn run_with_paths_and_prepare(
             Ok(())
         }
         TopCommand::NpuPrecompile { request } => {
+            #[cfg(not(test))]
+            omaspeak::audio_cpp::disable_core_dumps()?;
             let result = omaspeak::runtime_inventory::npu_child(serde_json::from_str(&request)?);
             println!("{}", serde_json::to_string(&result?)?);
             Ok(())
@@ -745,15 +739,13 @@ fn benchmark_report(
             "requested_device": config.backend.canonical_device()?,
             "effective_runtime": engine.effective_runtime(),
             "fallback_used": engine.fallback_used(),
-            "placement_verified": engine.effective_runtime() == Runtime::Default || engine.backend_kind() == "openvino",
+            "placement_verified": matches!(engine.backend_kind(), "audiocpp" | "openvino"),
             "placement_evidence": if engine.backend_kind() == "openvino" {
                 "OpenVINO EXECUTION_DEVICES matched the requested device for every compiled graph"
             } else if engine.backend_kind() == "audiocpp" && engine.effective_runtime() == Runtime::Default {
                 "audio.cpp CPU backend initialized in a supervised worker"
-            } else if engine.effective_runtime() == Runtime::Default {
-                "runtime-loaded ONNX Runtime CPU engine initialized"
             } else {
-                ""
+                "audio.cpp accepted the requested backend while creating the model session"
             },
         },
         "iterations": iterations,
@@ -1106,35 +1098,22 @@ fn synthesis_payload(engine: &impl SpeechEngine, synthesis: Synthesis) -> Result
 
 fn status_payload(engine: &impl SpeechEngine, config: &Config) -> ResultPayload {
     let effective_runtime = engine.effective_runtime();
-    let (effective_provider, placement_verified, evidence) = if engine.backend_kind() == "audiocpp"
-    {
-        (
-            if effective_runtime == Runtime::Default {
-                "audio.cpp/cpu"
-            } else {
-                "audio.cpp"
-            },
-            effective_runtime == Runtime::Default,
-            if effective_runtime == Runtime::Default {
-                vec!["audio.cpp CPU backend initialized in a supervised worker"]
-            } else {
-                Vec::new()
-            },
-        )
-    } else {
-        (
-            if effective_runtime == Runtime::Default {
-                "CPUExecutionProvider"
-            } else {
-                "unverified"
-            },
-            effective_runtime == Runtime::Default,
-            if effective_runtime == Runtime::Default {
-                vec!["runtime-loaded ONNX Runtime CPU engine initialized"]
-            } else {
-                Vec::new()
-            },
-        )
+    let (effective_provider, placement_verified, evidence) = match engine.backend_kind() {
+        "audiocpp" => (
+            effective_runtime.capability(),
+            true,
+            vec!["audio.cpp accepted the requested backend while creating the model session"],
+        ),
+        "openvino" => (
+            "openvino",
+            true,
+            vec!["OpenVINO execution devices were validated during graph compilation"],
+        ),
+        _ => (
+            effective_runtime.capability(),
+            false,
+            vec!["backend did not provide placement evidence"],
+        ),
     };
     ResultPayload::Status {
         running: true,
@@ -1326,7 +1305,7 @@ fn config_command(command: ConfigCommand, path: &Path, paths: &AppPaths) -> Resu
                 println!("{}", serde_json::to_string_pretty(&value)?);
             } else {
                 println!(
-                    "backend.runtime\tdefault|openvino|cuda\nbackend.device\truntime-dependent\nbackend.library\texact complete native provider library\nbackend.library_dirs\tpath list for native runtime libraries\nbackend.onnxruntime_library\texact ONNX Runtime core library\nbackend.provider_library\texact CUDA provider library\nbackend.openvino_library\texact OpenVINO C API library\nbackend.openvino_plugins\texact OpenVINO plugins.xml\nbackend.options.<scope>.<name>\taudio.cpp load/session/request option or direct-runtime property\nmodel.family\tsupertonic\nmodel.file\tsingle-file native model\nmodel.options.<name>\tmodel-specific option"
+                    "backend.runtime\tdefault|cuda|vulkan|hip|openvino\nbackend.device\truntime-dependent\nbackend.library\texact complete audio.cpp provider library\nbackend.library_dirs\tprovider dependency directories\nbackend.openvino_library\texact OpenVINO C API library\nbackend.openvino_plugins\texact OpenVINO plugins.xml\nbackend.options.<scope>.<name>\taudio.cpp load/session/request option or direct OpenVINO property\nmodel.family\tsupertonic\nmodel.file\tsingle-file GGUF model\nmodel.options.<name>\tmodel-specific option"
                 );
             }
         }
@@ -1367,7 +1346,10 @@ fn save_config_mutation(
     if key == "backend.runtime" && config.backend.runtime != previous_runtime {
         config.backend.device = "auto".into();
         config.backend.options.clear();
-        if config.backend.runtime != Runtime::Cuda {
+        if !matches!(
+            config.backend.runtime,
+            Runtime::Cuda | Runtime::Vulkan | Runtime::Hip
+        ) {
             config.backend.device_id = 0;
         }
     }
@@ -1395,10 +1377,6 @@ fn set_config(config: &mut Config, key: &str, value: &str) -> Result<()> {
             config.backend.library_dirs = std::env::split_paths(value).collect()
         }
         "backend.library" => config.backend.library = Some(PathBuf::from(value)),
-        "backend.onnxruntime_library" => {
-            config.backend.onnxruntime_library = Some(PathBuf::from(value))
-        }
-        "backend.provider_library" => config.backend.provider_library = Some(PathBuf::from(value)),
         "backend.openvino_library" => config.backend.openvino_library = Some(PathBuf::from(value)),
         "backend.openvino_plugins" => config.backend.openvino_plugins = Some(PathBuf::from(value)),
         "model.family" => config.model.family = value.into(),
@@ -1443,12 +1421,6 @@ fn unset_config(config: &mut Config, key: &str) -> Result<()> {
         "backend.device_id" => config.backend.device_id = defaults.backend.device_id,
         "backend.library_dirs" => config.backend.library_dirs = defaults.backend.library_dirs,
         "backend.library" => config.backend.library = defaults.backend.library,
-        "backend.onnxruntime_library" => {
-            config.backend.onnxruntime_library = defaults.backend.onnxruntime_library
-        }
-        "backend.provider_library" => {
-            config.backend.provider_library = defaults.backend.provider_library
-        }
         "backend.openvino_library" => {
             config.backend.openvino_library = defaults.backend.openvino_library
         }
@@ -1512,7 +1484,9 @@ fn parse_runtime(value: &str) -> Result<Runtime> {
         "default" => Ok(Runtime::Default),
         "openvino" => Ok(Runtime::Openvino),
         "cuda" => Ok(Runtime::Cuda),
-        _ => bail!("backend runtime must be default, openvino, or cuda"),
+        "vulkan" => Ok(Runtime::Vulkan),
+        "hip" | "rocm" => Ok(Runtime::Hip),
+        _ => bail!("backend runtime must be default, cuda, vulkan, hip, or openvino"),
     }
 }
 
@@ -1539,12 +1513,10 @@ fn schema(path: &Path, paths: &AppPaths) -> Result<Value> {
         json!({"schema_version":1,"app":"omaspeak","app_version":env!("CARGO_PKG_VERSION"),"daemon_version":env!("CARGO_PKG_VERSION"),"config_path":path,
         "keys":[
             {"key":"backend.kind","type":"enum","section":"Backend","label":"Backend","description":"Inference engine","value":config.backend.kind,"file_value":null,"compiled":true,"restart_required":true,"choices":["audiocpp","supertonic"]},
-            {"key":"backend.runtime","type":"enum","section":"Backend","label":"Runtime","description":"Inference runtime","value":config.backend.runtime,"file_value":null,"compiled":true,"restart_required":true,"choices":[{"value":"default","available":true,"capability":"cpu"},{"value":"openvino","available":supported_capabilities().contains(&"openvino"),"capability":"openvino"},{"value":"cuda","available":supported_capabilities().contains(&"cuda"),"capability":"cuda"}]},
+            {"key":"backend.runtime","type":"enum","section":"Backend","label":"Runtime","description":"Inference runtime","value":config.backend.runtime,"file_value":null,"compiled":true,"restart_required":true,"choices":[{"value":"default","available":true,"capability":"cpu"},{"value":"cuda","available":true,"capability":"cuda"},{"value":"vulkan","available":true,"capability":"vulkan"},{"value":"hip","available":true,"capability":"hip"},{"value":"openvino","available":true,"capability":"openvino"}]},
             {"key":"backend.device","type":"string","section":"Backend","label":"Device","description":"Runtime-specific device","value":config.backend.device,"file_value":null,"compiled":true,"restart_required":true},
             {"key":"backend.library_dirs","type":"path-list","section":"Backend","label":"Native library directories","description":"Application-owned provider/vendor runtime search path","value":config.backend.library_dirs,"file_value":null,"compiled":true,"restart_required":true},
             {"key":"backend.library","type":"path","section":"Backend","label":"Provider library","description":"Exact complete native provider library","value":config.backend.library,"file_value":null,"compiled":true,"restart_required":true},
-            {"key":"backend.onnxruntime_library","type":"path","section":"Backend","label":"ONNX Runtime library","description":"Exact external ONNX Runtime core library","value":config.backend.onnxruntime_library,"file_value":null,"compiled":true,"restart_required":true},
-            {"key":"backend.provider_library","type":"path","section":"Backend","label":"Provider library","description":"Exact CUDA execution-provider library","value":config.backend.provider_library,"file_value":null,"compiled":true,"restart_required":true},
             {"key":"backend.openvino_library","type":"path","section":"Backend","label":"OpenVINO library","description":"Exact OpenVINO C API library","value":config.backend.openvino_library,"file_value":null,"compiled":true,"restart_required":true},
             {"key":"backend.openvino_plugins","type":"path","section":"Backend","label":"OpenVINO plugins","description":"Exact OpenVINO plugins.xml","value":config.backend.openvino_plugins,"file_value":null,"compiled":true,"restart_required":true},
             {"key":"backend.threads","type":"integer","section":"Backend","label":"Threads","description":"Inference threads","value":config.backend.threads,"file_value":null,"compiled":true,"restart_required":true,"min":1,"max":64},
@@ -1561,7 +1533,7 @@ fn schema(path: &Path, paths: &AppPaths) -> Result<Value> {
             {"key":"model.language","type":"enum","section":"Model","label":"Language","description":"Supertonic generation language","value":config.model.language,"file_value":null,"compiled":true,"restart_required":true,"choices":["en","ko","ja","ar","bg","cs","da","de","el","es","et","fi","fr","hi","hr","hu","id","it","lt","lv","nl","pl","pt","ro","ru","sk","sl","sv","tr","uk","vi"]},
             {"key":"model.steps","type":"integer","section":"Model","label":"Generation steps","description":"Supertonic denoising steps","value":config.model.steps,"file_value":null,"compiled":true,"restart_required":true,"min":1},
             {"key":"model.voice","type":"enum","section":"Model","label":"Voice","description":"Default TTS speaker","value":config.model.voice,"file_value":null,"compiled":true,"restart_required":true,"choices":voice_choices}],
-        "collections":[],"constraints":[{"kind":"matrix","keys":["backend.runtime","backend.device"],"rows":[{"backend.runtime":"default","backend.device":["auto","cpu"]},{"backend.runtime":"cuda","backend.device":["auto","gpu"]},{"backend.runtime":"openvino","backend.device":["auto","npu","gpu","cpu"]}]}]}),
+        "collections":[],"constraints":[{"kind":"matrix","keys":["backend.runtime","backend.device"],"rows":[{"backend.runtime":"default","backend.device":["auto","cpu"]},{"backend.runtime":"cuda","backend.device":["auto","gpu"]},{"backend.runtime":"vulkan","backend.device":["auto","gpu"]},{"backend.runtime":"hip","backend.device":["auto","gpu"]},{"backend.runtime":"openvino","backend.device":["auto","npu","gpu","cpu"]}]}]}),
     )
 }
 
@@ -1923,14 +1895,14 @@ fn apply_runtime_selection_with_provider_probe(
     probe_audio_cpp: impl FnOnce(&Config, &Path) -> Result<PathBuf>,
 ) -> Result<()> {
     let mut candidate = runtime_configuration_candidate(config_path, runtime, device, directory)?;
-    let evidence = if candidate.backend.kind == "audiocpp" {
+    let mut evidence = if candidate.backend.kind == "audiocpp" {
         let library = probe_audio_cpp(&candidate, config_path)
             .context("runtime candidate rejected; config unchanged")?;
         candidate.backend.library = Some(library.clone());
         omaspeak::runtime_inventory::Probe {
             ready: true,
             loadable: true,
-            device_accessible: true,
+            device_accessible: false,
             evidence: omaspeak::runtime_inventory::Evidence {
                 versions: vec![format!(
                     "audio.cpp provider ABI ready: {}",
@@ -1944,15 +1916,22 @@ fn apply_runtime_selection_with_provider_probe(
     } else {
         omaspeak::runtime_inventory::apply_with(&candidate, config_path, false, probe)?
     };
+    let model_installed = active_model_is_installed(&candidate, paths);
     if apply {
         prepare_npu_for_runtime_selection(&mut candidate, paths, ProgressFormat::Json)?;
+        if model_installed {
+            prove_setup_synthesis(&candidate, paths).context(
+                "runtime candidate rejected by model-backed synthesis; config unchanged",
+            )?;
+            evidence.device_accessible = true;
+            evidence.ready = true;
+            evidence.evidence.model_inference_verified = true;
+        }
         candidate.save(config_path)?;
     }
-    let next = (candidate.backend.kind == "audiocpp"
-        && !audio_cpp_model_is_configured(&candidate))
-        .then_some(
-            "run `omaspeak setup` and choose Full setup, or install `supertonic-3-gguf` with `omaspeak setup model`",
-        );
+    let next = (!model_installed).then_some(
+        "provider ABI is valid; run `omaspeak setup` and choose Full setup, or install a compatible model to complete the model-backed provider proof",
+    );
     println!(
         "{}",
         serde_json::to_string_pretty(
@@ -2174,9 +2153,24 @@ fn guided_runtime(
         return Ok(None);
     }
     prepare_npu_for_runtime_selection(&mut candidate, paths, ProgressFormat::Human)?;
-    selector.prove_candidate(&mut candidate, paths)?;
+    let model_installed = active_model_is_installed(&candidate, paths);
+    if model_installed {
+        pin_audio_cpp_library(&mut candidate, config_path)?;
+        prove_setup_synthesis(&candidate, paths)
+            .context("runtime candidate rejected by model-backed synthesis; config unchanged")?;
+    }
     candidate.save(config_path)?;
-    println!("Runtime configured: {} on {device}", runtime_name(runtime));
+    if model_installed {
+        println!(
+            "Runtime provider configured: {} on {device}; file-only model proof passed.",
+            runtime_name(runtime)
+        );
+    } else {
+        println!(
+            "Runtime provider configured: {} on {device}; provider ABI passed. Model setup must still run the file-only synthesis proof.",
+            runtime_name(runtime)
+        );
+    }
     Ok(Some((runtime, device)))
 }
 
@@ -2186,7 +2180,10 @@ fn choose_runtime(
 ) -> Result<Option<(Runtime, String, Option<PathBuf>)>> {
     let config = app_setup::load_config(config_path)?;
     let locations = omaspeak::runtime::discover(&config.backend, config_path);
-    let audio_cpp_library = omaspeak::audio_cpp::discover_provider_library(&config, config_path)?;
+    // A stale configured provider path is reported by setup checks, but must
+    // not prevent the user from opening the picker to replace it.
+    let audio_cpp_library =
+        omaspeak::audio_cpp::discover_provider_library(&config, config_path).unwrap_or(None);
     let runtimes = [
         (
             Runtime::Default,
@@ -2217,12 +2214,26 @@ fn choose_runtime(
                 "choose a complete CUDA-enabled audio.cpp installation directory",
             ),
         ),
+        (
+            Runtime::Vulkan,
+            runtime_item(
+                "audio.cpp · Vulkan",
+                "External complete audio.cpp provider on a Vulkan GPU",
+                audio_cpp_library.is_some() && config.backend.runtime == Runtime::Vulkan,
+                "choose a complete Vulkan-enabled audio.cpp installation directory",
+            ),
+        ),
+        (
+            Runtime::Hip,
+            runtime_item(
+                "audio.cpp · HIP/ROCm",
+                "External complete audio.cpp provider on an AMD GPU",
+                audio_cpp_library.is_some() && config.backend.runtime == Runtime::Hip,
+                "choose a complete HIP-enabled audio.cpp installation directory",
+            ),
+        ),
     ];
-    let mut items: Vec<_> = runtimes.iter().map(|(_, item)| item.clone()).collect();
-    items.push(MenuItem::unavailable(
-        "audio.cpp · Vulkan",
-        "External Vulkan providers are recognized by audio.cpp; Omaspeak runtime selection will expose this after the legacy runtime enum is removed.",
-    ));
+    let items: Vec<_> = runtimes.iter().map(|(_, item)| item.clone()).collect();
     let preferred = runtimes
         .iter()
         .position(|(runtime, _)| *runtime == config.backend.runtime)
@@ -2274,8 +2285,8 @@ fn choose_runtime(
     } else {
         let directory_help = if runtime == Runtime::Openvino {
             "Enter an absolute OpenVINO installation directory containing libopenvino_c and plugins.xml. Leave empty to use a runtime already available through configured, package, or system paths."
-        } else if runtime == Runtime::Cuda {
-            "Enter an absolute complete CUDA-enabled audio.cpp installation directory. Omaspeak does not install CUDA or assemble provider plugins."
+        } else if runtime != Runtime::Default {
+            "Enter an absolute complete accelerator-enabled audio.cpp installation directory. Omaspeak does not install vendor runtimes or assemble provider plugins."
         } else {
             "Enter an absolute complete audio.cpp installation directory. Leave empty to use the packaged CPU provider."
         };
@@ -2319,6 +2330,17 @@ fn device_items(runtime: Runtime) -> Vec<(&'static str, MenuItem)> {
                 "Recommended · select the first available NVIDIA GPU",
             ),
             ("gpu", "Use NVIDIA GPU execution explicitly"),
+        ],
+        Runtime::Vulkan => &[
+            (
+                "auto",
+                "Recommended · select the first available Vulkan GPU",
+            ),
+            ("gpu", "Use Vulkan GPU execution explicitly"),
+        ],
+        Runtime::Hip => &[
+            ("auto", "Recommended · select the first available AMD GPU"),
+            ("gpu", "Use HIP/ROCm GPU execution explicitly"),
         ],
         Runtime::Openvino => &[
             (
@@ -2373,7 +2395,7 @@ fn runtime_configuration_candidate(
     if runtime_changed {
         config.backend.options.clear();
     }
-    if runtime != Runtime::Cuda {
+    if !matches!(runtime, Runtime::Cuda | Runtime::Vulkan | Runtime::Hip) {
         config.backend.device_id = 0;
     }
     if let Some(directory) = library_dir {
@@ -2383,23 +2405,7 @@ fn runtime_configuration_candidate(
     if config.backend.kind == "audiocpp" {
         return Ok(config);
     }
-    let locations = omaspeak::runtime::discover(&config.backend, config_path);
-    let packaged = locations
-        .onnxruntime_library
-        .as_ref()
-        .is_some_and(|library| {
-            locations
-                .package_library_dirs
-                .iter()
-                .any(|directory| library.starts_with(directory))
-        });
-    if library_dir.is_some()
-        || runtime != Runtime::Default
-        || !config.backend.library_dirs.is_empty()
-        || !packaged
-    {
-        config.backend = omaspeak::runtime_inventory::resolve(&config.backend, config_path);
-    }
+    config.backend = omaspeak::runtime_inventory::resolve(&config.backend, config_path);
     Ok(config)
 }
 
@@ -2521,30 +2527,15 @@ fn apply_runtime_directory(
             "libopenvino_c.so",
         )?);
         config.backend.openvino_plugins = Some(find_openvino_plugins(&candidates, &directory)?);
-        config.backend.provider_library = None;
-    } else if config.backend.runtime == Runtime::Cuda {
-        // The official CUDA Plugin EP is intentionally distributed separately
-        // from the ORT core. Keep an existing/package-discovered core when the
-        // selected directory contains only the provider plugin.
-        if let Ok(runtime) = find_runtime_file(&candidates, &directory, "libonnxruntime.so") {
-            config.backend.onnxruntime_library = Some(runtime);
-        }
-        config.backend.provider_library = Some(find_runtime_file(
-            &candidates,
-            &directory,
-            "libonnxruntime_providers_cuda.so",
-        )?);
     } else {
-        config.backend.onnxruntime_library = Some(find_runtime_file(
+        config.backend.library = Some(find_runtime_file(
             &candidates,
             &directory,
-            "libonnxruntime.so",
+            "libaudiocpp.so",
         )?);
-        config.backend.provider_library = None;
     }
     let mut selected_parents = [
-        config.backend.onnxruntime_library.as_ref(),
-        config.backend.provider_library.as_ref(),
+        config.backend.library.as_ref(),
         config.backend.openvino_library.as_ref(),
         config.backend.openvino_plugins.as_ref(),
     ]
@@ -2632,11 +2623,7 @@ fn directory_contains_shared_libraries(directory: &Path) -> bool {
 }
 
 fn runtime_name(runtime: Runtime) -> &'static str {
-    match runtime {
-        Runtime::Default => "default",
-        Runtime::Openvino => "openvino",
-        Runtime::Cuda => "cuda",
-    }
+    runtime.name()
 }
 
 fn guided_model(
@@ -2682,6 +2669,7 @@ fn guided_model(
     spec.activate(&mut config);
     config.model.voice = voice.id;
     prepare_npu_for_setup(&mut config, paths, ProgressFormat::Human)?;
+    operations.prove(&mut config, paths)?;
     config.save(config_path)?;
     println!(
         "Active model: {} ({})",
@@ -2815,7 +2803,7 @@ fn choose_model(
                     .map(|file| file.size)
                     .sum::<u64>();
             let npu = if model.npu_capable {
-                " · Intel NPU validated"
+                " · Intel NPU compatible"
             } else {
                 ""
             };
@@ -2914,12 +2902,15 @@ fn setup_all_with_validator(
     let spec = operations.resolve(model)?;
     spec.activate(&mut config);
     if spec.backend == "audiocpp" {
-        config.backend.runtime = if config.backend.runtime == Runtime::Cuda {
-            Runtime::Cuda
+        config.backend.runtime = if config.backend.runtime.uses_audiocpp() {
+            config.backend.runtime
         } else {
             Runtime::Default
         };
-        config.backend.device = if config.backend.runtime == Runtime::Cuda {
+        config.backend.device = if matches!(
+            config.backend.runtime,
+            Runtime::Cuda | Runtime::Vulkan | Runtime::Hip
+        ) {
             "gpu".into()
         } else {
             "cpu".into()
@@ -3248,7 +3239,10 @@ fn activate_model_for_setup(
         if config.backend.runtime == Runtime::Openvino {
             config.backend.runtime = Runtime::Default;
         }
-        config.backend.device = if config.backend.runtime == Runtime::Cuda {
+        config.backend.device = if matches!(
+            config.backend.runtime,
+            Runtime::Cuda | Runtime::Vulkan | Runtime::Hip
+        ) {
             "gpu".into()
         } else {
             "cpu".into()
@@ -3257,30 +3251,19 @@ fn activate_model_for_setup(
     Ok(())
 }
 
-fn stage_installed_audio_cpp_model(config: &mut Config, paths: &AppPaths) -> Result<()> {
-    stage_installed_audio_cpp_model_with(config, |spec| app_setup::model::verify(paths, spec))
-}
-
-fn stage_installed_audio_cpp_model_with(
-    config: &mut Config,
-    verify: impl FnOnce(&omaspeak::catalog::ModelSpec) -> Result<()>,
-) -> Result<()> {
-    if config.backend.kind != "audiocpp" {
-        return Ok(());
+fn active_model_is_installed(config: &Config, paths: &AppPaths) -> bool {
+    if let Some(spec) = omaspeak::catalog::model(&config.model.name) {
+        return spec.backend == config.backend.kind
+            && app_setup::model::verify(paths, spec).is_ok();
     }
-    if audio_cpp_model_is_configured(config) {
-        return Ok(());
+    if config.backend.kind == "audiocpp" {
+        return !config.model.file.is_empty()
+            && config
+                .model_directory(paths)
+                .join(&config.model.file)
+                .is_file();
     }
-    let spec = model_spec("supertonic-3-gguf")?;
-    verify(spec).with_context(|| {
-        "audio.cpp is available, but its Supertonic GGUF model is not installed; run `omaspeak setup` and choose Full setup (or install it with `omaspeak setup model --download supertonic-3-gguf --accept-license OpenRAIL-M`)"
-    })?;
-    activate_model_for_setup(spec, config)
-}
-
-fn audio_cpp_model_is_configured(config: &Config) -> bool {
-    omaspeak::catalog::model(&config.model.name).is_some_and(|spec| spec.backend == "audiocpp")
-        || (!config.model.file.is_empty() && omaspeak::catalog::model(&config.model.name).is_none())
+    false
 }
 
 fn pin_audio_cpp_library(config: &mut Config, config_path: &Path) -> Result<()> {

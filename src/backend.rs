@@ -11,6 +11,8 @@ pub enum Runtime {
     Default,
     Openvino,
     Cuda,
+    Vulkan,
+    Hip,
 }
 
 impl Runtime {
@@ -19,6 +21,8 @@ impl Runtime {
             Self::Default => "cpu",
             Self::Openvino => "openvino",
             Self::Cuda => "cuda",
+            Self::Vulkan => "vulkan",
+            Self::Hip => "hip",
         }
     }
 }
@@ -46,10 +50,6 @@ pub struct BackendConfig {
     /// Exact complete native provider library. Relative paths resolve beside
     /// config.toml and may not escape that directory.
     pub library: Option<PathBuf>,
-    /// Exact ONNX Runtime core library. Relative paths resolve from config.toml.
-    pub onnxruntime_library: Option<PathBuf>,
-    /// Exact external execution-provider library. Relative paths resolve from config.toml.
-    pub provider_library: Option<PathBuf>,
     /// Exact OpenVINO C API library used by the direct OpenVINO runtime.
     pub openvino_library: Option<PathBuf>,
     /// Exact OpenVINO plugins.xml used to register CPU, GPU, and NPU devices.
@@ -60,7 +60,7 @@ pub struct BackendConfig {
 impl Default for BackendConfig {
     fn default() -> Self {
         Self {
-            kind: "supertonic".into(),
+            kind: "audiocpp".into(),
             runtime: Runtime::Default,
             device: "auto".into(),
             threads: 2,
@@ -68,8 +68,6 @@ impl Default for BackendConfig {
             device_id: 0,
             library_dirs: Vec::new(),
             library: None,
-            onnxruntime_library: None,
-            provider_library: None,
             openvino_library: None,
             openvino_plugins: None,
             options: BTreeMap::new(),
@@ -83,7 +81,7 @@ pub enum BackendError {
     InvalidThreads,
     #[error("backend device {device} is invalid for runtime {runtime:?}")]
     InvalidDevice { runtime: Runtime, device: String },
-    #[error("backend device_id is only valid with runtime cuda")]
+    #[error("backend device_id is only valid with runtime cuda, vulkan, or hip")]
     InvalidDeviceId,
     #[error("backend option key {key:?} is invalid")]
     InvalidOptionKey { key: String },
@@ -100,7 +98,9 @@ impl BackendConfig {
         if !(1..=64).contains(&self.threads) {
             return Err(BackendError::InvalidThreads);
         }
-        if self.runtime != Runtime::Cuda && self.device_id != 0 {
+        if !matches!(self.runtime, Runtime::Cuda | Runtime::Vulkan | Runtime::Hip)
+            && self.device_id != 0
+        {
             return Err(BackendError::InvalidDeviceId);
         }
         for (key, value) in &self.options {
@@ -117,7 +117,7 @@ impl BackendConfig {
 }
 
 pub const fn supported_capabilities() -> &'static [&'static str] {
-    &["cpu", "openvino", "cuda"]
+    &["cpu", "cuda", "vulkan", "hip", "openvino"]
 }
 
 fn valid_option_key(key: &str) -> bool {
@@ -141,11 +141,13 @@ pub fn canonical_device(runtime: Runtime, raw: &str) -> Result<String, BackendEr
             "cpu" => Ok("cpu".into()),
             _ => Err(invalid()),
         },
-        Runtime::Cuda => match trimmed.to_ascii_lowercase().as_str() {
-            "auto" => Ok("auto".into()),
-            "gpu" => Ok("gpu".into()),
-            _ => Err(invalid()),
-        },
+        Runtime::Cuda | Runtime::Vulkan | Runtime::Hip => {
+            match trimmed.to_ascii_lowercase().as_str() {
+                "auto" => Ok("auto".into()),
+                "gpu" => Ok("gpu".into()),
+                _ => Err(invalid()),
+            }
+        }
         Runtime::Openvino => canonical_openvino_device(trimmed).ok_or_else(invalid),
     }
 }
