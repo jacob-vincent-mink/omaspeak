@@ -18,6 +18,13 @@ This release introduces the greenfield native-provider architecture:
   text immediately instead of waiting on the terminal;
 - interrupting `omaspeak say` stops and reaps playback, including playback
   owned by an already-running daemon;
+- successful standalone config, runtime, model, and speaker changes
+  automatically restart an already-active optional daemon exactly once;
+- optional systemd units remain runtime-neutral instead of retaining loader
+  paths from the backend selected when the unit was installed;
+- setup detects PCI accelerator candidates in CUDA, Intel NPU, Intel GPU, then
+  Vulkan order and recommends the best candidate with a complete provider, or
+  packaged CPU, while reserving readiness for Apply proof;
 - runtime inventory reports an audio.cpp device as unverified until that model
   proof succeeds, rather than presenting ABI discovery as a failed device;
 - NPU model-cache compilation and a fresh-process cache-hit proof happen during
@@ -29,4 +36,6 @@ The pinned official model was exercised with file-only synthesis on default
 CPU, OpenVINO CPU/iGPU/NPU, and CUDA on an NVIDIA GB10. Device placement,
 setup-time NPU caching, cold and warm timing, and a one-sentence intelligibility
 check are recorded in the
-[rc.3 hardware evidence](benchmarks/results/2026-09-15-rc3/RESULTS.md).
+[rc.3 hardware evidence](benchmarks/results/2026-09-15-rc3/RESULTS.md), with
+the follow-up Intel iGPU run in the
+[Vulkan qualification](benchmarks/results/2026-09-15-vulkan/RESULTS.md).

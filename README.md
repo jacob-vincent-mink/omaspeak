@@ -25,7 +25,13 @@ omaspeak setup
 ```
 
 The guided terminal uses arrow keys and Enter to choose a runtime, model, and
-speaker. For an unattended default install:
+speaker. It detects accelerator hardware and considers CUDA GPU, Intel NPU,
+Intel GPU through OpenVINO, then a Vulkan-capable GPU. It recommends the first
+candidate with a complete provider, or the packaged CPU fallback. If no provider
+is present, it highlights the best hardware candidate and explains what is
+missing. Hardware and provider detection are shown separately; only Apply runs
+the isolated and model-backed checks that establish readiness. For an unattended
+default install:
 
 ```bash
 omaspeak setup all --model supertonic-3-gguf --accept-license OpenRAIL-M
@@ -128,7 +134,9 @@ omaspeak setup check
 ```
 
 The report shows the exact provider path, search directories, capabilities,
-device result, model-proof state, and remediation.
+device result, detected PCI hardware, recommended configuration, model-proof
+state, and remediation. Detection does not install a vendor runtime or claim
+that an unproved device is ready.
 The [rc.3 hardware results](benchmarks/results/2026-09-15-rc3/RESULTS.md)
 compare default CPU, OpenVINO CPU/iGPU/NPU, and CUDA using file-only output.
 
@@ -153,6 +161,12 @@ omaspeak setup systemd --uninstall
 
 Without that unit, speech commands still run inference on demand. If a daemon socket is
 stale or refuses a connection, `say` falls back to local inference.
+When the optional unit is installed and active, successful `config set`,
+`config unset`, runtime Apply, and model or speaker activation restart it with
+`systemctl --user try-restart`. An installed but inactive unit remains inactive,
+and Full setup performs only its existing single transactional restart. The
+unit does not embed runtime library paths; workers resolve the saved backend
+configuration after each restart.
 
 ## Build from source
 

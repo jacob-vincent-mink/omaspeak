@@ -40,6 +40,12 @@ omaspeak say --no-play --out /tmp/proof.wav "Installation proof"
 Setup downloads models only after explicit model selection and license
 acceptance. It never installs a vendor runtime and never installs a systemd
 unit as part of ordinary or Full setup.
+The runtime screen reports detected hardware and considers CUDA GPU, Intel NPU,
+Intel GPU through OpenVINO, then a Vulkan-capable GPU. It recommends the first
+detected accelerator with a complete provider, or the packaged CPU fallback;
+when no provider is available, it highlights the best hardware candidate and
+the missing provider. This is advisory: Apply must still prove the chosen device
+before saving it.
 
 ## Source build
 
@@ -50,7 +56,10 @@ cargo build --release --locked
 This builds the one runtime-neutral Rust executable. It does not build a native
 provider. Build the release-equivalent CPU provider separately with the pinned
 script shown in the README, or configure a compatible complete audio.cpp or
-OpenVINO installation with `omaspeak setup runtime --dir ...`.
+OpenVINO installation with the full selection, for example
+`omaspeak setup runtime --runtime openvino --device npu --dir /opt/intel/openvino --apply`.
+See [Accelerator setup](ACCELERATOR_SETUP.md) for CUDA, Vulkan, HIP, and each
+OpenVINO device.
 
 For a source-tree provider, configure its directory before model installation:
 
@@ -78,3 +87,6 @@ to configure the provider and retry with `omaspeak setup model --set MODEL`.
 
 `omaspeak setup menu` explicitly installs the desktop settings launcher.
 `omaspeak setup systemd` explicitly installs the user service.
+Once that service is active, later CLI config, runtime, model, and speaker
+changes use `try-restart` so the daemon adopts the saved configuration. An
+inactive or uninstalled service is left untouched.

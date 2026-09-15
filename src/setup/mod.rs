@@ -414,6 +414,11 @@ pub fn print_runtime(config_path: &Path, json: bool) -> Result<()> {
     let config = load_config(config_path)?;
     let locations = crate::runtime::discover(&config.backend, config_path);
     let inventory = crate::runtime_inventory::inventory(&config.backend, config_path);
+    let hardware = crate::hardware::detect();
+    let recommendation = crate::hardware::recommend(
+        &hardware,
+        crate::hardware::provider_availability(&config.backend, &locations),
+    );
     let value = serde_json::json!({
         "backends": catalog::backends(),
         "supported_capabilities": crate::backend::supported_capabilities(),
@@ -426,6 +431,8 @@ pub fn print_runtime(config_path: &Path, json: bool) -> Result<()> {
             "openvino": ["auto", "cpu", "gpu", "npu"]
         },
         "inventory": inventory,
+        "hardware": hardware,
+        "recommendation": recommendation,
         "loader_environment": std::env::var_os("LD_LIBRARY_PATH")
             .map(|value| value.to_string_lossy().into_owned()),
         "models": catalog::models(),
@@ -434,6 +441,25 @@ pub fn print_runtime(config_path: &Path, json: bool) -> Result<()> {
         println!("{}", serde_json::to_string_pretty(&value)?);
     } else {
         println!("Omaspeak runtime catalog\n");
+        println!("Recommendation: {}", recommendation.detail);
+        if hardware.devices.is_empty() {
+            println!("Detected accelerator hardware: none");
+        } else {
+            for device in &hardware.devices {
+                println!(
+                    "Detected hardware: {} vendor={} class={} driver={} capabilities={}",
+                    device.address,
+                    device.vendor,
+                    device.class,
+                    device.driver.as_deref().unwrap_or("unbound"),
+                    device.capabilities.join(",")
+                );
+            }
+        }
+        for error in &hardware.errors {
+            println!("Hardware discovery note: {error}");
+        }
+        println!();
         for state in &inventory {
             println!(
                 "{} / {}: supported={} discovered={} configured={} loadable={} device_accessible={} ready={} source={}",

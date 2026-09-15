@@ -307,6 +307,7 @@ impl SetupSelector for TerminalSetupSelector {
                 device_accessible: Some(true),
                 evidence: omaspeak::runtime_inventory::Evidence {
                     versions: vec![format!("audio.cpp provider {}", library.display())],
+                    provider_path: Some(library),
                     ..Default::default()
                 },
                 errors: Vec::new(),
@@ -1432,13 +1433,13 @@ fn config_command(command: ConfigCommand, path: &Path, paths: &AppPaths) -> Resu
             let mut config = Config::load(path)?;
             let previous_runtime = config.backend.runtime;
             set_config(&mut config, &key, &value)?;
-            save_config_mutation(path, config, &key, previous_runtime)?;
+            save_config_mutation(path, paths, config, &key, previous_runtime)?;
         }
         ConfigCommand::Unset { key } => {
             let mut config = Config::load(path)?;
             let previous_runtime = config.backend.runtime;
             unset_config(&mut config, &key)?;
-            save_config_mutation(path, config, &key, previous_runtime)?;
+            save_config_mutation(path, paths, config, &key, previous_runtime)?;
         }
     }
     Ok(())
@@ -1446,6 +1447,7 @@ fn config_command(command: ConfigCommand, path: &Path, paths: &AppPaths) -> Resu
 
 fn save_config_mutation(
     path: &Path,
+    paths: &AppPaths,
     mut config: Config,
     key: &str,
     previous_runtime: Runtime,
@@ -1455,7 +1457,7 @@ fn save_config_mutation(
         clear_runtime_provider_configuration(&mut config.backend);
     }
     config.backend.validate_shape()?;
-    config.save(path)
+    save_and_reload_active(config, path, paths).map(|_| ())
 }
 
 fn clear_runtime_provider_configuration(backend: &mut BackendConfig) {
@@ -2100,7 +2102,7 @@ fn apply_runtime_selection_with_provider_probe(
             evidence.ready = true;
             evidence.evidence.model_inference_verified = true;
         }
-        candidate.save(config_path)?;
+        save_and_reload_active(candidate.clone(), config_path, paths)?;
     }
     let next = (!model_installed).then_some(
         "provider ABI is valid; run `omaspeak setup` and choose Full setup, or install a compatible model to complete the model-backed provider proof",
@@ -2345,12 +2347,17 @@ fn guided_runtime(
     }
     prepare_npu_for_runtime_selection(&mut candidate, paths, ProgressFormat::Human)?;
     let model_installed = active_model_is_installed(&candidate, paths);
+    if candidate.backend.kind == "audiocpp"
+        && let Some(provider) = evidence.evidence.provider_path.as_ref()
+    {
+        candidate.backend.library = Some(provider.clone());
+    }
     if model_installed {
         pin_audio_cpp_library(&mut candidate, config_path)?;
         prove_setup_synthesis(&candidate, paths)
             .context("runtime candidate rejected by model-backed synthesis; config unchanged")?;
     }
-    candidate.save(config_path)?;
+    save_and_reload_active(candidate, config_path, paths)?;
     if model_installed {
         println!(
             "Runtime provider configured: {} on {}; file-only model proof passed.",
@@ -2397,7 +2404,40 @@ fn choose_runtime_with_discovery(
     packaged_audio_cpp_library: Option<PathBuf>,
     selector: &mut impl SetupSelector,
 ) -> Result<Option<RuntimeSelection>> {
-    let runtimes = [
+    choose_runtime_with_hardware(
+        config,
+        locations,
+        audio_cpp_library,
+        packaged_audio_cpp_library,
+        detected_setup_hardware(),
+        selector,
+    )
+}
+
+#[cfg(not(test))]
+fn detected_setup_hardware() -> omaspeak::hardware::HardwareReport {
+    omaspeak::hardware::detect()
+}
+
+#[cfg(test)]
+fn detected_setup_hardware() -> omaspeak::hardware::HardwareReport {
+    // Unit tests inject explicit reports where recommendation behavior matters.
+    // Keeping other setup tests host-independent avoids changing menu indexes
+    // based on the machine running the suite.
+    omaspeak::hardware::HardwareReport::default()
+}
+
+fn choose_runtime_with_hardware(
+    config: Config,
+    locations: omaspeak::runtime::LibraryPathReport,
+    audio_cpp_library: Option<PathBuf>,
+    packaged_audio_cpp_library: Option<PathBuf>,
+    hardware: omaspeak::hardware::HardwareReport,
+    selector: &mut impl SetupSelector,
+) -> Result<Option<RuntimeSelection>> {
+    let providers = omaspeak::hardware::provider_availability(&config.backend, &locations);
+    let recommendation = omaspeak::hardware::recommend(&hardware, providers);
+    let mut runtimes = [
         (
             Runtime::Default,
             runtime_item(
@@ -2446,13 +2486,21 @@ fn choose_runtime_with_discovery(
             ),
         ),
     ];
+    if let Some((_, item)) = runtimes
+        .iter_mut()
+        .find(|(runtime, _)| *runtime == recommendation.runtime)
+    {
+        item.label.push_str(" · Recommended");
+        item.detail = format!("{} · {}", recommendation.detail, item.detail);
+    }
     let items: Vec<_> = runtimes.iter().map(|(_, item)| item.clone()).collect();
     let preferred = runtimes
         .iter()
-        .position(|(runtime, _)| *runtime == config.backend.runtime)
+        .position(|(runtime, _)| *runtime == recommendation.runtime)
         .unwrap_or_default();
     let runtime_help = format!(
-        "Choose one complete inference provider. Setup never installs optional vendor runtimes.\r\nConfigured paths: {}\r\nPackage paths: {}\r\nResolved audio.cpp: {}\r\nResolved OpenVINO: {}\r\nOpenVINO plugins: {}",
+        "{}\r\nHardware discovery is advisory; Apply proves provider and device readiness. Setup never installs optional vendor runtimes.\r\nConfigured paths: {}\r\nPackage paths: {}\r\nResolved audio.cpp: {}\r\nResolved OpenVINO: {}\r\nOpenVINO plugins: {}",
+        recommendation.detail,
         setup_path_list(&locations.configured_library_dirs),
         setup_path_list(&locations.package_library_dirs),
         audio_cpp_library
@@ -2472,10 +2520,24 @@ fn choose_runtime_with_discovery(
         return Ok(None);
     };
     let runtime = runtimes[selected].0;
-    let devices = device_items(runtime);
+    let mut devices = device_items(runtime);
+    if runtime == recommendation.runtime
+        && let Some((_, item)) = devices
+            .iter_mut()
+            .find(|(device, _)| device.eq_ignore_ascii_case(&recommendation.device))
+    {
+        item.label.push_str(" · Recommended");
+        item.detail = format!("{} · {}", recommendation.detail, item.detail);
+    }
     let preferred = devices
         .iter()
-        .position(|(device, _)| device.eq_ignore_ascii_case(&config.backend.device))
+        .position(|(device, _)| {
+            device.eq_ignore_ascii_case(if runtime == recommendation.runtime {
+                &recommendation.device
+            } else {
+                &config.backend.device
+            })
+        })
         .unwrap_or_default();
     let items: Vec<_> = devices.iter().map(|(_, item)| item.clone()).collect();
     let Some(selected) = selector.select(
@@ -2520,10 +2582,17 @@ fn choose_runtime_with_discovery(
             packaged_audio_cpp_library.is_some()
                 || (config.backend.runtime == Runtime::Default && audio_cpp_library.is_some())
         }
-        Runtime::Cuda | Runtime::Vulkan | Runtime::Hip => {
-            config.backend.runtime == runtime
-                && audio_cpp_library.is_some()
-                && (config.backend.library.is_some() || !config.backend.library_dirs.is_empty())
+        Runtime::Cuda => providers.cuda,
+        Runtime::Vulkan => providers.vulkan,
+        Runtime::Hip => {
+            config.backend.runtime == runtime && audio_cpp_library.is_some()
+                || audio_cpp_library.as_deref().is_some_and(|library| {
+                    config.backend.library.is_none()
+                        && !locations
+                            .package_library_dirs
+                            .iter()
+                            .any(|directory| library.starts_with(directory))
+                })
         }
     };
     let library_dir = if loadable {
@@ -2866,7 +2935,7 @@ fn guided_model(
     config.model.voice = voice.id;
     prepare_npu_for_setup(&mut config, paths, ProgressFormat::Human)?;
     operations.prove(&mut config, paths)?;
-    config.save(config_path)?;
+    save_and_reload_active(config, config_path, paths)?;
     println!(
         "Active model: {} ({})",
         spec.id,
@@ -3332,6 +3401,76 @@ fn config_snapshot(path: &Path) -> Result<Option<Vec<u8>>> {
     }
 }
 
+fn save_and_reload_active(config: Config, config_path: &Path, _paths: &AppPaths) -> Result<bool> {
+    let discovered = AppPaths::discover();
+    let user_unit = app_setup::systemd::service_path(&discovered);
+    let targets_user_service = if user_unit.is_file() {
+        app_setup::systemd::unit_uses_config(&user_unit, config_path)
+    } else {
+        // With no user override, a packaged unit uses the XDG default config.
+        config_path == discovered.config_file
+    };
+    if !targets_user_service {
+        config.save(config_path)?;
+        return Ok(false);
+    }
+    save_and_reload_active_with(
+        config,
+        config_path,
+        app_setup::systemd::is_active,
+        app_setup::systemd::reload_if_was_active,
+        app_setup::systemd::restart,
+    )
+}
+
+fn save_and_reload_active_with(
+    config: Config,
+    config_path: &Path,
+    service_is_active: impl FnOnce() -> bool,
+    mut reload_service: impl FnMut(bool) -> Result<bool>,
+    restart_service: impl FnOnce() -> Result<bool>,
+) -> Result<bool> {
+    let original = config_snapshot(config_path)?;
+    let was_active = service_is_active();
+    config.save(config_path)?;
+    if !was_active {
+        return Ok(false);
+    }
+    let restart = reload_service(true).and_then(|restarted| {
+        if restarted {
+            Ok(())
+        } else {
+            bail!("active Omaspeak daemon was not restarted")
+        }
+    });
+    if let Err(error) = restart {
+        let mut detail = Vec::new();
+        match restore_snapshot(config_path, original.as_deref(), "toml.tmp") {
+            Ok(()) => match restart_service() {
+                Ok(true) => {}
+                Ok(false) => detail
+                    .push("restart daemon with previous config: service remained inactive".into()),
+                Err(reload_error) => detail.push(format!(
+                    "restart daemon with previous config: {reload_error:#}"
+                )),
+            },
+            Err(restore_error) => {
+                detail.push(format!("restore previous config: {restore_error:#}"));
+            }
+        }
+        let rollback = if detail.is_empty() {
+            "previous configuration and daemon were restored".into()
+        } else {
+            format!("rollback incomplete: {}", detail.join("; "))
+        };
+        return Err(error).context(format!(
+            "reload active daemon after config update; {rollback}"
+        ));
+    }
+    eprintln!("omaspeak: active daemon restarted with updated configuration");
+    Ok(true)
+}
+
 fn restore_snapshot(path: &Path, bytes: Option<&[u8]>, temporary_extension: &str) -> Result<()> {
     let temporary = path.with_extension(temporary_extension);
     match bytes {
@@ -3395,7 +3534,7 @@ fn setup_model(
         activate_model_for_setup(spec, &mut config)?;
         prepare_npu_for_setup(&mut config, paths, progress_format)?;
         operations.prove(&mut config, paths)?;
-        config.save(config_path)?;
+        save_and_reload_active(config, config_path, paths)?;
         println!("active model: {}", spec.id);
         return Ok(());
     }
@@ -3424,7 +3563,7 @@ fn setup_model(
                 activate_model_for_setup(spec, &mut config)?;
                 prepare_npu_for_setup(&mut config, paths, progress_format)?;
                 operations.prove(&mut config, paths)?;
-                config.save(config_path)
+                save_and_reload_active(config, config_path, paths).map(|_| ())
             })();
             activation.with_context(|| {
                 format!(

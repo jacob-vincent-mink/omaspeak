@@ -9,22 +9,35 @@ fn unit_uses_absolute_binary_and_config() {
 }
 
 #[test]
-fn unit_preserves_and_escapes_the_native_library_path() {
-    let unit = generate_with_library_path(
-        Path::new("/opt/omaspeak"),
-        Path::new("/tmp/config.toml"),
-        Some(OsStr::new("/opt/oma lib:/opt/%t/openvino\\runtime\"quoted")),
-    )
-    .unwrap();
-    assert!(unit.contains(
-        "Environment=\"LD_LIBRARY_PATH=/opt/oma lib:/opt/%%t/openvino\\\\runtime\\\"quoted\""
-    ));
-}
-
-#[test]
 fn generated_unit_does_not_capture_the_ambient_loader_path() {
     let unit = generate(Path::new("/opt/omaspeak"), Path::new("/tmp/config.toml")).unwrap();
     assert!(!unit.contains("LD_LIBRARY_PATH"));
+}
+
+#[test]
+fn unit_config_ownership_matches_the_generated_exec_start() {
+    let root = std::env::temp_dir().join(format!("omaspeak-unit-owner-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).unwrap();
+    let unit_path = root.join("omaspeak.service");
+    let owned = root.join("config with %/omaspeak.toml");
+    fs::write(
+        &unit_path,
+        generate(Path::new("/opt/omaspeak"), &owned).unwrap(),
+    )
+    .unwrap();
+    assert!(unit_uses_config(&unit_path, &owned));
+    assert!(!unit_uses_config(&unit_path, &root.join("other.toml")));
+    assert!(!unit_uses_config(&root.join("missing.service"), &owned));
+    fs::write(
+        &unit_path,
+        format!(
+            "# ExecStart=/opt/omaspeak --config \"{}\" daemon\n",
+            owned.display()
+        ),
+    )
+    .unwrap();
+    assert!(!unit_uses_config(&unit_path, &owned));
 }
 
 #[test]
@@ -125,6 +138,25 @@ fn setup_reload_only_restarts_a_service_that_was_active() {
 
     assert!(reload_if_was_active_with(true, || Ok(()), || true).unwrap());
     assert!(reload_if_was_active_with(true, || Ok(()), || false).is_err());
+}
+
+#[test]
+fn explicit_restart_requires_the_service_to_be_active_afterward() {
+    use std::cell::Cell;
+
+    let restarted = Cell::new(false);
+    assert!(
+        restart_with(
+            || {
+                restarted.set(true);
+                Ok(())
+            },
+            || true
+        )
+        .unwrap()
+    );
+    assert!(restarted.get());
+    assert!(restart_with(|| Ok(()), || false).is_err());
 }
 
 #[test]

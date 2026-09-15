@@ -814,6 +814,93 @@ fn runtime_config_mutations_reconcile_provider_specific_state() {
 }
 
 #[test]
+fn config_mutation_reload_gate_skips_inactive_services() {
+    let root = sandbox();
+    let paths = paths(&root);
+    let reloads = std::cell::Cell::new(0);
+    let mut config = Config::default();
+    config.model.language = "ja".into();
+    let restarted = save_and_reload_active_with(
+        config,
+        &paths.config_file,
+        || false,
+        |_| {
+            reloads.set(reloads.get() + 1);
+            Ok(true)
+        },
+        || unreachable!("inactive services are not restarted"),
+    )
+    .unwrap();
+    assert!(!restarted);
+    assert_eq!(
+        Config::load(&paths.config_file).unwrap().model.language,
+        "ja"
+    );
+    assert_eq!(reloads.get(), 0);
+}
+
+#[test]
+fn config_mutation_restarts_active_service_once_and_rolls_back_restart_failure() {
+    let root = sandbox();
+    let paths = paths(&root);
+    let mut original = Config::default();
+    original.model.language = "en".into();
+    original.save(&paths.config_file).unwrap();
+
+    let mut updated = original.clone();
+    updated.model.language = "ja".into();
+    let reloads = std::cell::Cell::new(0);
+    assert!(
+        save_and_reload_active_with(
+            updated,
+            &paths.config_file,
+            || true,
+            |_| {
+                reloads.set(reloads.get() + 1);
+                assert_eq!(
+                    Config::load(&paths.config_file).unwrap().model.language,
+                    "ja"
+                );
+                Ok(true)
+            },
+            || unreachable!("successful reload does not need recovery"),
+        )
+        .unwrap()
+    );
+    assert_eq!(reloads.get(), 1);
+
+    let before_failed_update = fs::read(&paths.config_file).unwrap();
+    let mut rejected = Config::load(&paths.config_file).unwrap();
+    rejected.model.language = "ko".into();
+    let reloads = std::cell::Cell::new(0);
+    let recovery_restarts = std::cell::Cell::new(0);
+    let error = save_and_reload_active_with(
+        rejected,
+        &paths.config_file,
+        || true,
+        |_| {
+            reloads.set(reloads.get() + 1);
+            assert_eq!(
+                Config::load(&paths.config_file).unwrap().model.language,
+                "ko"
+            );
+            // Model a daemon that exited while reading the new config.
+            Ok(false)
+        },
+        || {
+            recovery_restarts.set(recovery_restarts.get() + 1);
+            assert_eq!(fs::read(&paths.config_file).unwrap(), before_failed_update);
+            Ok(true)
+        },
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("reload active daemon"));
+    assert_eq!(reloads.get(), 1);
+    assert_eq!(recovery_restarts.get(), 1);
+    assert_eq!(fs::read(&paths.config_file).unwrap(), before_failed_update);
+}
+
+#[test]
 fn cli_parser_and_catalog_helpers_cover_command_surface() {
     let commands = [
         vec!["omaspeak", "daemon"],
@@ -4198,6 +4285,123 @@ fn runtime_picker_uses_packaged_cpu_after_openvino_without_reusing_its_directory
     assert_eq!(choice.runtime, Runtime::Cuda);
     assert_eq!(choice.directory.as_deref(), Some(accelerator.as_path()));
     assert_eq!(cuda.input_calls, 2);
+}
+
+#[test]
+fn runtime_picker_visibly_preselects_detected_npu_without_claiming_readiness() {
+    struct CapturingSelector {
+        screens: Vec<(String, Vec<MenuItem>, usize)>,
+    }
+    impl SetupSelector for CapturingSelector {
+        fn select(
+            &mut self,
+            title: &str,
+            _: &str,
+            items: &[MenuItem],
+            preferred: usize,
+        ) -> Result<Option<usize>> {
+            self.screens.push((title.into(), items.to_vec(), preferred));
+            Ok(Some(preferred))
+        }
+        fn input(&mut self, _: &str, _: &str) -> Result<Option<String>> {
+            unreachable!("detected OpenVINO should not request another directory")
+        }
+    }
+
+    let root = sandbox();
+    let app_paths = paths(&root);
+    let config = Config::default();
+    let mut locations = omaspeak::runtime::inspect(&config.backend, &app_paths.config_file);
+    locations.runtime_loadable.insert("openvino", true);
+    locations.openvino_library = Some(root.join("libopenvino_c.so"));
+    locations.openvino_plugins = Some(root.join("plugins.xml"));
+    let packaged = root.join("libaudiocpp.so.0");
+    let hardware = omaspeak::hardware::HardwareReport {
+        intel_npu: true,
+        intel_gpu: true,
+        vulkan_candidate: true,
+        ..Default::default()
+    };
+    let mut selector = CapturingSelector {
+        screens: Vec::new(),
+    };
+    let selected = choose_runtime_with_hardware(
+        config,
+        locations,
+        Some(packaged.clone()),
+        Some(packaged),
+        hardware,
+        &mut selector,
+    )
+    .unwrap()
+    .unwrap();
+
+    assert_eq!(selected.runtime, Runtime::Openvino);
+    assert_eq!(selected.device, "npu");
+    assert!(selected.directory.is_none());
+    assert_eq!(selector.screens.len(), 2);
+    let (_, runtime_items, runtime_preferred) = &selector.screens[0];
+    assert_eq!(*runtime_preferred, 1);
+    assert!(runtime_items[1].label.contains("Recommended"));
+    assert!(runtime_items[1].detail.contains("Intel NPU"));
+    assert!(runtime_items[1].detail.contains("Apply still runs"));
+    assert!(!runtime_items[1].detail.contains("ready"));
+    let (_, device_items, device_preferred) = &selector.screens[1];
+    assert_eq!(*device_preferred, 3);
+    assert!(device_items[3].label.contains("Recommended"));
+}
+
+#[test]
+fn fresh_runtime_picker_recommends_a_discoverable_external_cuda_provider() {
+    struct Selector {
+        input_calls: usize,
+    }
+    impl SetupSelector for Selector {
+        fn select(
+            &mut self,
+            _: &str,
+            _: &str,
+            _: &[MenuItem],
+            preferred: usize,
+        ) -> Result<Option<usize>> {
+            Ok(Some(preferred))
+        }
+        fn input(&mut self, _: &str, _: &str) -> Result<Option<String>> {
+            self.input_calls += 1;
+            Ok(Some(String::new()))
+        }
+    }
+
+    let root = sandbox();
+    let app_paths = paths(&root);
+    let config = Config::default();
+    let external = root.join("cuda/libaudiocpp.so.0");
+    fs::create_dir_all(external.parent().unwrap()).unwrap();
+    fs::write(&external, b"fixture").unwrap();
+    let mut locations = omaspeak::runtime::inspect(&config.backend, &app_paths.config_file);
+    locations.audiocpp_library = Some(external.clone());
+    locations.environment_library_dirs = vec![external.parent().unwrap().to_path_buf()];
+    locations.effective_library_dirs = locations.environment_library_dirs.clone();
+    locations.package_library_dirs.clear();
+    let mut selector = Selector { input_calls: 0 };
+    let selected = choose_runtime_with_hardware(
+        config,
+        locations,
+        Some(external),
+        None,
+        omaspeak::hardware::HardwareReport {
+            cuda_gpu: true,
+            ..Default::default()
+        },
+        &mut selector,
+    )
+    .unwrap()
+    .unwrap();
+
+    assert_eq!(selected.runtime, Runtime::Cuda);
+    assert_eq!(selected.device, "gpu");
+    assert_eq!(selected.directory, None);
+    assert_eq!(selector.input_calls, 1, "only the GPU index is requested");
 }
 
 #[test]

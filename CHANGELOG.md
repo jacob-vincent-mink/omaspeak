@@ -9,6 +9,13 @@
 - Cancel daemon-backed and on-demand playback when `omaspeak say` is
   interrupted, and terminate and reap the player instead of leaving speech
   running after its client exits.
+- Restart an already-active optional daemon after successful standalone config,
+  runtime, model, or speaker changes while leaving inactive services alone.
+- Keep optional systemd units runtime-neutral so a later backend change cannot
+  inherit loader paths from the runtime that was active during installation.
+- Detect PCI accelerator candidates during setup and recommend the highest
+  priority candidate with a complete provider, or packaged CPU, without
+  conflating detection with the provider and model proof required for readiness.
 - Kept runtime transitions provider-specific: the packaged CPU provider is
   reused when leaving OpenVINO, while accelerator selections still require a
   matching complete external provider.

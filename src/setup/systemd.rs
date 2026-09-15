@@ -6,7 +6,6 @@ use std::process::{Command, Stdio};
 use anyhow::{Context, Result, bail};
 
 use crate::paths::AppPaths;
-use crate::{config::Config, runtime};
 
 const UNIT: &str = "omaspeak.service";
 
@@ -19,40 +18,29 @@ pub fn service_path(paths: &AppPaths) -> PathBuf {
         .join("systemd/user/omaspeak.service")
 }
 
-pub fn generate(binary: &Path, config: &Path) -> Result<String> {
-    generate_with_library_path(binary, config, None)
+pub fn unit_uses_config(unit_path: &Path, config: &Path) -> bool {
+    let Ok(unit) = fs::read_to_string(unit_path) else {
+        return false;
+    };
+    quote_systemd_path(config, "Omaspeak configuration").is_ok_and(|quoted| {
+        let argument = format!(" --config {quoted} daemon");
+        unit.lines()
+            .any(|line| line.starts_with("ExecStart=") && line.contains(&argument))
+    })
 }
 
-fn generate_with_library_path(
-    binary: &Path,
-    config: &Path,
-    library_path: Option<&OsStr>,
-) -> Result<String> {
-    let library_environment = library_path
-        .filter(|value| !value.is_empty())
-        .map(|value| {
-            Ok::<String, anyhow::Error>(format!(
-                "Environment=\"LD_LIBRARY_PATH={}\"\n",
-                escape_systemd_value(value, "native library path")?
-            ))
-        })
-        .transpose()?
-        .unwrap_or_default();
+pub fn generate(binary: &Path, config: &Path) -> Result<String> {
     Ok(format!(
-        "[Unit]\nDescription=Omaspeak local text-to-speech daemon\nPartOf=graphical-session.target\nAfter=graphical-session.target pipewire.service\n\n[Service]\nType=simple\nExecStart={} --config {} daemon\nRestart=on-failure\nRestartSec=1\nEnvironment=XDG_RUNTIME_DIR=%t\n{}\n[Install]\nWantedBy=graphical-session.target\n",
+        "[Unit]\nDescription=Omaspeak local text-to-speech daemon\nPartOf=graphical-session.target\nAfter=graphical-session.target pipewire.service\n\n[Service]\nType=simple\nExecStart={} --config {} daemon\nRestart=on-failure\nRestartSec=1\nEnvironment=XDG_RUNTIME_DIR=%t\n\n[Install]\nWantedBy=graphical-session.target\n",
         quote_systemd_path(binary, "Omaspeak executable")?,
         quote_systemd_path(config, "Omaspeak configuration")?,
-        library_environment
     ))
 }
 
 pub fn install(paths: &AppPaths, config: &Path, start: bool) -> Result<PathBuf> {
     let path = service_path(paths);
     let binary = std::env::current_exe()?.canonicalize()?;
-    let app_config = Config::load(config)?;
-    let locations = runtime::inspect(&app_config.backend, config);
-    let library_path = runtime::effective_library_path(&locations)?;
-    let unit = generate_with_library_path(&binary, config, library_path.as_deref())?;
+    let unit = generate(&binary, config)?;
     write_atomic(&path, unit.as_bytes())?;
     apply_service_lifecycle(start, systemctl, is_active)?;
     Ok(path)
@@ -94,6 +82,21 @@ pub fn is_active() -> bool {
 
 pub fn reload_if_was_active(was_active: bool) -> Result<bool> {
     reload_if_was_active_with(was_active, || systemctl(&["try-restart", UNIT]), is_active)
+}
+
+pub fn restart() -> Result<bool> {
+    restart_with(|| systemctl(&["restart", UNIT]), is_active)
+}
+
+fn restart_with(
+    restart_service: impl FnOnce() -> Result<()>,
+    active_after: impl FnOnce() -> bool,
+) -> Result<bool> {
+    restart_service()?;
+    if !active_after() {
+        bail!("{UNIT} did not remain active after restart");
+    }
+    Ok(true)
 }
 
 fn reload_if_was_active_with(

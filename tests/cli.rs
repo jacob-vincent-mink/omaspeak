@@ -355,6 +355,7 @@ fn environment_provider_path_is_used_for_real_engine_loading() {
         .env("HOME", &root)
         .env("XDG_CONFIG_HOME", root.join("config"))
         .env("XDG_DATA_HOME", root.join("data"))
+        .env("XDG_CACHE_HOME", root.join("cache"))
         .env("XDG_STATE_HOME", root.join("state"))
         .env("XDG_RUNTIME_DIR", root.join("run"))
         .env("OMASPEAK_LIBRARY_PATH", &provider_directory)
@@ -369,6 +370,7 @@ fn environment_provider_path_is_used_for_real_engine_loading() {
         .env("HOME", &root)
         .env("XDG_CONFIG_HOME", root.join("config"))
         .env("XDG_DATA_HOME", root.join("data"))
+        .env("XDG_CACHE_HOME", root.join("cache"))
         .env("XDG_STATE_HOME", root.join("state"))
         .env("XDG_RUNTIME_DIR", root.join("run"))
         .env("OMASPEAK_LIBRARY_PATH", &provider_directory)
@@ -390,6 +392,7 @@ fn environment_provider_path_is_used_for_real_engine_loading() {
         .env("HOME", &root)
         .env("XDG_CONFIG_HOME", root.join("config"))
         .env("XDG_DATA_HOME", root.join("data"))
+        .env("XDG_CACHE_HOME", root.join("cache"))
         .env("XDG_STATE_HOME", root.join("state"))
         .env("XDG_RUNTIME_DIR", root.join("run"))
         .env("OMASPEAK_LIBRARY_PATH", &provider_directory)
@@ -623,7 +626,20 @@ fn sandbox() -> PathBuf {
     ));
     let _ = fs::remove_dir_all(&path);
     fs::create_dir_all(&path).unwrap();
+    let bin = path.join("test-bin");
+    fs::create_dir_all(&bin).unwrap();
+    let systemctl = bin.join("systemctl");
+    fs::write(&systemctl, "#!/bin/sh\nexit 3\n").unwrap();
+    fs::set_permissions(&systemctl, fs::Permissions::from_mode(0o755)).unwrap();
     path
+}
+
+fn test_path(root: &Path) -> std::ffi::OsString {
+    let mut paths = vec![root.join("test-bin")];
+    paths.extend(std::env::split_paths(
+        &std::env::var_os("PATH").unwrap_or_default(),
+    ));
+    std::env::join_paths(paths).unwrap()
 }
 
 fn run(root: &Path, args: &[&str]) -> Output {
@@ -632,8 +648,10 @@ fn run(root: &Path, args: &[&str]) -> Output {
         .env("HOME", root)
         .env("XDG_CONFIG_HOME", root.join("config"))
         .env("XDG_DATA_HOME", root.join("data"))
+        .env("XDG_CACHE_HOME", root.join("cache"))
         .env("XDG_STATE_HOME", root.join("state"))
         .env("XDG_RUNTIME_DIR", root.join("run"))
+        .env("PATH", test_path(root))
         .stdin(Stdio::null())
         .output()
         .unwrap()
@@ -645,8 +663,10 @@ fn run_with_input(root: &Path, args: &[&str], input: &str) -> Output {
         .env("HOME", root)
         .env("XDG_CONFIG_HOME", root.join("config"))
         .env("XDG_DATA_HOME", root.join("data"))
+        .env("XDG_CACHE_HOME", root.join("cache"))
         .env("XDG_STATE_HOME", root.join("state"))
         .env("XDG_RUNTIME_DIR", root.join("run"))
+        .env("PATH", test_path(root))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -739,21 +759,13 @@ fn guided_setup_accepts_arrow_keys_and_enter_in_a_real_pty() {
         .unwrap();
     let mut input = child.stdin.take().unwrap();
     // Wait until the child enables raw mode, choose Runtime from the setup
-    // screen, accept the preselected runtime, choose CPU, then leave the
-    // optional external-stack directory empty when setup asks for one.
+    // screen with an arrow and Enter, then cancel its runtime screen. This
+    // remains deterministic on CPU-only and accelerator hosts.
     thread::sleep(Duration::from_millis(750));
     input.write_all(b"\x1b[B\r").unwrap();
     input.flush().unwrap();
     thread::sleep(Duration::from_millis(150));
-    input.write_all(b"\r").unwrap();
-    input.flush().unwrap();
-    thread::sleep(Duration::from_millis(150));
-    input.write_all(b"\x1b[B\r").unwrap();
-    input.flush().unwrap();
-    thread::sleep(Duration::from_millis(150));
-    // The intentionally missing CPU runtime makes this answer the directory
-    // prompt and then exercises the rejected-candidate path.
-    let _ = input.write_all(b"\n");
+    let _ = input.write_all(b"q");
     drop(input);
     let deadline = Instant::now() + Duration::from_secs(5);
     while child.try_wait().unwrap().is_none() {
@@ -764,12 +776,9 @@ fn guided_setup_accepts_arrow_keys_and_enter_in_a_real_pty() {
         thread::sleep(Duration::from_millis(25));
     }
     let output = child.wait_with_output().unwrap();
-    assert!(!output.status.success());
     let terminal = stdout(&output);
     assert!(terminal.contains("Omaspeak setup"));
     assert!(terminal.contains("Omaspeak runtime"));
-    assert!(terminal.contains("Omaspeak device"));
-    assert!(terminal.contains("audio.cpp provider was not found"));
     assert!(!root.join("config/omaspeak/config.toml").exists());
 }
 
@@ -824,6 +833,7 @@ fn run_with_path(root: &Path, args: &[&str], path: &Path) -> Output {
         .env("HOME", root)
         .env("XDG_CONFIG_HOME", root.join("config"))
         .env("XDG_DATA_HOME", root.join("data"))
+        .env("XDG_CACHE_HOME", root.join("cache"))
         .env("XDG_STATE_HOME", root.join("state"))
         .env("XDG_RUNTIME_DIR", root.join("run"))
         .env("OMASPEAK_SYSTEMCTL_LOG", root.join("systemctl.log"))
@@ -1039,6 +1049,7 @@ fn runtime_discovery_reports_invalid_paths_without_reexecing() {
         .env("XDG_STATE_HOME", root.join("state"))
         .env("XDG_RUNTIME_DIR", root.join("run"))
         .env("OMASPEAK_LIBRARY_PATH", root.join("still-missing"))
+        .env("PATH", test_path(&root))
         .output()
         .unwrap();
     assert!(mutation.status.success(), "{}", stderr(&mutation));
@@ -1085,6 +1096,77 @@ fn config_commands_round_trip_and_reject_invalid_values() {
     ] {
         assert!(!run(&root, args).status.success());
     }
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn cli_config_and_runtime_mutations_restart_only_an_active_installed_service() {
+    let root = sandbox();
+    let library = build_audio_cpp_stub(&root);
+    audio_cpp_stub_config(&root, library.clone(), "supertonic.gguf")
+        .save(&root.join("config/omaspeak/config.toml"))
+        .unwrap();
+    let service = root.join("config/systemd/user/omaspeak.service");
+    fs::create_dir_all(service.parent().unwrap()).unwrap();
+    fs::write(
+        &service,
+        format!(
+            "[Service]\nExecStart=/usr/bin/omaspeak --config \"{}\" daemon\n",
+            root.join("config/omaspeak/config.toml").display()
+        ),
+    )
+    .unwrap();
+    let bin = fake_systemctl(&root, 0);
+
+    let set = run_with_path(&root, &["config", "set", "model.language", "ja"], &bin);
+    assert!(set.status.success(), "{}", stderr(&set));
+    assert!(stderr(&set).contains("active daemon restarted"));
+    let first_log = fs::read_to_string(root.join("systemctl.log")).unwrap();
+    assert_eq!(first_log.matches("try-restart").count(), 1, "{first_log}");
+    assert_eq!(first_log.matches("is-active").count(), 2, "{first_log}");
+
+    fs::write(root.join("systemctl.log"), "").unwrap();
+    let runtime = run_with_path(
+        &root,
+        &[
+            "setup",
+            "runtime",
+            "--runtime",
+            "default",
+            "--device",
+            "cpu",
+            "--dir",
+            library.parent().unwrap().to_str().unwrap(),
+            "--apply",
+        ],
+        &bin,
+    );
+    assert!(runtime.status.success(), "{}", stderr(&runtime));
+    assert!(stderr(&runtime).contains("active daemon restarted"));
+    let runtime_log = fs::read_to_string(root.join("systemctl.log")).unwrap();
+    assert_eq!(
+        runtime_log.matches("try-restart").count(),
+        1,
+        "{runtime_log}"
+    );
+    assert_eq!(runtime_log.matches("is-active").count(), 2, "{runtime_log}");
+
+    fs::remove_file(service).unwrap();
+    fs::write(root.join("systemctl.log"), "").unwrap();
+    let inactive = fake_systemctl(&root, 3);
+    let unset = run_with_path(&root, &["config", "unset", "model.language"], &inactive);
+    assert!(unset.status.success(), "{}", stderr(&unset));
+    let inactive_log = fs::read_to_string(root.join("systemctl.log")).unwrap();
+    assert_eq!(
+        inactive_log.matches("is-active").count(),
+        1,
+        "{inactive_log}"
+    );
+    assert_eq!(
+        inactive_log.matches("try-restart").count(),
+        0,
+        "{inactive_log}"
+    );
 }
 
 #[test]
