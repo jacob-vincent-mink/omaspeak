@@ -161,8 +161,8 @@ then system libraries. This makes the bundled CPU stack the automatic default
 while a configured external CUDA stack wins deterministically. Direct OpenVINO
 libraries use their separately configured paths.
 Relative TOML paths resolve beside the config file; environment overrides must
-be absolute. Omaspeak checks `lib/` beside the executable, the executable's
-directory, and `../lib/omaspeak` for package libraries. Before
+be absolute. Omaspeak checks `lib/` beside the executable and
+`../lib/omaspeak` for package libraries. Before
 an engine-loading command on Linux, it validates the selected files and their
 dependencies and re-executes once with effective directories prepended to
 `LD_LIBRARY_PATH`. Config and setup discovery commands do not re-exec.

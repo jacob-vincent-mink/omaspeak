@@ -36,11 +36,12 @@ jobs:
             "https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}/onnxruntime-linux-x64-${ORT_VERSION}.tgz"
           printf '%s  %s\n' "${ORT_ARCHIVE_SHA256}" "${archive}" | sha256sum -c -
           tar -C "${RUNNER_TEMP}" -xzf "${archive}"
-          mkdir -p target/debug
-          cp "${root}/lib/libonnxruntime.so.${ORT_VERSION}" target/debug/
-          ln -s "libonnxruntime.so.${ORT_VERSION}" target/debug/libonnxruntime.so.1
-          ln -s libonnxruntime.so.1 target/debug/libonnxruntime.so
-          echo "OMASPEAK_TEST_ONNXRUNTIME_LIBRARY=${GITHUB_WORKSPACE}/target/debug/libonnxruntime.so" \
+          fixture="${RUNNER_TEMP}/omaspeak-test-runtime"
+          mkdir -p "${fixture}"
+          cp "${root}/lib/libonnxruntime.so.${ORT_VERSION}" "${fixture}/"
+          ln -s "libonnxruntime.so.${ORT_VERSION}" "${fixture}/libonnxruntime.so.1"
+          ln -s libonnxruntime.so.1 "${fixture}/libonnxruntime.so"
+          echo "OMASPEAK_TEST_ONNXRUNTIME_LIBRARY=${fixture}/libonnxruntime.so" \
             >> "${GITHUB_ENV}"
 
       # Runtime inventory tests launch instrumented CLI child processes. Keep

@@ -583,7 +583,11 @@ fn package_library_dirs(executable: Option<&Path>) -> Vec<PathBuf> {
     let Some(binary_dir) = executable.and_then(Path::parent) else {
         return Vec::new();
     };
-    let mut candidates = vec![binary_dir.join("lib"), binary_dir.to_owned()];
+    // Keep package discovery to layouts owned by Omaspeak. Cargo and local
+    // validation commonly place transient native artifacts beside the binary
+    // in target/{debug,release}; treating that directory as a package makes
+    // those artifacts visible to setup long after the test that created them.
+    let mut candidates = vec![binary_dir.join("lib")];
     if let Some(prefix) = binary_dir.parent() {
         candidates.push(prefix.join("lib/omaspeak"));
     }

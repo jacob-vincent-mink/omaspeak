@@ -296,6 +296,102 @@ fn stderr(output: &Output) -> String {
     String::from_utf8_lossy(&output.stderr).into_owned()
 }
 
+fn generated_pre_runtime_decoupling_config() -> &'static str {
+    r#"[backend]
+kind = "sherpa-onnx"
+runtime = "default"
+device = "cpu"
+threads = 2
+fallback = "error"
+device_id = 0
+provider_config = ""
+
+[backend.options]
+
+[model]
+family = "supertonic"
+name = "supertonic-3-int8"
+directory = ""
+model_file = ""
+tokens_file = ""
+data_directory = ""
+duration_predictor = "duration_predictor.int8.onnx"
+text_encoder = "text_encoder.int8.onnx"
+vector_estimator = "vector_estimator.int8.onnx"
+vocoder = "vocoder.int8.onnx"
+tts_json = "tts.json"
+unicode_indexer = "unicode_indexer.bin"
+voice_style = "voice.bin"
+language = "en"
+steps = 5
+voice = 0
+noise_scale = 0.667
+noise_scale_w = 0.8
+length_scale = 1.0
+
+[model.options]
+
+[audio]
+device = "default"
+volume = 1.0
+
+[daemon]
+queue_capacity = 8
+max_text_bytes = 65536
+"#
+}
+
+#[test]
+fn setup_and_config_commands_upgrade_a_previously_generated_config() {
+    let root = sandbox();
+    let config_path = root.join("config/omaspeak/config.toml");
+    fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+    fs::write(&config_path, generated_pre_runtime_decoupling_config()).unwrap();
+
+    for args in [
+        &["setup", "runtime", "--json"][..],
+        &["setup", "model", "--json"],
+        &["setup", "cache", "--json"],
+    ] {
+        let output = run(&root, args);
+        assert!(output.status.success(), "{args:?}: {}", stderr(&output));
+        assert!(!stdout(&output).is_empty());
+    }
+
+    for args in [
+        &["setup"][..],
+        &["setup", "check", "--json"],
+        &["setup", "model", "--verify", "missing"],
+        &["setup", "all", "--model", "missing"],
+    ] {
+        let output = run(&root, args);
+        assert!(!output.status.success());
+        let error = stderr(&output);
+        assert!(!error.contains("provider_config"), "{args:?}: {error}");
+        assert!(!error.contains("unknown field"), "{args:?}: {error}");
+    }
+
+    let bin = fake_systemctl(&root, 0);
+    let service = run_with_path(&root, &["setup", "systemd", "--no-start"], &bin);
+    assert!(service.status.success(), "{}", stderr(&service));
+
+    let save = run(&root, &["config", "set", "audio.volume", "0.75"]);
+    assert!(save.status.success(), "{}", stderr(&save));
+    let upgraded = fs::read_to_string(&config_path).unwrap();
+    assert!(upgraded.contains("kind = \"supertonic\""));
+    for stale in [
+        "provider_config",
+        "model_file",
+        "tokens_file",
+        "data_directory",
+        "noise_scale",
+        "length_scale",
+        "sherpa-onnx",
+    ] {
+        assert!(!upgraded.contains(stale), "saved config retained {stale}");
+    }
+}
+
 #[test]
 fn setup_discovery_and_remediation_commands() {
     let root = sandbox();

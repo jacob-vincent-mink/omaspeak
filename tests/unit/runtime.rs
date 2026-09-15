@@ -198,7 +198,7 @@ fn reexec_sentinel_prevents_a_loop_and_rejects_an_incomplete_environment() {
 }
 
 #[test]
-fn package_paths_cover_archive_companion_and_system_layouts_only_with_anchors() {
+fn package_paths_cover_owned_layouts_and_ignore_executable_directory_debris() {
     let archive = fixture("archive-layout");
     std::fs::create_dir_all(archive.join("lib")).unwrap();
     std::fs::write(archive.join("lib/libopenvino_c.so.1"), b"anchor").unwrap();
@@ -207,15 +207,24 @@ fn package_paths_cover_archive_companion_and_system_layouts_only_with_anchors() 
         vec![archive.join("lib")]
     );
 
-    let companion = fixture("companion-layout");
-    std::fs::write(
-        companion.join("libonnxruntime_providers_cuda.so"),
-        b"anchor",
-    )
-    .unwrap();
-    assert_eq!(
-        package_library_dirs(Some(&companion.join("omaspeak"))),
-        vec![companion]
+    let developer = fixture("developer-layout");
+    std::fs::write(developer.join("libonnxruntime.so"), b"test core").unwrap();
+    std::fs::write(developer.join("libonnxruntime_providers_cuda.so"), b"").unwrap();
+    assert!(package_library_dirs(Some(&developer.join("omaspeak"))).is_empty());
+    let report = inspect_with(
+        &BackendConfig {
+            runtime: Runtime::Cuda,
+            ..Default::default()
+        },
+        &developer.join("config.toml"),
+        None,
+        None,
+        Some(&developer.join("omaspeak")),
+    );
+    assert!(report.package_library_dirs.is_empty());
+    assert_ne!(
+        report.provider_library.as_deref(),
+        Some(developer.join("libonnxruntime_providers_cuda.so").as_path())
     );
 
     let prefix = fixture("system-layout");

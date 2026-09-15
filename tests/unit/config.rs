@@ -67,3 +67,97 @@ fn malformed_and_unknown_config_is_rejected() {
     fs::create_dir_all(&target).unwrap();
     assert!(Config::default().save(&target).is_err());
 }
+
+#[test]
+fn generated_legacy_config_loads_without_weakening_unknown_field_checks() {
+    let root = temp("legacy-generated");
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).unwrap();
+    let path = root.join("config.toml");
+    let previous = r#"
+[backend]
+kind = "sherpa-onnx"
+runtime = "default"
+device = "cpu"
+threads = 4
+fallback = "error"
+device_id = 0
+provider_config = ""
+
+[backend.options]
+
+[model]
+family = "supertonic"
+name = "supertonic-3-int8"
+directory = ""
+model_file = ""
+tokens_file = ""
+data_directory = ""
+duration_predictor = "duration_predictor.int8.onnx"
+text_encoder = "text_encoder.int8.onnx"
+vector_estimator = "vector_estimator.int8.onnx"
+vocoder = "vocoder.int8.onnx"
+tts_json = "tts.json"
+unicode_indexer = "unicode_indexer.bin"
+voice_style = "voice.bin"
+language = "en"
+steps = 5
+voice = 2
+noise_scale = 0.667
+noise_scale_w = 0.8
+length_scale = 1.0
+
+[model.options]
+
+[audio]
+device = "default"
+volume = 0.9
+
+[daemon]
+queue_capacity = 8
+max_text_bytes = 65536
+"#;
+    fs::write(&path, previous).unwrap();
+    let migrated = Config::load(&path).unwrap();
+    assert_eq!(migrated.backend.kind, "supertonic");
+    assert_eq!(migrated.backend.threads, 4);
+    assert_eq!(migrated.model.name, "supertonic-3-int8");
+    assert_eq!(migrated.model.voice, 2);
+    assert_eq!(migrated.audio.volume, 0.9);
+
+    migrated.save(&path).unwrap();
+    let saved = fs::read_to_string(&path).unwrap();
+    for stale in [
+        "provider_config",
+        "model_file",
+        "tokens_file",
+        "data_directory",
+        "noise_scale",
+        "noise_scale_w",
+        "length_scale",
+        "sherpa-onnx",
+    ] {
+        assert!(!saved.contains(stale), "saved config retained {stale}");
+    }
+
+    fs::write(
+        &path,
+        previous.replace("threads = 4", "threads = 4\nthreadz = 4"),
+    )
+    .unwrap();
+    let unknown = Config::load(&path).unwrap_err();
+    assert!(unknown.to_string().contains("parse config"));
+    assert!(format!("{unknown:#}").contains("unknown field `threadz`"));
+
+    fs::write(
+        &path,
+        previous.replace(
+            "provider_config = \"\"",
+            "provider_config = \"legacy.conf\"",
+        ),
+    )
+    .unwrap();
+    let error = Config::load(&path).unwrap_err().to_string();
+    assert!(error.contains("upgrade config"));
+    assert!(format!("{:#}", Config::load(&path).unwrap_err()).contains("no longer supported"));
+}

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Added strict migration for configuration files generated before the direct
+  Supertonic runtime, including the former `provider_config` and model fields.
+- Prevented native build and test debris beside a developer binary from being
+  treated as an installed runtime.
+- Added packaged-binary release coverage for upgrading and applying setup with
+  a prior generated configuration.
+
 ## 0.0.1-rc - 2026-09-14
 
 - Added local Supertonic 3 speech synthesis with ten selectable speaker styles.

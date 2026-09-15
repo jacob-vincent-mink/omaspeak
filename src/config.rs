@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
 use crate::backend::BackendConfig;
@@ -24,7 +24,13 @@ impl Config {
         }
         let input =
             fs::read_to_string(path).with_context(|| format!("read config {}", path.display()))?;
-        toml::from_str(&input).with_context(|| format!("parse config {}", path.display()))
+        let mut document: toml::Value =
+            toml::from_str(&input).with_context(|| format!("parse config {}", path.display()))?;
+        migrate_legacy_config(&mut document)
+            .with_context(|| format!("upgrade config {}", path.display()))?;
+        document
+            .try_into()
+            .with_context(|| format!("parse config {}", path.display()))
     }
 
     pub fn model_directory(&self, paths: &AppPaths) -> PathBuf {
@@ -47,6 +53,54 @@ impl Config {
             .with_context(|| format!("install config {}", path.display()))?;
         Ok(())
     }
+}
+
+/// Accept only fields emitted by earlier Omaspeak builds. The final typed
+/// deserialization still uses `deny_unknown_fields`, so misspellings and
+/// unrelated keys remain errors instead of disappearing during an upgrade.
+fn migrate_legacy_config(document: &mut toml::Value) -> Result<()> {
+    if let Some(backend) = document
+        .get_mut("backend")
+        .and_then(toml::Value::as_table_mut)
+    {
+        if let Some(provider_config) = backend.get("provider_config") {
+            let provider_config = provider_config
+                .as_str()
+                .context("legacy backend.provider_config must be a string")?;
+            if !provider_config.is_empty() {
+                bail!(
+                    "backend.provider_config is no longer supported; remove it, then configure backend library paths and backend.options with `omaspeak setup runtime`"
+                );
+            }
+            backend.remove("provider_config");
+        }
+        if backend.get("kind").and_then(toml::Value::as_str) == Some("sherpa-onnx") {
+            backend.insert("kind".into(), toml::Value::String("supertonic".into()));
+        }
+    }
+
+    if let Some(model) = document
+        .get_mut("model")
+        .and_then(toml::Value::as_table_mut)
+    {
+        for field in ["model_file", "tokens_file", "data_directory"] {
+            if let Some(value) = model.get(field) {
+                value
+                    .as_str()
+                    .with_context(|| format!("legacy model.{field} must be a string"))?;
+            }
+            model.remove(field);
+        }
+        for field in ["noise_scale", "noise_scale_w", "length_scale"] {
+            if let Some(value) = model.get(field) {
+                value
+                    .as_float()
+                    .with_context(|| format!("legacy model.{field} must be a number"))?;
+            }
+            model.remove(field);
+        }
+    }
+    Ok(())
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
