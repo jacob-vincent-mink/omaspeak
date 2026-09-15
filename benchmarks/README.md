@@ -5,7 +5,9 @@ obsolete runtime design were removed because they do not prove placement or
 performance for complete audio.cpp providers or the current direct OpenVINO
 path.
 
-New proof bundles must identify the Omaspeak commit, provider library hash,
-provider upstream revision, model hash, device and driver, file-only output,
-placement evidence, cold load, hot synthesis, peak memory, real-time factor,
-and cross-provider quality checks. No accelerator result is claimed here yet.
+New proof bundles identify the Omaspeak commit, provider library hash, provider
+upstream revision, model hash, device and driver, file-only output, placement
+evidence, cold load, hot synthesis, real-time factor, and cross-provider quality
+checks.
+
+- [2026-09-15 native providers](results/2026-09-15-native-providers/RESULTS.md)

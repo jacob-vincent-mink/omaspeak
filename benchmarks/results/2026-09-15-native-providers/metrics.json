@@ -1,0 +1,79 @@
+{
+  "schema_version": 1,
+  "omaspeak_commit": "62187cb",
+  "host": {
+    "cpu": "Intel Core Ultra X7 358H",
+    "gpu": "Intel Arc B390",
+    "npu": "Intel Core Ultra Series 3 NPU",
+    "openvino": "2026.3.1",
+    "intel_npu_driver": "1.38.0",
+    "intel_compute_runtime": "26.31.39395.13"
+  },
+  "request": {
+    "text": "The quick brown fox jumps over the lazy dog.",
+    "voice": "F3",
+    "seed": 42,
+    "warmup_iterations": 1,
+    "measured_iterations": 5
+  },
+  "lanes": [
+    {
+      "name": "default-cpu",
+      "kind": "audiocpp",
+      "device": "cpu",
+      "placement_verified": true,
+      "cold_load_milliseconds": 1342,
+      "cold_synthesis_milliseconds": 1366,
+      "hot_synthesis_p50_milliseconds": 1380.732523,
+      "hot_synthesis_p95_milliseconds": 1393.817573,
+      "hot_rtf_p50": 0.4314483403,
+      "hot_rtf_p95": 0.4355371287,
+      "audio_seconds": 3.200226757,
+      "asr_exact_normalized_text": true
+    },
+    {
+      "name": "openvino-cpu",
+      "kind": "openvino",
+      "device": "cpu",
+      "placement_verified": true,
+      "cold_load_milliseconds": 42,
+      "cold_synthesis_milliseconds": 1555,
+      "hot_synthesis_p50_milliseconds": 279.806447,
+      "hot_synthesis_p95_milliseconds": 280.256827,
+      "hot_rtf_p50": 0.0996162454,
+      "hot_rtf_p95": 0.0997765889,
+      "audio_seconds": 2.808843537,
+      "asr_exact_normalized_text": true
+    },
+    {
+      "name": "openvino-gpu",
+      "kind": "openvino",
+      "device": "gpu",
+      "placement_verified": true,
+      "cold_load_milliseconds": 46,
+      "cold_synthesis_milliseconds": 1022,
+      "hot_synthesis_p50_milliseconds": 100.492104,
+      "hot_synthesis_p95_milliseconds": 100.873701,
+      "hot_rtf_p50": 0.0357770387,
+      "hot_rtf_p95": 0.0359128943,
+      "audio_seconds": 2.808843537,
+      "asr_exact_normalized_text": true
+    },
+    {
+      "name": "openvino-npu",
+      "kind": "openvino",
+      "device": "npu",
+      "placement_verified": true,
+      "setup_cache_blobs": 10,
+      "fresh_process_cache_hits_verified": true,
+      "cold_load_milliseconds": 4296,
+      "cold_synthesis_milliseconds": 688,
+      "hot_synthesis_p50_milliseconds": 67.286577,
+      "hot_synthesis_p95_milliseconds": 97.267862,
+      "hot_rtf_p50": 0.0241205814,
+      "hot_rtf_p95": 0.0348681340,
+      "audio_seconds": 2.789591837,
+      "asr_exact_normalized_text": true
+    }
+  ]
+}

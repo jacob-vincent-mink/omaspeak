@@ -12,5 +12,10 @@ This candidate introduces the greenfield native-provider architecture:
 - ordinary setup does not install or start a systemd service;
 - the Rust executable has no load-time dependency on an inference runtime.
 
-Accelerator performance and placement results will be published only after
-fresh proof runs against this architecture.
+Fresh file-only proof on an Intel Core Ultra X7 358H verified every direct
+OpenVINO graph on CPU, Arc B390 iGPU, and NPU. Hot synthesis real-time-factor
+p50 was 0.0996, 0.0358, and 0.0241 respectively; the packaged audio.cpp CPU
+baseline was 0.4314. The NPU imported ten setup-prepared cache blobs in a fresh
+process before inference. Whisper Base.en recovered the exact input sentence
+from all four outputs. See `benchmarks/results/2026-09-15-native-providers` for
+the protocol, cold timings, limits, and machine-readable results.
