@@ -202,29 +202,50 @@ fn injected_checks_cover_healthy_runtime_device_and_engine_boundaries() {
     config.model.directory = model.display().to_string();
     config.save(&paths.config_file).unwrap();
 
-    let result = checks_with(&paths.config_file, &paths, |_, _| {
-        crate::runtime_inventory::Probe {
+    let result = checks_with(
+        &paths.config_file,
+        &paths,
+        |_, _| crate::runtime_inventory::Probe {
             loadable: true,
             device_accessible: true,
             ready: true,
             ..Default::default()
-        }
-    });
+        },
+        |_, _| Ok("injected model session initialized".into()),
+    );
     for name in ["backend", "model", "voice", "runtime", "device", "engine"] {
         let check = result.iter().find(|check| check.name == name).unwrap();
         assert!(check.ok, "{name}: {}", check.detail);
     }
 
-    let failed = checks_with(&paths.config_file, &paths, |_, _| {
-        crate::runtime_inventory::Probe {
-            errors: vec!["injected device failure; injected engine failure".into()],
+    let failed = checks_with(
+        &paths.config_file,
+        &paths,
+        |_, _| crate::runtime_inventory::Probe {
+            errors: vec!["injected device failure".into()],
             ..Default::default()
-        }
-    });
+        },
+        |_, _| bail!("injected engine failure"),
+    );
     assert!(failed.iter().any(|check| {
         check.name == "device" && !check.ok && check.detail.contains("injected device failure")
     }));
     assert!(failed.iter().any(|check| {
+        check.name == "engine" && !check.ok && check.detail.contains("prerequisite")
+    }));
+
+    let engine_failed = checks_with(
+        &paths.config_file,
+        &paths,
+        |_, _| crate::runtime_inventory::Probe {
+            loadable: true,
+            device_accessible: true,
+            ready: true,
+            ..Default::default()
+        },
+        |_, _| bail!("injected engine failure"),
+    );
+    assert!(engine_failed.iter().any(|check| {
         check.name == "engine" && !check.ok && check.detail.contains("injected engine failure")
     }));
 }
@@ -265,7 +286,9 @@ fn checks_require_a_valid_compiled_cache_for_an_active_npu() {
         ready: true,
         ..Default::default()
     };
-    let checks = checks_with(&paths.config_file, &paths, ready_probe);
+    let checks = checks_with(&paths.config_file, &paths, ready_probe, |_, _| {
+        Ok("injected model session initialized".into())
+    });
     assert!(
         checks
             .iter()
@@ -282,7 +305,9 @@ fn checks_require_a_valid_compiled_cache_for_an_active_npu() {
         .unwrap();
     }
     crate::supertonic::write_npu_cache_manifest(&config, &paths, &directory).unwrap();
-    let checks = checks_with(&paths.config_file, &paths, ready_probe);
+    let checks = checks_with(&paths.config_file, &paths, ready_probe, |_, _| {
+        Ok("injected model session initialized".into())
+    });
     assert!(
         checks
             .iter()

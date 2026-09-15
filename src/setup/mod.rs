@@ -66,13 +66,40 @@ pub fn ensure_config(path: &Path) -> Result<Config> {
 }
 
 pub fn checks(path: &Path, paths: &AppPaths) -> Vec<Check> {
-    checks_with(path, paths, crate::runtime_inventory::probe)
+    checks_with(
+        path,
+        paths,
+        crate::runtime_inventory::probe,
+        |config, paths| {
+            let engine = crate::engine::Engine::load(config, paths)?;
+            if engine.fallback_used || engine.effective_runtime != config.backend.runtime {
+                bail!(
+                    "configured {} runtime initialized as {}{}",
+                    config.backend.runtime.name(),
+                    engine.effective_runtime.name(),
+                    if engine.fallback_used {
+                        " through fallback"
+                    } else {
+                        ""
+                    }
+                );
+            }
+            Ok(format!(
+                "{} initialized {} on {} at {} Hz",
+                engine.backend_kind,
+                engine.model_name,
+                config.backend.canonical_device()?,
+                engine.sample_rate
+            ))
+        },
+    )
 }
 
 fn checks_with(
     path: &Path,
     paths: &AppPaths,
     probe_runtime: impl FnOnce(&crate::backend::BackendConfig, &Path) -> crate::runtime_inventory::Probe,
+    probe_engine: impl FnOnce(&Config, &AppPaths) -> Result<String>,
 ) -> Vec<Check> {
     let mut result = Vec::new();
     let config = match Config::load(path) {
@@ -105,17 +132,23 @@ fn checks_with(
         )),
     }
 
-    match catalog::model(&config.model.name) {
+    let model_ready = match catalog::model(&config.model.name) {
         Some(spec) => match model::verify(paths, spec) {
-            Ok(()) => result.push(ok(
-                "model",
-                model::model_directory(paths, spec).display().to_string(),
-            )),
-            Err(error) => result.push(fail(
-                "model",
-                format!("{error:#}"),
-                format!("run `omaspeak setup model --download {}`", spec.id),
-            )),
+            Ok(()) => {
+                result.push(ok(
+                    "model",
+                    model::model_directory(paths, spec).display().to_string(),
+                ));
+                true
+            }
+            Err(error) => {
+                result.push(fail(
+                    "model",
+                    format!("{error:#}"),
+                    format!("run `omaspeak setup model --download {}`", spec.id),
+                ));
+                false
+            }
         },
         None => {
             let directory = config.model_directory(paths);
@@ -124,16 +157,18 @@ fn checks_with(
                     "model",
                     format!("custom model at {}", directory.display()),
                 ));
+                true
             } else {
                 result.push(fail(
                     "model",
                     format!("custom model directory is missing: {}", directory.display()),
                     "set model.directory or install a catalog model",
                 ));
+                false
             }
         }
-    }
-    match crate::voices::installed(&config, paths)
+    };
+    let voice_ready = match crate::voices::installed(&config, paths)
         .and_then(|voices| crate::voices::validate_selected(&config, &voices).map(|()| voices))
     {
         Ok(voices) => {
@@ -145,13 +180,17 @@ fn checks_with(
                 "voice",
                 format!("{} (speaker ID {})", selected.name, selected.id),
             ));
+            true
         }
-        Err(error) => result.push(fail(
-            "voice",
-            format!("{error:#}"),
-            "run `omaspeak setup model` to choose an available voice",
-        )),
-    }
+        Err(error) => {
+            result.push(fail(
+                "voice",
+                format!("{error:#}"),
+                "run `omaspeak setup model` to choose an available voice",
+            ));
+            false
+        }
+    };
     let runtime_probe = probe_runtime(&config.backend, path);
     let runtime_name = config.backend.runtime.name();
     if runtime_probe.loadable {
@@ -187,6 +226,7 @@ fn checks_with(
         }
     }
     let npu_cache = crate::supertonic::npu_cache_state(&config, paths);
+    let mut npu_ready = true;
     if npu_cache.required {
         if npu_cache.ready {
             result.push(ok(
@@ -201,6 +241,7 @@ fn checks_with(
                 ),
             ));
         } else {
+            npu_ready = false;
             result.push(fail(
                 "npu-cache",
                 npu_cache.detail,
@@ -208,22 +249,21 @@ fn checks_with(
             ));
         }
     }
-    match runtime_probe.ready {
-        true => {
-            result.push(ok(
+    if runtime_probe.ready && model_ready && voice_ready && npu_ready {
+        match probe_engine(&config, paths) {
+            Ok(detail) => result.push(ok("engine", detail)),
+            Err(error) => result.push(fail(
                 "engine",
-                if runtime_probe.evidence.model_inference_verified {
-                    "runtime/device and model inference probe passed"
-                } else {
-                    "provider ABI passed; run model or full setup to prove the selected backend with a model"
-                },
-            ));
+                format!("{error:#}"),
+                "rerun runtime or model setup to repeat the model-backed provider proof",
+            )),
         }
-        false => result.push(fail(
+    } else {
+        result.push(fail(
             "engine",
-            runtime_probe.errors.join("; "),
-            "fix the backend/runtime/model settings shown above",
-        )),
+            "model-backed provider check skipped because a prerequisite above failed",
+            "fix the backend, runtime, model, voice, or NPU cache settings shown above",
+        ));
     }
     append_environment_checks(&mut result, paths, inspect_environment(paths));
     result
