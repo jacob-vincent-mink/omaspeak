@@ -99,4 +99,20 @@ fn installed_voice_metadata_rejects_unsupported_empty_and_corrupt_models() {
             .to_string()
             .contains("invalid Supertonic voice dimensions")
     );
+
+    let oversized_dimensions = [i64::MAX, 50, 256, i64::MAX, 8, 16];
+    fs::write(
+        directory.join("voice.bin"),
+        oversized_dimensions
+            .into_iter()
+            .flat_map(i64::to_le_bytes)
+            .collect::<Vec<_>>(),
+    )
+    .unwrap();
+    assert!(
+        installed(&config, &paths)
+            .unwrap_err()
+            .to_string()
+            .contains("voice count exceeds i32")
+    );
 }

@@ -3695,3 +3695,36 @@ fn unattended_setup_validation_boundary_preserves_transaction_semantics() {
     assert!(error.to_string().contains("runtime rejection"));
     assert_eq!(fs::read(&app_paths.config_file).unwrap(), before);
 }
+
+#[test]
+fn default_setup_selector_and_accept_wrapper_cover_production_boundaries() {
+    let root = sandbox();
+    let app_paths = paths(&root);
+    let mut config = Config::default();
+    config.backend.onnxruntime_library = Some(root.join("missing-libonnxruntime.so"));
+
+    let mut selector = ErrorSelector;
+    assert_eq!(
+        selector.input("ignored", "ignored").unwrap(),
+        Some(String::new())
+    );
+    let error = selector
+        .probe_runtime(&config, &app_paths.config_file)
+        .unwrap_err();
+    assert!(error.to_string().contains("runtime candidate rejected"));
+
+    fs::create_dir_all(&app_paths.runtime_dir).unwrap();
+    let socket = app_paths.runtime_dir.join("accept.sock");
+    let listener = match UnixListener::bind(&socket) {
+        Ok(listener) => listener,
+        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => return,
+        Err(error) => panic!("bind accept-wrapper socket: {error}"),
+    };
+    let connector = thread::spawn(move || UnixStream::connect(socket).unwrap());
+    let interrupted = AtomicBool::new(false);
+    let accepted = accept_daemon_connection(&listener, &interrupted).unwrap();
+    drop(accepted);
+    drop(connector.join().unwrap());
+
+    let _ = is_interactive_terminal();
+}

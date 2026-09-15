@@ -207,4 +207,12 @@ fn output_parent_errors_are_actionable() {
         .err()
         .unwrap();
     assert!(error.to_string().contains("create output directory"));
+
+    let directory_output = root.join("existing-directory.wav");
+    std::fs::create_dir(&directory_output).unwrap();
+    let error = engine(Ok(vec![0.0]), 1)
+        .synthesize("hello", 1.0, 0, &directory_output)
+        .err()
+        .expect("a directory cannot be replaced with WAV output");
+    assert!(error.to_string().contains("create WAV"));
 }

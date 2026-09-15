@@ -844,6 +844,25 @@ fn pinned_cpu_runtime_exercises_native_ort_adapter_in_process() {
     assert!(
         <NativeOrtApi as OrtRuntimeApi>::build_session(&invalid_graph, 1, Some(&provider)).is_err()
     );
+
+    // Exercise the same production constructor used by `omaspeak say`. The
+    // compact fixture intentionally contains invalid graphs, so this proves the
+    // complete frontend-to-native-session error boundary without inference or a
+    // crashing helper process.
+    let app_root = temp("native-ort-production-constructor");
+    let (config, app_paths) = write_compact_assets(&app_root);
+    let error = DirectOrtBackend::create(
+        &config,
+        &app_paths,
+        OnnxRuntimePaths {
+            onnxruntime: library,
+            provider: None,
+        },
+        Runtime::Default,
+    )
+    .err()
+    .expect("compact graph fixture must be rejected by ONNX Runtime");
+    assert!(format!("{error:#}").contains("graph"));
 }
 
 #[test]
@@ -908,6 +927,14 @@ fn native_runtime_plans_validate_files_devices_and_provider_options_without_load
     )));
     openvino_execution_plan("auto", &[], &cache, 1, &BTreeMap::new()).unwrap();
     assert!(openvino_execution_plan("npu", &["CPU".into()], &cache, 1, &BTreeMap::new()).is_err());
+    let (_, npu_properties) =
+        openvino_execution_plan("npu", &available, &cache, 1, &BTreeMap::new()).unwrap();
+    assert!(
+        !npu_properties
+            .iter()
+            .any(|property| matches!(property, OpenvinoProperty::CacheDir(_))),
+        "NPU persistence uses explicit compiled-model export/import"
+    );
     for managed in ["CACHE_DIR", "INFERENCE_NUM_THREADS"] {
         assert!(
             openvino_execution_plan(
@@ -1127,6 +1154,34 @@ fn ort_runtime_adapter_shares_initialization_provider_builder_and_session_semant
     };
     probe_onnx_runtime_with_api::<FakeLowOrtApi>(&no_cuda_paths, Runtime::Default).unwrap();
     assert!(probe_onnx_runtime_with_api::<FakeLowOrtApi>(&no_cuda_paths, Runtime::Cuda).is_err());
+
+    let mut adapter = OrtRuntimeAdapterImpl::<FakeLowOrtApi> {
+        _api: PhantomData,
+        execution_provider: None,
+        runtime: Runtime::Default,
+    };
+    adapter
+        .initialize(&no_cuda_paths, Runtime::Default, 0, &BTreeMap::new())
+        .unwrap();
+    assert!(adapter.execution_provider.is_none());
+    assert!(
+        adapter
+            .initialize(
+                &OnnxRuntimePaths {
+                    onnxruntime: no_cuda_paths.onnxruntime.clone(),
+                    provider: None,
+                },
+                Runtime::Cuda,
+                0,
+                &BTreeMap::new(),
+            )
+            .is_err()
+    );
+    assert!(
+        adapter
+            .initialize(&no_cuda_paths, Runtime::Openvino, 0, &BTreeMap::new())
+            .is_err()
+    );
 }
 
 #[test]
@@ -1227,11 +1282,50 @@ struct FakeOpenvinoGraph {
 
 struct StaticPlanCompiler {
     cache_ids: Arc<Mutex<Vec<u64>>>,
+    fail_graph: Option<Graph>,
+    wrong_vector_shape: bool,
 }
 
 struct StaticPlanGraph {
     graph: Graph,
     input_shape: Vec<i64>,
+    fail_graph: Option<Graph>,
+    wrong_vector_shape: bool,
+}
+
+struct DefaultContractGraph;
+
+impl OpenvinoGraph for DefaultContractGraph {
+    fn execution_devices(&self) -> Result<String> {
+        Ok("NPU".into())
+    }
+
+    fn run(&mut self, _: Graph, _: Vec<NamedTensor>, output: &'static str) -> Result<NamedTensor> {
+        NamedTensor::f32(output, [1], vec![0.0])
+    }
+}
+
+struct DefaultContractCompileApi;
+
+impl OpenvinoCompileApi for DefaultContractCompileApi {
+    type Model = Vec<u8>;
+    type Shape = Vec<i64>;
+
+    fn read_model(&mut self, bytes: &[u8]) -> Result<Self::Model> {
+        Ok(bytes.to_vec())
+    }
+
+    fn shape(&self, dimensions: &[i64]) -> Result<Self::Shape> {
+        Ok(dimensions.to_vec())
+    }
+
+    fn reshape(&self, _: &mut Self::Model, _: Vec<(&str, Self::Shape)>) -> Result<()> {
+        Ok(())
+    }
+
+    fn compile(&mut self, _: &Self::Model, _: &str) -> Result<Box<dyn OpenvinoGraph>> {
+        Ok(Box::new(DefaultContractGraph))
+    }
 }
 
 impl OpenvinoCompiler for StaticPlanCompiler {
@@ -1248,6 +1342,8 @@ impl OpenvinoCompiler for StaticPlanCompiler {
         Ok(Box::new(StaticPlanGraph {
             graph,
             input_shape: inputs[0].shape.clone(),
+            fail_graph: self.fail_graph,
+            wrong_vector_shape: self.wrong_vector_shape,
         }))
     }
 }
@@ -1258,14 +1354,20 @@ impl OpenvinoGraph for StaticPlanGraph {
     }
 
     fn run(&mut self, _: Graph, _: Vec<NamedTensor>, output: &'static str) -> Result<NamedTensor> {
+        if self.fail_graph == Some(self.graph) {
+            bail!("injected {} static-plan failure", self.graph.name());
+        }
         match self.graph {
             Graph::DurationPredictor => NamedTensor::f32(output, [1], vec![0.2]),
             Graph::TextEncoder => NamedTensor::f32(output, [1, 2, NPU_TEXT_BUCKET], vec![0.0; 640]),
-            Graph::VectorEstimator => NamedTensor::f32(
-                output,
-                self.input_shape.clone(),
-                vec![0.0; self.input_shape.iter().product::<i64>() as usize],
-            ),
+            Graph::VectorEstimator => {
+                let mut shape = self.input_shape.clone();
+                if self.wrong_vector_shape {
+                    shape[2] += 1;
+                }
+                let values = vec![0.0; shape.iter().product::<i64>() as usize];
+                NamedTensor::f32(output, shape, values)
+            }
             Graph::Vocoder => NamedTensor::f32(output, [1, 1, 1], vec![0.0]),
         }
     }
@@ -1290,6 +1392,8 @@ fn npu_preparation_compiles_the_exact_static_graph_shape_plan() {
         .collect(),
         compiler: Box::new(StaticPlanCompiler {
             cache_ids: cache_ids.clone(),
+            fail_graph: None,
+            wrong_vector_shape: false,
         }),
         compiled: HashMap::new(),
         require_cache_hits: false,
@@ -1322,10 +1426,58 @@ fn npu_preparation_compiles_the_exact_static_graph_shape_plan() {
     let repeat_ids = Arc::new(Mutex::new(Vec::new()));
     pipeline.compiler = Box::new(StaticPlanCompiler {
         cache_ids: repeat_ids.clone(),
+        fail_graph: None,
+        wrong_vector_shape: false,
     });
     pipeline.compiled.clear();
     pipeline.prepare_npu_static_shapes(&frontend()).unwrap();
     assert_eq!(*repeat_ids.lock().unwrap(), first_ids);
+}
+
+#[test]
+fn npu_static_plan_reports_each_graph_failure_and_wrong_vector_shape() {
+    let root = temp("static-npu-plan-errors");
+    let model = root.join("model.onnx");
+    fs::write(&model, b"model fixture").unwrap();
+    let pipeline = |fail_graph, wrong_vector_shape| OpenvinoPipeline {
+        device: "NPU".into(),
+        graphs: [
+            Graph::DurationPredictor,
+            Graph::TextEncoder,
+            Graph::VectorEstimator,
+            Graph::Vocoder,
+        ]
+        .into_iter()
+        .map(|graph| (graph, model.clone()))
+        .collect(),
+        compiler: Box::new(StaticPlanCompiler {
+            cache_ids: Arc::new(Mutex::new(Vec::new())),
+            fail_graph,
+            wrong_vector_shape,
+        }),
+        compiled: HashMap::new(),
+        require_cache_hits: false,
+    };
+
+    for graph in [
+        Graph::DurationPredictor,
+        Graph::TextEncoder,
+        Graph::VectorEstimator,
+        Graph::Vocoder,
+    ] {
+        let error = pipeline(Some(graph), false)
+            .prepare_npu_static_shapes(&frontend())
+            .unwrap_err();
+        assert!(format!("{error:#}").contains(graph.name()));
+    }
+    let error = pipeline(None, true)
+        .prepare_npu_static_shapes(&frontend())
+        .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("vector estimator returned shape")
+    );
 }
 
 #[test]
@@ -1546,6 +1698,39 @@ fn openvino_npu_compiler_exports_then_imports_the_stable_shape_blob() {
     let events = events.lock().unwrap();
     assert!(events.contains(&"import:NPU:16".into()));
     assert!(!events.contains(&"compile:NPU".into()));
+}
+
+#[test]
+fn compiled_model_contracts_fail_explicitly_and_publish_atomically() {
+    let graph = DefaultContractGraph;
+    assert!(graph.export(Path::new("unused.blob")).is_err());
+
+    let mut default_api = DefaultContractCompileApi;
+    assert!(default_api.import(b"compiled", "NPU").is_err());
+
+    let inputs = [NamedTensor::f32("latent", [1, 4, 32], vec![0.0; 128]).unwrap()];
+    let cache_dir = temp("npu-publish-collision");
+    fs::create_dir_all(&cache_dir).unwrap();
+    let blob = cache_dir.join(format!(
+        "{}.blob",
+        openvino_cache_blob_id(Graph::Vocoder, &inputs)
+    ));
+    fs::create_dir_all(&blob).unwrap();
+    fs::write(blob.join("keep"), b"existing data").unwrap();
+    let mut compiler = OpenvinoCompilerAdapter {
+        api: FakeCompileApi {
+            failure: None,
+            events: Arc::new(Mutex::new(Vec::new())),
+        },
+        device: "NPU".into(),
+        cache_dir,
+    };
+    let error = compiler
+        .compile(Graph::Vocoder, b"model fixture", &inputs)
+        .err()
+        .expect("a directory may not be replaced by the compiled-model blob");
+    assert!(error.to_string().contains("publish compiled vocoder"));
+    assert_eq!(fs::read(blob.join("keep")).unwrap(), b"existing data");
 }
 
 #[test]
@@ -2118,6 +2303,16 @@ fn direct_backends_use_injected_runtime_pipelines_without_native_libraries() {
     assert_eq!(openvino.num_voices(), 2);
     assert!(!openvino.generate("hello", 1.0, 1).unwrap().is_empty());
 
+    config.backend.device = "cpu".into();
+    let cpu_openvino =
+        DirectOpenvinoBackend::create_with(&config, &app_paths, |frontend, _, device, _| {
+            assert_eq!(device, "cpu");
+            Ok((frontend, Box::new(FakePipeline::successful())))
+        })
+        .unwrap();
+    assert!(!cpu_openvino.generate("hello", 1.0, 0).unwrap().is_empty());
+    config.backend.device = "npu".into();
+
     let poisoned = DirectOpenvinoBackend::create_with(&config, &app_paths, |frontend, _, _, _| {
         Ok((frontend, Box::new(FakePipeline::successful())))
     })
@@ -2187,7 +2382,8 @@ fn installed_runtime_adapters_initialize_and_reject_invalid_graphs() {
         fs::create_dir_all(&app_paths.state_dir).unwrap();
         let _ = fs::remove_dir_all(app_paths.state_dir.join("cache"));
         fs::write(app_paths.state_dir.join("cache"), b"blocked").unwrap();
-        assert!(DirectOpenvinoBackend::create(&config, &app_paths, runtime).is_err());
+        let backend = DirectOpenvinoBackend::create(&config, &app_paths, runtime).unwrap();
+        assert!(backend.generate("hello", 1.0, 0).is_err());
     }
 
     let ort = std::env::var_os("OMASPEAK_TEST_ONNXRUNTIME_LIBRARY")

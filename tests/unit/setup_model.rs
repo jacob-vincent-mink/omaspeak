@@ -53,6 +53,28 @@ fn archive_with_superseded(root: &str) -> Vec<u8> {
     builder.into_inner().unwrap().finish().unwrap()
 }
 
+fn archive_with_superseded_directory(root: &str) -> Vec<u8> {
+    let encoder = BzEncoder::new(Vec::new(), Compression::best());
+    let mut builder = tar::Builder::new(encoder);
+    let mut model = tar::Header::new_gnu();
+    model.set_size(b"tiny model".len() as u64);
+    model.set_mode(0o644);
+    model.set_cksum();
+    builder
+        .append_data(&mut model, format!("{root}/model.bin"), &b"tiny model"[..])
+        .unwrap();
+
+    let mut directory = tar::Header::new_gnu();
+    directory.set_entry_type(tar::EntryType::Directory);
+    directory.set_size(0);
+    directory.set_mode(0o755);
+    directory.set_cksum();
+    builder
+        .append_data(&mut directory, format!("{root}/model.int8"), &[][..])
+        .unwrap();
+    builder.into_inner().unwrap().finish().unwrap()
+}
+
 fn archive_with_marker_directory(root: &str, path: &str, bytes: &[u8]) -> Vec<u8> {
     let encoder = BzEncoder::new(Vec::new(), Compression::best());
     let mut builder = tar::Builder::new(encoder);
@@ -354,6 +376,37 @@ fn supplemental_asset_is_cached_verified_and_installed_with_the_archive() {
     )
     .unwrap();
     verify(&paths, spec).unwrap();
+}
+
+#[test]
+fn supplemental_install_rejects_a_directory_at_the_superseded_asset_path() {
+    let root = temp("superseded-directory");
+    let archive_bytes = archive_with_superseded_directory("tiny-root");
+    let archive_path = root.join("tiny.tar.bz2");
+    fs::write(&archive_path, &archive_bytes).unwrap();
+    let spec = spec_with_supplement(&archive_bytes);
+    let app_paths = paths(&root);
+    let downloads = app_paths.data_dir.join("downloads");
+    fs::create_dir_all(&downloads).unwrap();
+    fs::write(downloads.join("tiny.extra-model.fp32"), b"float model").unwrap();
+
+    let error = install(
+        &app_paths,
+        spec,
+        Some(&archive_path),
+        ProgressFormat::Human,
+        None,
+    )
+    .unwrap_err();
+    assert!(format!("{error:#}").contains("remove superseded model asset"));
+    assert!(!model_directory(&app_paths, spec).exists());
+    assert!(
+        !app_paths
+            .data_dir
+            .join("models")
+            .join(format!(".tiny.install-{}", std::process::id()))
+            .exists()
+    );
 }
 
 #[test]

@@ -112,6 +112,24 @@ fn initialized_ort_core_cannot_silently_change_during_reload() {
 }
 
 #[test]
+fn production_cpu_probe_reports_the_pinned_runtime_without_a_subprocess() {
+    let core = test_ort_library();
+    if !core.is_file() {
+        return;
+    }
+    let result = child(&BackendConfig {
+        onnxruntime_library: Some(core),
+        ..Default::default()
+    });
+    assert!(result.ready, "{:?}", result.errors);
+    assert!(result.loadable);
+    assert!(result.device_accessible);
+    assert_eq!(result.evidence.versions, ["ONNX Runtime 1.30.0"]);
+    assert_eq!(result.evidence.available_devices, ["cpu"]);
+    assert_eq!(result.evidence.selected_device.as_deref(), Some("cpu"));
+}
+
+#[test]
 fn candidate_transactions_preserve_bytes_until_successful_apply() {
     let root = env::temp_dir().join(format!("omaspeak-runtime-apply-{}", std::process::id()));
     fs::create_dir_all(&root).unwrap();

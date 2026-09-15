@@ -31,6 +31,50 @@ fn shared_library(directory: &Path, name: &str) -> PathBuf {
     library
 }
 
+fn shared_library_with_dependency(directory: &Path, name: &str) -> (PathBuf, PathBuf) {
+    let dependency_source = directory.join("dependency.c");
+    let dependency = directory.join("libomaspeak_missing_dependency.so");
+    std::fs::write(
+        &dependency_source,
+        "int oma_dependency(void) { return 1; }\n",
+    )
+    .unwrap();
+    let output = Command::new("cc")
+        .args(["-shared", "-fPIC"])
+        .arg(&dependency_source)
+        .arg("-o")
+        .arg(&dependency)
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    let source = directory.join(format!("{name}.c"));
+    let library = directory.join(name);
+    std::fs::write(
+        &source,
+        "extern int oma_dependency(void); int oma_runtime_fixture(void) { return oma_dependency(); }\n",
+    )
+    .unwrap();
+    let output = Command::new("cc")
+        .args(["-shared", "-fPIC"])
+        .arg(&source)
+        .arg("-L")
+        .arg(directory)
+        .arg("-Wl,-rpath,$ORIGIN")
+        .arg("-Wl,--no-as-needed")
+        .arg("-lomaspeak_missing_dependency")
+        .arg("-o")
+        .arg(&library)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    (library, dependency)
+}
+
 #[test]
 fn paths_merge_in_stable_precedence_and_report_missing_entries() {
     let root = fixture("merge");
@@ -358,6 +402,31 @@ fn direct_runtime_resolution_covers_success_and_actionable_failures() {
     missing_openvino.openvino_library = report.openvino_library.clone();
     missing_openvino.openvino_plugins = None;
     assert!(resolve_openvino_runtime(&config, &config_file, &missing_openvino).is_err());
+}
+
+#[test]
+fn direct_runtime_resolution_rejects_unresolved_transitive_dependencies() {
+    let root = fixture("missing-transitive-dependency");
+    let (library, dependency) = shared_library_with_dependency(&root, "libonnxruntime.so");
+    let plugins = root.join("plugins.xml");
+    std::fs::write(&plugins, "<ie><plugins/></ie>").unwrap();
+    std::fs::remove_file(dependency).unwrap();
+    let config_file = root.join("config.toml");
+    let mut config = BackendConfig {
+        library_dirs: vec![root.clone()],
+        onnxruntime_library: Some(library.clone()),
+        ..Default::default()
+    };
+    let report = inspect_with(&config, &config_file, None, None, None);
+    let error = resolve_onnx_runtime(&config, &config_file, &report, Runtime::Default).unwrap_err();
+    assert!(error.to_string().contains("dependencies do not resolve"));
+
+    config.runtime = Runtime::Openvino;
+    config.openvino_library = Some(library);
+    config.openvino_plugins = Some(plugins);
+    let report = inspect_with(&config, &config_file, None, None, None);
+    let error = resolve_openvino_runtime(&config, &config_file, &report).unwrap_err();
+    assert!(error.to_string().contains("dependencies do not resolve"));
 }
 
 #[test]

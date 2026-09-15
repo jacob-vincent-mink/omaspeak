@@ -67,3 +67,27 @@ fn malformed_and_unknown_config_is_rejected() {
     fs::create_dir_all(&target).unwrap();
     assert!(Config::default().save(&target).is_err());
 }
+
+#[test]
+fn config_io_failures_identify_the_failed_operation() {
+    let root = temp("io-errors");
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).unwrap();
+
+    let directory = root.join("directory");
+    fs::create_dir(&directory).unwrap();
+    let error = Config::load(&directory).unwrap_err();
+    assert!(error.to_string().contains("read config"));
+
+    let blocked_parent = root.join("blocked-parent");
+    fs::write(&blocked_parent, "not a directory").unwrap();
+    let error = Config::default()
+        .save(&blocked_parent.join("config.toml"))
+        .unwrap_err();
+    assert!(error.to_string().contains("create config directory"));
+
+    let config = root.join("config.toml");
+    fs::create_dir(config.with_extension("toml.tmp")).unwrap();
+    let error = Config::default().save(&config).unwrap_err();
+    assert!(error.to_string().contains("write temporary config"));
+}
