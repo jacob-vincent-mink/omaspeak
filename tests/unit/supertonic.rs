@@ -1225,7 +1225,9 @@ struct FakeOpenvinoGraph {
     fail_device_query: bool,
 }
 
-struct StaticPlanCompiler;
+struct StaticPlanCompiler {
+    cache_ids: Arc<Mutex<Vec<u64>>>,
+}
 
 struct StaticPlanGraph {
     graph: Graph,
@@ -1239,6 +1241,10 @@ impl OpenvinoCompiler for StaticPlanCompiler {
         _: &[u8],
         inputs: &[NamedTensor],
     ) -> Result<Box<dyn OpenvinoGraph>> {
+        self.cache_ids
+            .lock()
+            .unwrap()
+            .push(openvino_cache_blob_id(graph, inputs));
         Ok(Box::new(StaticPlanGraph {
             graph,
             input_shape: inputs[0].shape.clone(),
@@ -1270,6 +1276,7 @@ fn npu_preparation_compiles_the_exact_static_graph_shape_plan() {
     let root = temp("static-npu-plan");
     let model = root.join("model.onnx");
     fs::write(&model, b"model fixture").unwrap();
+    let cache_ids = Arc::new(Mutex::new(Vec::new()));
     let mut pipeline = OpenvinoPipeline {
         device: "NPU".into(),
         graphs: [
@@ -1281,12 +1288,24 @@ fn npu_preparation_compiles_the_exact_static_graph_shape_plan() {
         .into_iter()
         .map(|graph| (graph, model.clone()))
         .collect(),
-        compiler: Box::new(StaticPlanCompiler),
+        compiler: Box::new(StaticPlanCompiler {
+            cache_ids: cache_ids.clone(),
+        }),
         compiled: HashMap::new(),
         require_cache_hits: false,
     };
     pipeline.prepare_npu_static_shapes(&frontend()).unwrap();
     assert_eq!(pipeline.compiled.len(), NPU_COMPILED_MODELS);
+    let first_ids = cache_ids.lock().unwrap().clone();
+    assert_eq!(first_ids.len(), NPU_COMPILED_MODELS);
+    assert_eq!(
+        first_ids
+            .iter()
+            .copied()
+            .collect::<std::collections::HashSet<_>>()
+            .len(),
+        NPU_COMPILED_MODELS
+    );
     let mut graph_shapes = pipeline
         .compiled
         .keys()
@@ -1299,6 +1318,14 @@ fn npu_preparation_compiles_the_exact_static_graph_shape_plan() {
         assert!(graph_shapes.contains(&(Graph::VectorEstimator, vec![1, 4, *bucket])));
         assert!(graph_shapes.contains(&(Graph::Vocoder, vec![1, 4, *bucket])));
     }
+
+    let repeat_ids = Arc::new(Mutex::new(Vec::new()));
+    pipeline.compiler = Box::new(StaticPlanCompiler {
+        cache_ids: repeat_ids.clone(),
+    });
+    pipeline.compiled.clear();
+    pipeline.prepare_npu_static_shapes(&frontend()).unwrap();
+    assert_eq!(*repeat_ids.lock().unwrap(), first_ids);
 }
 
 #[test]
@@ -1404,6 +1431,10 @@ impl OpenvinoGraph for FakeOpenvinoGraph {
     fn run(&mut self, _: Graph, _: Vec<NamedTensor>, output: &'static str) -> Result<NamedTensor> {
         NamedTensor::f32(output, [1, 2], vec![0.25, -0.25])
     }
+
+    fn export(&self, path: &Path) -> Result<()> {
+        fs::write(path, b"compiled fixture").map_err(Into::into)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1457,6 +1488,17 @@ impl OpenvinoCompileApi for FakeCompileApi {
         Ok(())
     }
 
+    fn import(&mut self, content: &[u8], device: &str) -> Result<Box<dyn OpenvinoGraph>> {
+        self.events
+            .lock()
+            .unwrap()
+            .push(format!("import:{device}:{}", content.len()));
+        Ok(Box::new(FakeOpenvinoGraph {
+            actual_device: device.into(),
+            fail_device_query: false,
+        }))
+    }
+
     fn compile(&mut self, model: &Self::Model, device: &str) -> Result<Box<dyn OpenvinoGraph>> {
         assert_eq!(model, b"model fixture");
         self.events
@@ -1474,6 +1516,39 @@ impl OpenvinoCompileApi for FakeCompileApi {
 }
 
 #[test]
+fn openvino_npu_compiler_exports_then_imports_the_stable_shape_blob() {
+    let inputs = [NamedTensor::f32("latent", [1, 4, 32], vec![0.0; 128]).unwrap()];
+    let cache_dir = temp("npu-explicit-export-import");
+    fs::create_dir_all(&cache_dir).unwrap();
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let mut compiler = OpenvinoCompilerAdapter {
+        api: FakeCompileApi {
+            failure: None,
+            events: events.clone(),
+        },
+        device: "NPU".into(),
+        cache_dir: cache_dir.clone(),
+    };
+
+    compiler
+        .compile(Graph::Vocoder, b"model fixture", &inputs)
+        .unwrap();
+    let blob = cache_dir.join(format!(
+        "{}.blob",
+        openvino_cache_blob_id(Graph::Vocoder, &inputs)
+    ));
+    assert_eq!(fs::read(&blob).unwrap(), b"compiled fixture");
+
+    events.lock().unwrap().clear();
+    compiler
+        .compile(Graph::Vocoder, b"model fixture", &inputs)
+        .unwrap();
+    let events = events.lock().unwrap();
+    assert!(events.contains(&"import:NPU:16".into()));
+    assert!(!events.contains(&"compile:NPU".into()));
+}
+
+#[test]
 fn openvino_compiler_adapter_specializes_every_input_and_contextualizes_api_failures() {
     let inputs = [
         NamedTensor::f32("signal", [1, 2], vec![0.0, 1.0]).unwrap(),
@@ -1485,12 +1560,13 @@ fn openvino_compiler_adapter_specializes_every_input_and_contextualizes_api_fail
             failure: None,
             events: events.clone(),
         },
-        device: "NPU".into(),
+        device: "CPU".into(),
+        cache_dir: temp("compiler-adapter-cache"),
     };
     let graph = compiler
         .compile(Graph::Vocoder, b"model fixture", &inputs)
         .unwrap();
-    assert_eq!(graph.execution_devices().unwrap(), "NPU");
+    assert_eq!(graph.execution_devices().unwrap(), "CPU");
     assert_eq!(
         *events.lock().unwrap(),
         [
@@ -1498,7 +1574,7 @@ fn openvino_compiler_adapter_specializes_every_input_and_contextualizes_api_fail
             "shape:[1, 2]",
             "shape:[1]",
             "reshape:[(\"signal\", [1, 2]), (\"length\", [1])]",
-            "compile:NPU",
+            "compile:CPU",
         ]
     );
 
@@ -1514,6 +1590,7 @@ fn openvino_compiler_adapter_specializes_every_input_and_contextualizes_api_fail
                 events: Arc::new(Mutex::new(Vec::new())),
             },
             device: "CPU".into(),
+            cache_dir: temp("compiler-adapter-failure-cache"),
         };
         let error = compiler
             .compile(Graph::Vocoder, b"model fixture", &inputs)
@@ -1577,7 +1654,7 @@ impl OpenvinoRuntimeApi for FakeRuntimeApi {
         Ok(())
     }
 
-    fn compiler(&mut self, _: Self::Core, device: String) -> Box<dyn OpenvinoCompiler> {
+    fn compiler(&mut self, _: Self::Core, device: String, _: PathBuf) -> Box<dyn OpenvinoCompiler> {
         Box::new(FakeOpenvinoCompiler {
             compilations: Arc::new(AtomicUsize::new(0)),
             actual_device: device,
