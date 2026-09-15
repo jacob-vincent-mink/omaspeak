@@ -1908,7 +1908,10 @@ fn apply_runtime_selection_with_provider_probe(
                     "audio.cpp provider ABI ready: {}",
                     library.display()
                 )],
+                provider_registration: true,
+                available_devices: vec![candidate.backend.runtime.capability().into()],
                 selected_device: Some(candidate.backend.device.clone()),
+                provider_path: Some(library),
                 ..Default::default()
             },
             errors: Vec::new(),
