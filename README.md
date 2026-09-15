@@ -14,7 +14,7 @@ optional PipeWire/ALSA playback, stdin, JSON status, and config mutation.
 
 ## Install
 
-The 0.0.1-rc.1 release supports Linux x86-64 and aarch64 with glibc 2.34 or newer. It ships one
+The 0.0.1-rc.1 release supports Linux x86-64 and aarch64 with glibc 2.35 or newer. It ships one
 executable plus a ready-to-use CPU runtime. Download the archive and
 `SHA256SUMS.txt` from the
 [GitHub release](https://github.com/jacob-vincent-mink/omaspeak/releases/tag/v0.0.1-rc.1),

@@ -24,4 +24,4 @@
 - Added Intel CPU, iGPU, NPU, and NVIDIA GB10 validation evidence.
 
 Known limits: release artifacts target Linux x86-64 and aarch64 with glibc
-2.34 or newer, and accelerator stacks are external.
+2.35 or newer, and accelerator stacks are external.
