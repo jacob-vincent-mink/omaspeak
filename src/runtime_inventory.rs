@@ -644,11 +644,11 @@ fn native_ort_probe(ort_path: &Path, provider: Option<&Path>) -> Result<Vec<(u32
     };
     let environment = ort::environment::Environment::current()?;
     let _registration = environment
-        .register_ep_library("omaspeak-cuda", provider)
+        .register_ep_library(crate::supertonic::CUDA_PLUGIN_EP, provider)
         .context("register selected CUDA provider library")?;
     Ok(environment
         .devices()
-        .filter(|device| device.ep().ok() == Some("CUDAExecutionProvider"))
+        .filter(|device| device.ep().ok() == Some(crate::supertonic::CUDA_PLUGIN_EP))
         .enumerate()
         .map(|(ordinal, device)| {
             let hardware = device.hardware_device();

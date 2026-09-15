@@ -20,9 +20,7 @@ use openvino::{
     CompiledModel, Core, DeviceType, ElementType, InferRequest, Model, PartialShape, PropertyKey,
     RwPropertyKey, Shape, Tensor,
 };
-use ort::ep::{
-    ArbitrarilyConfigurableExecutionProvider, ExecutionProvider, ExecutionProviderDispatch,
-};
+use ort::environment::Environment;
 use ort::session::{Session, builder::GraphOptimizationLevel};
 use ort::value::{DynValue, Tensor as OrtTensor};
 use rand::{Rng, SeedableRng, rngs::StdRng};
@@ -187,6 +185,14 @@ trait OrtRuntimeApi: Send + 'static {
 
 struct NativeOrtApi;
 
+#[derive(Clone)]
+struct CudaPluginSelection {
+    device_ordinal: u32,
+    options: BTreeMap<String, String>,
+}
+
+pub(crate) const CUDA_PLUGIN_EP: &str = "CUDAExecutionProvider";
+
 struct OrtGraphAdapter<A: OrtRuntimeApi> {
     session: A::Session,
     api: PhantomData<A>,
@@ -344,7 +350,7 @@ impl<A: OrtRuntimeApi> OrtRuntimeAdapter for OrtRuntimeAdapterImpl<A> {
 }
 
 impl OrtRuntimeApi for NativeOrtApi {
-    type ExecutionProvider = ExecutionProviderDispatch;
+    type ExecutionProvider = CudaPluginSelection;
     type Session = Session;
     type Value = DynValue;
 
@@ -368,25 +374,30 @@ impl OrtRuntimeApi for NativeOrtApi {
             }
             return Ok(());
         }
-        ort::environment::Environment::current()?
-            .register_ep_library("omaspeak-cuda", &exact)
+        Environment::current()?
+            .register_ep_library(CUDA_PLUGIN_EP, &exact)
             .context("register selected CUDA provider library")?;
         *registered = Some(exact);
         Ok(())
     }
 
     fn cuda_available(_path: &Path) -> Result<bool> {
-        ort::ep::CUDA::default()
-            .is_available()
-            .context("query ONNX Runtime CUDA execution provider")
+        Ok(Environment::current()?
+            .devices()
+            .any(|device| device.ep().ok() == Some(CUDA_PLUGIN_EP)))
     }
 
     fn cuda_provider(options: &BTreeMap<String, String>) -> Result<Self::ExecutionProvider> {
-        let mut cuda = ort::ep::CUDA::default();
-        for (key, value) in options {
-            cuda = cuda.with_arbitrary_config(key, value);
-        }
-        Ok(cuda.build().error_on_failure())
+        let mut options = options.clone();
+        let device_ordinal = options
+            .remove("device_id")
+            .context("CUDA plugin selection is missing device_id")?
+            .parse()
+            .context("CUDA plugin device_id is not an unsigned integer")?;
+        Ok(CudaPluginSelection {
+            device_ordinal,
+            options,
+        })
     }
 
     fn build_session(
@@ -401,9 +412,28 @@ impl OrtRuntimeApi for NativeOrtApi {
             .with_intra_threads(threads.into())
             .map_err(|error| anyhow!("configure ONNX Runtime thread count: {error}"))?;
         if let Some(provider) = provider {
+            // The standalone CUDA package implements ORT's Plugin EP API. It
+            // must be appended through an OrtEpDevice; the legacy CUDA builder
+            // calls SessionOptionsAppendExecutionProvider_CUDA_V2 instead.
+            let environment = Environment::current()?;
+            let device = environment
+                .devices()
+                .filter(|device| device.ep().ok() == Some(CUDA_PLUGIN_EP))
+                .nth(provider.device_ordinal as usize)
+                .with_context(|| {
+                    format!(
+                        "CUDA plugin device ordinal {} is unavailable",
+                        provider.device_ordinal
+                    )
+                })?;
+            let options = provider
+                .options
+                .iter()
+                .map(|(key, value)| (format!("{CUDA_PLUGIN_EP}.{key}"), value.clone()))
+                .collect::<Vec<_>>();
             builder = builder
-                .with_execution_providers([provider.clone()])
-                .map_err(|error| anyhow!("configure execution provider: {error}"))?;
+                .with_devices(std::iter::once(device), Some(&options))
+                .map_err(|error| anyhow!("configure CUDA plugin execution provider: {error}"))?;
         }
         builder.commit_from_file(path).map_err(Into::into)
     }

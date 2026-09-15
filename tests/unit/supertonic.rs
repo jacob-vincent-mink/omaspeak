@@ -866,6 +866,30 @@ fn pinned_cpu_runtime_exercises_native_ort_adapter_in_process() {
 }
 
 #[test]
+fn cuda_plugin_selection_uses_device_ordinal_and_v2_provider_options() {
+    let selection = <NativeOrtApi as OrtRuntimeApi>::cuda_provider(&BTreeMap::from([
+        ("device_id".into(), "2".into()),
+        ("cudnn_conv_algo_search".into(), "HEURISTIC".into()),
+        ("gpu_mem_limit".into(), "2048".into()),
+    ]))
+    .unwrap();
+
+    assert_eq!(selection.device_ordinal, 2);
+    assert!(!selection.options.contains_key("device_id"));
+    assert_eq!(selection.options["cudnn_conv_algo_search"], "HEURISTIC");
+    assert_eq!(selection.options["gpu_mem_limit"], "2048");
+
+    assert!(
+        <NativeOrtApi as OrtRuntimeApi>::cuda_provider(&BTreeMap::from([(
+            "device_id".into(),
+            "not-an-ordinal".into(),
+        )]))
+        .is_err()
+    );
+    assert!(<NativeOrtApi as OrtRuntimeApi>::cuda_provider(&BTreeMap::new()).is_err());
+}
+
+#[test]
 fn native_runtime_plans_validate_files_devices_and_provider_options_without_loading_libraries() {
     let root = temp("native-runtime-plans");
     let ort = root.join("libonnxruntime.so");
