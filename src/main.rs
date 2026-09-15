@@ -2278,10 +2278,16 @@ fn choose_runtime(
         return Ok(None);
     };
     let device = devices[selected].0.to_owned();
-    let loadable = if runtime == Runtime::Openvino {
-        locations.runtime_loadable.get("openvino") == Some(&true)
-    } else {
-        audio_cpp_library.is_some()
+    let loadable = match runtime {
+        Runtime::Openvino => locations.runtime_loadable.get("openvino") == Some(&true),
+        Runtime::Default => {
+            config.backend.runtime == Runtime::Default && audio_cpp_library.is_some()
+        }
+        Runtime::Cuda | Runtime::Vulkan | Runtime::Hip => {
+            config.backend.runtime == runtime
+                && audio_cpp_library.is_some()
+                && (config.backend.library.is_some() || !config.backend.library_dirs.is_empty())
+        }
     };
     let library_dir = if loadable {
         None
@@ -2397,6 +2403,10 @@ fn runtime_configuration_candidate(
     };
     if runtime_changed {
         config.backend.options.clear();
+        config.backend.library_dirs.clear();
+        config.backend.library = None;
+        config.backend.openvino_library = None;
+        config.backend.openvino_plugins = None;
     }
     if !matches!(runtime, Runtime::Cuda | Runtime::Vulkan | Runtime::Hip) {
         config.backend.device_id = 0;

@@ -1686,6 +1686,9 @@ fn guided_runtime_change_clears_provider_specific_configuration() {
     config.backend.kind = "supertonic".into();
     config.backend.runtime = Runtime::Openvino;
     config.backend.device = "gpu".into();
+    config.backend.library_dirs.push(root.join("old-runtime"));
+    config.backend.openvino_library = Some(root.join("old-openvino.so"));
+    config.backend.openvino_plugins = Some(root.join("old-plugins.xml"));
     config
         .backend
         .options
@@ -1704,6 +1707,9 @@ fn guided_runtime_change_clears_provider_specific_configuration() {
     assert_eq!(saved.backend.runtime, Runtime::Default);
     assert_eq!(saved.backend.device, "cpu");
     assert!(saved.backend.options.is_empty());
+    assert!(saved.backend.library_dirs.is_empty());
+    assert!(saved.backend.openvino_library.is_none());
+    assert!(saved.backend.openvino_plugins.is_none());
 }
 
 #[test]
@@ -3636,12 +3642,14 @@ fn runtime_picker_handles_explicit_directories_and_cancelled_input_without_probi
     struct InputSelector {
         choices: VecDeque<Option<usize>>,
         input: Option<String>,
+        input_calls: usize,
     }
     impl SetupSelector for InputSelector {
         fn select(&mut self, _: &str, _: &str, _: &[MenuItem], _: usize) -> Result<Option<usize>> {
             Ok(self.choices.pop_front().flatten())
         }
         fn input(&mut self, _: &str, _: &str) -> Result<Option<String>> {
+            self.input_calls += 1;
             Ok(self.input.take())
         }
     }
@@ -3655,12 +3663,28 @@ fn runtime_picker_handles_explicit_directories_and_cancelled_input_without_probi
     let mut cancelled = InputSelector {
         choices: [Some(2), Some(0)].into(),
         input: None,
+        input_calls: 0,
     };
     assert!(
         choose_runtime(&app_paths.config_file, &mut cancelled)
             .unwrap()
             .is_none()
     );
+    assert_eq!(cancelled.input_calls, 1);
+
+    let accelerator = root.join("cuda-provider");
+    let mut selected = InputSelector {
+        choices: [Some(2), Some(1)].into(),
+        input: Some(accelerator.display().to_string()),
+        input_calls: 0,
+    };
+    let choice = choose_runtime(&app_paths.config_file, &mut selected)
+        .unwrap()
+        .unwrap();
+    assert_eq!(choice.0, Runtime::Cuda);
+    assert_eq!(choice.1, "gpu");
+    assert_eq!(choice.2.as_deref(), Some(accelerator.as_path()));
+    assert_eq!(selected.input_calls, 1);
 
     config.backend.runtime = Runtime::Openvino;
     config.backend.openvino_library = Some(root.join("missing-openvino.so"));
@@ -3670,6 +3694,7 @@ fn runtime_picker_handles_explicit_directories_and_cancelled_input_without_probi
     let mut selected = InputSelector {
         choices: [Some(1), Some(3)].into(),
         input: Some(directory.display().to_string()),
+        input_calls: 0,
     };
     let choice = choose_runtime(&app_paths.config_file, &mut selected)
         .unwrap()
@@ -3677,6 +3702,7 @@ fn runtime_picker_handles_explicit_directories_and_cancelled_input_without_probi
     assert_eq!(choice.0, Runtime::Openvino);
     assert_eq!(choice.1, "npu");
     assert_eq!(choice.2.as_deref(), Some(directory.as_path()));
+    assert_eq!(selected.input_calls, 1);
 }
 
 #[test]

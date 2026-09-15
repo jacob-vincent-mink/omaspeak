@@ -14,8 +14,8 @@ clap = { version = "4", features = ["derive"] }
 bzip2 = "0.5"
 crossterm = { version = "0.28", default-features = false, features = ["events"] }
 hound = "3.5"
-openvino = { git = "https://github.com/jacob-vincent-mink/openvino-rs", rev = "96827f00f343a5e2f6c1df1e01a4c8b67fbfc36e", features = ["runtime-linking"] }
-openvino-sys = { git = "https://github.com/jacob-vincent-mink/openvino-rs", rev = "96827f00f343a5e2f6c1df1e01a4c8b67fbfc36e", features = ["runtime-linking"] }
+openvino = { version = "0.11.0", features = ["runtime-linking"] }
+openvino-sys = { version = "0.11.0", features = ["runtime-linking"] }
 rand = "0.8"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
