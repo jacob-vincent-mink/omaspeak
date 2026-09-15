@@ -52,5 +52,14 @@
   },
   "source_revision": "376fc5b90582668d4213a6a08982670b9a124e80",
   "binary_sha256": "9f1a60ef94917544d4584924b54261c4f8fce79a81b3e4d610ab9f6f01466eb4",
-  "release": "v0.0.1-rc.3"
+  "release": "v0.0.1-rc.3",
+  "updated_build_smoke": {
+    "source_revision": "217d1fc",
+    "binary_sha256": "d29f05e461d9bf57edf2ad9cf511d3db97fa976f883a53e05fadb0d1b02bf820",
+    "wav_sha256": "432ef233871a8dda727447f2d48247c86c9523d2a0b3ca5cb6075216f9ed477b",
+    "sample_rate": 44100,
+    "samples": 161384,
+    "model_load_ms": 1720,
+    "synthesis_ms": 179
+  }
 }

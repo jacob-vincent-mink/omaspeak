@@ -45,3 +45,15 @@ This is a numerical quality sanity check for one sentence and voice. It does
 not substitute for listening tests or broad language/voice intelligibility
 validation. Vulkan was substantially faster for this tested synthesis workload;
 it need not be faster for every model or sentence.
+
+## Updated-build smoke test
+
+The release build from `217d1fc` (including cancellation and setup/service
+updates) also synthesized the same F3 sentence through the isolated Vulkan
+configuration without playback. It produced 161,384 samples at 44.1 kHz,
+with 1,720 ms model load and 179 ms synthesis. Binary SHA-256:
+`d29f05e461d9bf57edf2ad9cf511d3db97fa976f883a53e05fadb0d1b02bf820`.
+Output WAV SHA-256:
+`432ef233871a8dda727447f2d48247c86c9523d2a0b3ca5cb6075216f9ed477b`.
+This confirms the updated build still performs file-only Vulkan synthesis;
+it is a smoke test, not another percentile benchmark.
