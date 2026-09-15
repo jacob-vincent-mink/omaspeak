@@ -36,9 +36,6 @@ fn missing_save_load_and_model_paths_round_trip() {
     assert_eq!(defaults.model.name, "supertonic-3-gguf");
     assert_eq!(defaults.model.file, "supertonic-3-orig.gguf");
     assert!(defaults.model.duration_predictor.is_empty());
-    assert_eq!(defaults.audio.device, "default");
-    assert_eq!(defaults.audio.volume, 1.0);
-    assert_eq!(defaults.daemon.queue_capacity, 8);
     assert_eq!(defaults.daemon.max_text_bytes, 65_536);
     defaults.save(&path).unwrap();
     assert_eq!(Config::load(&path).unwrap().model.name, defaults.model.name);

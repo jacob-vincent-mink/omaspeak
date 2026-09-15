@@ -13,7 +13,6 @@ use crate::paths::AppPaths;
 pub struct Config {
     pub backend: BackendConfig,
     pub model: ModelConfig,
-    pub audio: AudioConfig,
     pub daemon: DaemonConfig,
 }
 
@@ -95,31 +94,13 @@ impl Default for ModelConfig {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
-pub struct AudioConfig {
-    pub device: String,
-    pub volume: f32,
-}
-
-impl Default for AudioConfig {
-    fn default() -> Self {
-        Self {
-            device: "default".into(),
-            volume: 1.0,
-        }
-    }
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(default, deny_unknown_fields)]
 pub struct DaemonConfig {
-    pub queue_capacity: usize,
     pub max_text_bytes: usize,
 }
 
 impl Default for DaemonConfig {
     fn default() -> Self {
         Self {
-            queue_capacity: 8,
             max_text_bytes: 65_536,
         }
     }

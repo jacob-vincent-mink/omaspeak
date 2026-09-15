@@ -606,9 +606,6 @@ fn config_helpers_cover_supported_values_defaults_and_schema() {
         ("model.steps", "8"),
         ("model.voice", "3"),
         ("model.options.custom_key", "custom-value"),
-        ("audio.device", "speakers"),
-        ("audio.volume", "0.5"),
-        ("daemon.queue_capacity", "12"),
         ("daemon.max_text_bytes", "4096"),
     ];
     for (key, value) in assignments {
@@ -628,8 +625,6 @@ fn config_helpers_cover_supported_values_defaults_and_schema() {
     assert_eq!(config.model.voice, 3);
     assert_eq!(config.model.language, "fr");
     assert_eq!(config.model.steps, 8);
-    assert_eq!(config.daemon.queue_capacity, 12);
-    assert_eq!(config.audio.volume, 0.5);
     assert!(set_config(&mut config, "unknown", "x").is_err());
     assert!(set_config(&mut config, "backend.options.", "x").is_err());
     assert!(set_config(&mut config, "backend.threads", "many").is_err());
@@ -672,7 +667,6 @@ fn config_helpers_cover_supported_values_defaults_and_schema() {
     let defaults = Config::default();
     assert_eq!(config.backend.kind, defaults.backend.kind);
     assert_eq!(config.model.name, defaults.model.name);
-    assert_eq!(config.audio.volume, defaults.audio.volume);
 
     assert_eq!(parse_runtime("DEFAULT").unwrap(), Runtime::Default);
     assert_eq!(parse_runtime("cuda").unwrap(), Runtime::Cuda);
@@ -2264,8 +2258,8 @@ fn only_engine_loading_commands_require_runtime_path_preparation() {
     }));
     assert!(!command_loads_engine(&TopCommand::Config {
         command: ConfigCommand::Set {
-            key: "audio.volume".into(),
-            value: "0.8".into(),
+            key: "daemon.max_text_bytes".into(),
+            value: "4096".into(),
         },
     }));
     assert!(!command_loads_engine(&TopCommand::Setup {

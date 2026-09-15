@@ -1393,9 +1393,6 @@ fn set_config(config: &mut Config, key: &str, value: &str) -> Result<()> {
         "model.language" => config.model.language = value.into(),
         "model.steps" => config.model.steps = value.parse()?,
         "model.voice" => config.model.voice = value.parse()?,
-        "audio.device" => config.audio.device = value.into(),
-        "audio.volume" => config.audio.volume = value.parse()?,
-        "daemon.queue_capacity" => config.daemon.queue_capacity = value.parse()?,
         "daemon.max_text_bytes" => config.daemon.max_text_bytes = value.parse()?,
         _ => bail!("unknown or unsupported config key {key}"),
     }
@@ -1443,9 +1440,6 @@ fn unset_config(config: &mut Config, key: &str) -> Result<()> {
         "model.language" => config.model.language = defaults.model.language,
         "model.steps" => config.model.steps = defaults.model.steps,
         "model.voice" => config.model.voice = defaults.model.voice,
-        "audio.device" => config.audio.device = defaults.audio.device,
-        "audio.volume" => config.audio.volume = defaults.audio.volume,
-        "daemon.queue_capacity" => config.daemon.queue_capacity = defaults.daemon.queue_capacity,
         "daemon.max_text_bytes" => config.daemon.max_text_bytes = defaults.daemon.max_text_bytes,
         _ => bail!("unknown or unsupported config key {key}"),
     }

@@ -25,10 +25,5 @@ voice = 0 # M1-M5 = 0-4, F1-F5 = 5-9
 
 [model.options]
 
-[audio]
-device = "default"
-volume = 1.0
-
 [daemon]
-queue_capacity = 8
 max_text_bytes = 65536

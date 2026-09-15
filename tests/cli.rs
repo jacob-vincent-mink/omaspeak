@@ -538,7 +538,6 @@ fn successful_setup_replaces_an_invalid_config_and_failed_setup_restores_it() {
 
     let repaired = Config::load(&config_path).unwrap();
     assert_eq!(repaired.backend.kind, "audiocpp");
-    assert_eq!(repaired.audio.volume, 1.0);
     assert!(
         !fs::read_to_string(&config_path)
             .unwrap()
@@ -637,7 +636,7 @@ fn runtime_discovery_reports_invalid_paths_without_reexecing() {
     assert_eq!(cpu["ready"], false);
 
     let mutation = Command::new(env!("CARGO_BIN_EXE_omaspeak"))
-        .args(["config", "set", "audio.volume", "0.7"])
+        .args(["config", "set", "daemon.max_text_bytes", "4096"])
         .env("HOME", &root)
         .env("XDG_CONFIG_HOME", root.join("config"))
         .env("XDG_DATA_HOME", root.join("data"))
@@ -671,8 +670,6 @@ fn config_commands_round_trip_and_reject_invalid_values() {
         ("model.name", "custom"),
         ("model.directory", "/tmp/model"),
         ("model.voice", "0"),
-        ("audio.device", "test"),
-        ("audio.volume", "0.8"),
     ] {
         let output = run(&root, &["config", "set", key, value]);
         assert!(output.status.success(), "{key}: {}", stderr(&output));
