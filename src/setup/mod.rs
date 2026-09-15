@@ -21,6 +21,14 @@ pub struct Check {
     pub remediation: Option<String>,
 }
 
+struct EngineSummary<'a> {
+    backend_kind: &'a str,
+    model_name: &'a str,
+    sample_rate: i32,
+    effective_runtime: crate::backend::Runtime,
+    fallback_used: bool,
+}
+
 /// Load the current configuration for a setup flow. Pre-release configuration
 /// files are intentionally not migrated field by field: an invalid file is
 /// represented by current defaults until the user applies a setup change.
@@ -72,27 +80,40 @@ pub fn checks(path: &Path, paths: &AppPaths) -> Vec<Check> {
         crate::runtime_inventory::probe,
         |config, paths| {
             let engine = crate::engine::Engine::load(config, paths)?;
-            if engine.fallback_used || engine.effective_runtime != config.backend.runtime {
-                bail!(
-                    "configured {} runtime initialized as {}{}",
-                    config.backend.runtime.name(),
-                    engine.effective_runtime.name(),
-                    if engine.fallback_used {
-                        " through fallback"
-                    } else {
-                        ""
-                    }
-                );
-            }
-            Ok(format!(
-                "{} initialized {} on {} at {} Hz",
-                engine.backend_kind,
-                engine.model_name,
-                config.backend.canonical_device()?,
-                engine.sample_rate
-            ))
+            validate_engine_summary(
+                config,
+                EngineSummary {
+                    backend_kind: engine.backend_kind,
+                    model_name: &engine.model_name,
+                    sample_rate: engine.sample_rate,
+                    effective_runtime: engine.effective_runtime,
+                    fallback_used: engine.fallback_used,
+                },
+            )
         },
     )
+}
+
+fn validate_engine_summary(config: &Config, engine: EngineSummary<'_>) -> Result<String> {
+    if engine.fallback_used || engine.effective_runtime != config.backend.runtime {
+        bail!(
+            "configured {} runtime initialized as {}{}",
+            config.backend.runtime.name(),
+            engine.effective_runtime.name(),
+            if engine.fallback_used {
+                " through fallback"
+            } else {
+                ""
+            }
+        );
+    }
+    Ok(format!(
+        "{} initialized {} on {} at {} Hz",
+        engine.backend_kind,
+        engine.model_name,
+        config.backend.canonical_device()?,
+        engine.sample_rate
+    ))
 }
 
 fn checks_with(

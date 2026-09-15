@@ -33,6 +33,53 @@ fn ensure_config_creates_and_reloads_defaults() {
 }
 
 #[test]
+fn engine_check_summary_rejects_fallback_and_runtime_drift() {
+    let mut config = Config::default();
+    config.backend.device = "cpu".into();
+    let healthy = validate_engine_summary(
+        &config,
+        EngineSummary {
+            backend_kind: "audiocpp",
+            model_name: "supertonic-3-gguf",
+            sample_rate: 44_100,
+            effective_runtime: crate::backend::Runtime::Default,
+            fallback_used: false,
+        },
+    )
+    .unwrap();
+    assert!(healthy.contains("audiocpp initialized supertonic-3-gguf on cpu at 44100 Hz"));
+
+    let fallback = validate_engine_summary(
+        &config,
+        EngineSummary {
+            backend_kind: "audiocpp",
+            model_name: "supertonic-3-gguf",
+            sample_rate: 44_100,
+            effective_runtime: crate::backend::Runtime::Default,
+            fallback_used: true,
+        },
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(fallback.contains("through fallback"));
+
+    config.backend.runtime = crate::backend::Runtime::Cuda;
+    let drift = validate_engine_summary(
+        &config,
+        EngineSummary {
+            backend_kind: "audiocpp",
+            model_name: "supertonic-3-gguf",
+            sample_rate: 44_100,
+            effective_runtime: crate::backend::Runtime::Default,
+            fallback_used: false,
+        },
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(drift.contains("configured cuda runtime initialized as default"));
+}
+
+#[test]
 fn setup_loader_uses_defaults_for_invalid_config_without_changing_the_file() {
     let (_, paths) = fixture("invalid-recovery");
     fs::create_dir_all(paths.config_file.parent().unwrap()).unwrap();
@@ -141,7 +188,11 @@ fn checks_accept_a_verified_catalog_model_and_initialized_openvino_engine() {
     let source = home.join(".local/share/omaspeak/models/supertonic-3-openvino");
     let openvino = std::path::PathBuf::from("/usr/lib/libopenvino_c.so");
     let plugins = std::path::PathBuf::from("/usr/lib/openvino/plugins.xml");
-    if !source.join("voice_styles/M1.json").is_file() || !openvino.is_file() || !plugins.is_file() {
+    if !source.join("voice_styles/M1.json").is_file()
+        || !source.join(".omaspeak-model.json").is_file()
+        || !openvino.is_file()
+        || !plugins.is_file()
+    {
         return;
     }
 
@@ -160,6 +211,11 @@ fn checks_accept_a_verified_catalog_model_and_initialized_openvino_engine() {
     fs::write(
         target.join(spec.license_file),
         crate::catalog::model_license_text(spec).unwrap(),
+    )
+    .unwrap();
+    fs::copy(
+        source.join(".omaspeak-model.json"),
+        target.join(".omaspeak-model.json"),
     )
     .unwrap();
 

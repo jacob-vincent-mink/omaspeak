@@ -350,6 +350,14 @@ fn license_acceptance_and_provenance_are_recorded() {
             .as_u64()
             .is_some()
     );
+    let license_path = installed.join("MODEL-LICENSE");
+    let original_license = fs::read(&license_path).unwrap();
+    let mut tampered_license = original_license.clone();
+    tampered_license[0] ^= 1;
+    fs::write(&license_path, tampered_license).unwrap();
+    assert!(verify(&app, licensed).is_err());
+    fs::write(&license_path, original_license).unwrap();
+    verify(&app, licensed).unwrap();
     let mut tampered = manifest;
     tampered["license_acceptance"]["license"] = "different".into();
     fs::write(
@@ -436,6 +444,19 @@ fn downloads_reject_wrong_lengths_checksums_and_remove_parts() {
     );
     assert!(download_file(&app, model, &model.files[0], ProgressFormat::Json).is_err());
 
+    let (url, server) = local_downloads(vec![b"too long".to_vec()]);
+    let bad_wire = spec("bad-wire", &[("model", bytes, &url)]);
+    assert!(download_file(&app, bad_wire, &bad_wire.files[0], ProgressFormat::Human).is_err());
+    server.join().unwrap();
+    let wire_cache = app.data_dir.join("downloads/bad-wire");
+    assert!(fs::read_dir(wire_cache).unwrap().all(|entry| {
+        !entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .contains(".part-")
+    }));
+
     let target = root.join("target");
     let part = root.join("part");
     let mut wrong_size = model.files[0];
@@ -477,6 +498,19 @@ fn downloads_reject_wrong_lengths_checksums_and_remove_parts() {
         )
         .is_err()
     );
+
+    let copy_target = root.join("copy/model");
+    fs::create_dir_all(copy_target.parent().unwrap()).unwrap();
+    fs::create_dir_all(
+        copy_target
+            .parent()
+            .unwrap()
+            .join(format!(".model.part-{}", std::process::id())),
+    )
+    .unwrap();
+    let source = root.join("copy-source");
+    fs::write(&source, bytes).unwrap();
+    assert!(copy_verified(&source, &copy_target, &model.files[0]).is_err());
 }
 
 #[test]

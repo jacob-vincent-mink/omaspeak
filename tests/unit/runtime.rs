@@ -185,6 +185,8 @@ fn remediation_and_openvino_resolution_cover_each_incomplete_shape() {
             .unwrap()
             .contains("bad CUDA provider")
     );
+    assert!(augmented_loader_path(&empty).unwrap().is_none());
+    assert!(reexec_loader_path(&empty).unwrap().is_none());
 
     let root = temp("openvino-errors");
     let path = root.join("config.toml");

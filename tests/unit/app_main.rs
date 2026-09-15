@@ -687,6 +687,28 @@ fn config_helpers_cover_supported_values_defaults_and_schema() {
             .collect::<Vec<_>>(),
         ["backend.options.", "model.options."]
     );
+
+    let external_provider = root.join("libaudiocpp-external.so");
+    fs::write(&external_provider, b"provider fixture").unwrap();
+    config.backend.kind = "audiocpp".into();
+    config.backend.runtime = Runtime::Cuda;
+    config.backend.library = Some(external_provider);
+    config.save(&paths.config_file).unwrap();
+    let external_schema = schema(&paths.config_file, &paths).unwrap();
+    let runtime = external_schema["keys"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["key"] == "backend.runtime")
+        .unwrap();
+    assert!(
+        runtime["choices"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|choice| choice["value"] == "cuda" && choice["available"] == true)
+    );
+
     let human = human_schema_lines(&description).unwrap();
     assert!(
         human
@@ -1282,6 +1304,18 @@ fn say_request_supports_explicit_text_and_piped_stdin_defaults() {
     assert_eq!(resolve_voice(&config, Some("4")).unwrap(), 4);
     assert!(resolve_voice(&config, Some("unknown")).is_err());
     assert!(resolve_voice(&config, Some("99")).is_err());
+    config.model.name = "custom".into();
+    let supertonic_error = resolve_voice(&config, Some("unknown"))
+        .unwrap_err()
+        .to_string();
+    assert!(supertonic_error.contains("M1, M2"));
+    config.model.family = "custom".into();
+    let custom_error = resolve_voice(&config, Some("unknown"))
+        .unwrap_err()
+        .to_string();
+    assert!(custom_error.contains("numeric ID"));
+    config = Config::default();
+    config.model.voice = 2;
     let expected_output = root.join("spoken.wav");
     let received = build_say_request(
         &config,
@@ -2293,6 +2327,20 @@ fn runtime_catalog_covers_each_device_matrix_and_back_at_device_picker() {
         ["auto", "gpu"]
     );
     assert_eq!(
+        device_items(Runtime::Vulkan)
+            .iter()
+            .map(|(name, _)| *name)
+            .collect::<Vec<_>>(),
+        ["auto", "gpu"]
+    );
+    assert_eq!(
+        device_items(Runtime::Hip)
+            .iter()
+            .map(|(name, _)| *name)
+            .collect::<Vec<_>>(),
+        ["auto", "gpu"]
+    );
+    assert_eq!(
         device_items(Runtime::Openvino)
             .iter()
             .map(|(name, _)| *name)
@@ -3063,6 +3111,30 @@ fn filesystem_daemon_and_report_branches_need_no_native_runtime() {
     apply_runtime_directory(&mut config, &paths.config_file, &runtime).unwrap();
     assert_eq!(
         config.backend.library.as_deref(),
+        Some(runtime.join("libaudiocpp.so").as_path())
+    );
+
+    let openvino = root.join("openvino");
+    fs::create_dir_all(&openvino).unwrap();
+    fs::write(openvino.join("libopenvino_c.so"), b"fixture").unwrap();
+    let mut direct = Config::default();
+    direct.backend.kind = "supertonic".into();
+    direct.backend.runtime = Runtime::Openvino;
+    let missing_plugins = apply_runtime_directory(&mut direct, &paths.config_file, &openvino)
+        .unwrap_err()
+        .to_string();
+    assert!(missing_plugins.contains("plugins.xml was not found"));
+    fs::write(openvino.join("plugins.xml"), b"<ie/>").unwrap();
+    apply_runtime_directory(&mut direct, &paths.config_file, &openvino).unwrap();
+    assert_eq!(
+        direct.backend.openvino_library.as_deref(),
+        Some(openvino.join("libopenvino_c.so").as_path())
+    );
+
+    direct.backend.runtime = Runtime::Cuda;
+    apply_runtime_directory(&mut direct, &paths.config_file, &runtime).unwrap();
+    assert_eq!(
+        direct.backend.library.as_deref(),
         Some(runtime.join("libaudiocpp.so").as_path())
     );
 
@@ -3850,6 +3922,18 @@ fn runtime_picker_handles_explicit_directories_and_cancelled_input_without_probi
     assert_eq!(choice.device_id, Some(3));
     assert_eq!(choice.directory.as_deref(), Some(accelerator.as_path()));
     assert_eq!(selected.input_calls, 2);
+
+    let mut defaults = InputSelector {
+        choices: [Some(2), Some(1)].into(),
+        inputs: [Some(String::new()), Some(String::new())].into(),
+        input_calls: 0,
+    };
+    let choice = choose_runtime(&app_paths.config_file, &mut defaults)
+        .unwrap()
+        .unwrap();
+    assert_eq!(choice.runtime, Runtime::Cuda);
+    assert_eq!(choice.device_id, Some(0));
+    assert!(choice.directory.is_none());
 
     config.backend.runtime = Runtime::Openvino;
     config.backend.openvino_library = Some(root.join("missing-openvino.so"));
