@@ -15,6 +15,7 @@ use std::{
 };
 #[cfg(not(test))]
 use std::{
+    io::Read,
     process::{Command, Stdio},
     thread,
     time::{Duration, Instant},
@@ -548,23 +549,62 @@ fn run_npu_preparation_child(
             .env("LD_LIBRARY_PATH", loader_path)
             .env("ORT_DISABLE_TELEMETRY", "1")
             .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
+            .stderr(Stdio::piped())
             .spawn()
             .context("start isolated NPU cache preparation")?;
+        let mut child_stdout = child
+            .stdout
+            .take()
+            .context("capture NPU preparation stdout")?;
+        let mut child_stderr = child
+            .stderr
+            .take()
+            .context("capture NPU preparation stderr")?;
+        let stdout_reader = thread::spawn(move || {
+            let mut output = Vec::new();
+            child_stdout.read_to_end(&mut output).map(|_| output)
+        });
+        let stderr_reader = thread::spawn(move || {
+            let mut output = Vec::new();
+            child_stderr.read_to_end(&mut output).map(|_| output)
+        });
         let start = Instant::now();
         while child.try_wait()?.is_none() {
             if start.elapsed() > Duration::from_secs(30 * 60) {
                 child.kill()?;
                 child.wait()?;
+                let _ = stdout_reader.join();
+                let _ = stderr_reader.join();
                 bail!("NPU cache preparation timed out after 30 minutes");
             }
             thread::sleep(Duration::from_millis(50));
         }
-        let output = child.wait_with_output()?;
-        if !output.status.success() {
-            bail!("NPU cache preparation terminated: {}", output.status);
+        let status = child.wait()?;
+        let stdout = stdout_reader
+            .join()
+            .map_err(|_| anyhow::anyhow!("read NPU preparation stdout"))??;
+        let stderr = stderr_reader
+            .join()
+            .map_err(|_| anyhow::anyhow!("read NPU preparation stderr"))??;
+        if !status.success() {
+            let detail = String::from_utf8_lossy(&stderr);
+            bail!(
+                "NPU cache preparation terminated: {status}{}",
+                if detail.trim().is_empty() {
+                    String::new()
+                } else {
+                    format!(": {}", detail.trim())
+                }
+            );
         }
-        serde_json::from_slice(&output.stdout).context("read isolated NPU preparation evidence")
+        serde_json::from_slice(&stdout).with_context(|| {
+            let detail = String::from_utf8_lossy(&stderr);
+            if detail.trim().is_empty() {
+                "read isolated NPU preparation evidence".into()
+            } else {
+                format!("read isolated NPU preparation evidence: {}", detail.trim())
+            }
+        })
     }
 }
 

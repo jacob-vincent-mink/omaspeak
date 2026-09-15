@@ -12,7 +12,8 @@ to address RUSTSEC-2026-0285.
 
 Intel NPU setup prepares and verifies a fixed 12-graph cache before activation;
 normal synthesis requires those cache hits and will not compile an unprepared
-shape during first use.
+shape during first use. Successful native compiler diagnostics are captured by
+the setup worker, while actual failures retain their diagnostic detail.
 
 The default model is downloaded only after explicit acceptance of its
 OpenRAIL-M terms. Validated configurations include default and OpenVINO CPU

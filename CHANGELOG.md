@@ -6,6 +6,8 @@
 
 - Updated rustls to 0.23.45 to address RUSTSEC-2026-0285. This release
   candidate supersedes 0.0.1-rc.1.
+- Capture successful OpenVINO NPU compiler diagnostics inside the setup worker
+  so normal setup output contains only actionable application progress.
 
 ## 0.0.1-rc.1 - 2026-09-14
 
