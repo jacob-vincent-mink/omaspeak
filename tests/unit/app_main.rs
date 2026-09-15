@@ -848,6 +848,12 @@ fn cli_parser_and_catalog_helpers_cover_command_surface() {
     assert!(help.contains("omaspeak setup systemd"));
     assert!(help.contains("already-active daemon is safely restarted"));
     assert!(!help.contains("--no-start"));
+    let systemd_help = setup
+        .find_subcommand_mut("systemd")
+        .unwrap()
+        .render_long_help()
+        .to_string();
+    assert!(systemd_help.contains("Install and enable the unit without starting or restarting it"));
     assert!(
         Cli::try_parse_from(["omaspeak", "setup", "all", "--no-start"]).is_err(),
         "service lifecycle flags belong to the explicit setup systemd command"
@@ -2177,7 +2183,7 @@ fn fresh_full_setup_stages_audio_cpp_cpu_and_gguf_together() {
             assert_eq!(candidate.backend.device, "auto");
             Ok(())
         },
-        |paths| Ok(paths.data_dir.join("applications/omaspeak.desktop")),
+        |paths| Ok(app_setup::menu::launcher_path(paths)),
         || false,
         |was_active| {
             assert!(!was_active);
@@ -2370,7 +2376,7 @@ fn confirmed_full_setup_applies_runtime_model_and_launcher_but_leaves_service_un
         &mut selector,
         accept_runtime,
         |paths| {
-            let path = paths.data_dir.join("applications/omaspeak.desktop");
+            let path = app_setup::menu::launcher_path(paths);
             fs::create_dir_all(path.parent().unwrap())?;
             fs::write(&path, "launcher")?;
             Ok(path)
@@ -2388,12 +2394,7 @@ fn confirmed_full_setup_applies_runtime_model_and_launcher_but_leaves_service_un
     // check fails and the transaction restores the absent config.
     assert!(result.is_err());
     assert!(!paths.config_file.exists());
-    assert!(
-        paths
-            .data_dir
-            .join("applications/omaspeak.desktop")
-            .is_file()
-    );
+    assert!(!app_setup::menu::launcher_path(&paths).exists());
     assert_eq!(fs::read_to_string(service).unwrap(), "existing service");
     assert!(!reload_called.get());
 }
@@ -2500,7 +2501,7 @@ fn setup_all_installs_model_and_launcher_but_leaves_service_untouched() {
             Some("OpenRAIL-M"),
             format,
             |paths| {
-                let path = paths.data_dir.join("applications/omaspeak.desktop");
+                let path = app_setup::menu::launcher_path(paths);
                 fs::create_dir_all(path.parent().unwrap())?;
                 fs::write(&path, b"launcher")?;
                 Ok(path)
@@ -2516,6 +2517,7 @@ fn setup_all_installs_model_and_launcher_but_leaves_service_untouched() {
         // the fake install did not place real model bytes.
         assert!(result.is_err());
         assert!(!paths.config_file.exists());
+        assert!(!app_setup::menu::launcher_path(&paths).exists());
         assert!(!reload_called.get());
         if matches!(format, ProgressFormat::Json) {
             assert_eq!(fs::read_to_string(service).unwrap(), "existing service");
@@ -2544,7 +2546,12 @@ fn setup_transaction_restores_existing_and_new_configs_on_late_failures() {
         None,
         Some("OpenRAIL-M"),
         ProgressFormat::Human,
-        |_| bail!("launcher failed after config save"),
+        |paths| {
+            let launcher = app_setup::menu::launcher_path(paths);
+            fs::create_dir_all(launcher.parent().unwrap())?;
+            fs::write(launcher.with_extension("tmp"), "partial launcher")?;
+            bail!("launcher failed after config save")
+        },
         || false,
         |_| unreachable!(),
         |_, _| unreachable!(),
@@ -2553,8 +2560,15 @@ fn setup_transaction_restores_existing_and_new_configs_on_late_failures() {
     .unwrap_err();
     assert!(error.to_string().contains("launcher failed"));
     assert_eq!(fs::read(&existing.config_file).unwrap(), original);
+    assert!(!app_setup::menu::launcher_path(&existing).exists());
+    assert!(
+        !app_setup::menu::launcher_path(&existing)
+            .with_extension("tmp")
+            .exists()
+    );
 
     let new = paths(&sandbox());
+    let new_launcher = app_setup::menu::launcher_path(&new);
     let restarts = std::cell::Cell::new(0);
     let error = setup_all_with_config(
         Config::default(),
@@ -2566,7 +2580,12 @@ fn setup_transaction_restores_existing_and_new_configs_on_late_failures() {
         None,
         Some("OpenRAIL-M"),
         ProgressFormat::Json,
-        |paths| Ok(paths.data_dir.join("omaspeak.desktop")),
+        |paths| {
+            let launcher = app_setup::menu::launcher_path(paths);
+            fs::create_dir_all(launcher.parent().unwrap())?;
+            fs::write(&launcher, "new launcher")?;
+            Ok(launcher)
+        },
         || true,
         |_| {
             restarts.set(restarts.get() + 1);
@@ -2579,12 +2598,17 @@ fn setup_transaction_restores_existing_and_new_configs_on_late_failures() {
     assert!(error.to_string().contains("final setup check failed"));
     assert_eq!(restarts.get(), 0);
     assert!(!new.config_file.exists());
+    assert!(!new_launcher.exists());
 
     let restart_root = sandbox();
     let restart = paths(&restart_root);
     let original = b"# restore after restart failure\n";
     fs::create_dir_all(restart.config_file.parent().unwrap()).unwrap();
     fs::write(&restart.config_file, original).unwrap();
+    let launcher = app_setup::menu::launcher_path(&restart);
+    fs::create_dir_all(launcher.parent().unwrap()).unwrap();
+    fs::write(&launcher, "prior launcher").unwrap();
+    let restart_attempts = std::cell::Cell::new(0);
     let error = setup_all_with_config(
         Config::load(&restart.config_file).unwrap(),
         &restart.config_file,
@@ -2595,15 +2619,28 @@ fn setup_transaction_restores_existing_and_new_configs_on_late_failures() {
         None,
         Some("OpenRAIL-M"),
         ProgressFormat::Human,
-        |paths| Ok(paths.data_dir.join("omaspeak.desktop")),
+        |paths| {
+            let launcher = app_setup::menu::launcher_path(paths);
+            fs::write(&launcher, "replacement launcher")?;
+            Ok(launcher)
+        },
         || true,
-        |_| bail!("active service restart failed"),
+        |_| {
+            restart_attempts.set(restart_attempts.get() + 1);
+            if restart_attempts.get() == 1 {
+                bail!("active service restart failed")
+            }
+            assert_eq!(fs::read(&restart.config_file).unwrap(), original);
+            Ok(true)
+        },
         |_, _| Ok(()),
         |_, _| unreachable!(),
     )
     .unwrap_err();
     assert!(error.to_string().contains("restart failed"));
+    assert_eq!(restart_attempts.get(), 2);
     assert_eq!(fs::read(&restart.config_file).unwrap(), original);
+    assert_eq!(fs::read_to_string(launcher).unwrap(), "prior launcher");
 }
 
 #[test]
@@ -2667,7 +2704,7 @@ fn setup_transaction_checks_then_restarts_and_prints_both_formats() {
             None,
             Some("OpenRAIL-M"),
             format,
-            |paths| Ok(paths.data_dir.join("omaspeak.desktop")),
+            |paths| Ok(app_setup::menu::launcher_path(paths)),
             || active,
             |was_active| {
                 assert_eq!(was_active, active);
@@ -3967,7 +4004,7 @@ fn unattended_setup_validation_boundary_preserves_transaction_semantics() {
         None,
         Some("OpenRAIL-M"),
         ProgressFormat::Human,
-        |paths| Ok(paths.data_dir.join("omaspeak.desktop")),
+        |paths| Ok(app_setup::menu::launcher_path(paths)),
         || false,
         |_| unreachable!("failed health check must prevent restart"),
         |config, path, explicit| {

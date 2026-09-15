@@ -1,7 +1,16 @@
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+static void exit_worker_with_diagnostics(const char *diagnostic) {
+    for (int i = 0; i < 4096; ++i)
+        fputs("native provider initialization detail padding\n", stderr);
+    fprintf(stderr, "%s\n", diagnostic);
+    fflush(stderr);
+    exit(70);
+}
 
 typedef struct {
     const char *family_hint;
@@ -50,6 +59,8 @@ int audiocpp_model_load(void *registry, const char *path,
                          void **model) {
     (void)options;
     if (!registry || !path || !config || !config->family_hint) return 1;
+    if (strstr(path, "exit-load"))
+        exit_worker_with_diagnostics("audio.cpp startup diagnostic from provider");
     if (strstr(path, "fail-load")) return 41;
     if (strstr(path, "null-model")) {
         *model = NULL;

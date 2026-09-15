@@ -9,8 +9,9 @@ use std::ffi::{CStr, CString, c_char, c_int, c_void};
 use std::io::{self, Read, Write};
 use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
-use std::sync::Mutex;
+use std::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command, ExitStatus, Stdio};
+use std::sync::{Arc, Mutex};
+use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow, bail};
@@ -28,6 +29,7 @@ const SUPERTONIC_SAMPLE_RATE: i32 = 44_100;
 const SUPERTONIC_VOICES: i32 = 10;
 const MAX_CONTROL_FRAME: usize = 1024 * 1024;
 const MAX_PCM_SAMPLES: usize = 64 * 1024 * 1024;
+const MAX_WORKER_STDERR: usize = 16 * 1024;
 const WORKER_TIMEOUT: Duration = Duration::from_secs(300);
 const WORKER_STOP_TIMEOUT: Duration = Duration::from_secs(1);
 const PROVIDER_PROBE_TIMEOUT: Duration = Duration::from_secs(10);
@@ -557,7 +559,90 @@ struct WorkerClient {
     child: Child,
     input: Option<TimedWriter>,
     output: Option<TimedReader>,
+    diagnostics: WorkerDiagnostics,
     stopped: bool,
+}
+
+#[derive(Default)]
+struct BoundedDiagnostics {
+    bytes: Vec<u8>,
+    truncated: bool,
+}
+
+impl BoundedDiagnostics {
+    fn append(&mut self, bytes: &[u8]) {
+        if bytes.len() >= MAX_WORKER_STDERR {
+            self.bytes.clear();
+            self.bytes
+                .extend_from_slice(&bytes[bytes.len() - MAX_WORKER_STDERR..]);
+            self.truncated = true;
+            return;
+        }
+        let overflow = self
+            .bytes
+            .len()
+            .saturating_add(bytes.len())
+            .saturating_sub(MAX_WORKER_STDERR);
+        if overflow > 0 {
+            self.bytes.drain(..overflow);
+            self.truncated = true;
+        }
+        self.bytes.extend_from_slice(bytes);
+    }
+
+    fn render(&self) -> Option<String> {
+        let text = String::from_utf8_lossy(&self.bytes);
+        let text = text
+            .chars()
+            .filter(|character| !character.is_control() || matches!(character, '\n' | '\r' | '\t'))
+            .collect::<String>();
+        let text = text.trim();
+        if text.is_empty() {
+            None
+        } else if self.truncated {
+            Some(format!("[earlier output truncated] {text}"))
+        } else {
+            Some(text.into())
+        }
+    }
+}
+
+struct WorkerDiagnostics {
+    buffer: Arc<Mutex<BoundedDiagnostics>>,
+    reader: Option<JoinHandle<io::Result<()>>>,
+}
+
+impl WorkerDiagnostics {
+    fn capture(mut stderr: ChildStderr) -> Self {
+        let buffer = Arc::new(Mutex::new(BoundedDiagnostics::default()));
+        let writer = Arc::clone(&buffer);
+        let reader = thread::spawn(move || {
+            let mut chunk = [0_u8; 4096];
+            loop {
+                let count = stderr.read(&mut chunk)?;
+                if count == 0 {
+                    return Ok(());
+                }
+                if let Ok(mut buffer) = writer.lock() {
+                    buffer.append(&chunk[..count]);
+                }
+            }
+        });
+        Self {
+            buffer,
+            reader: Some(reader),
+        }
+    }
+
+    fn finish(&mut self) {
+        if let Some(reader) = self.reader.take() {
+            let _ = reader.join();
+        }
+    }
+
+    fn render(&self) -> Option<String> {
+        self.buffer.lock().ok().and_then(|buffer| buffer.render())
+    }
 }
 
 struct TimedReader {
@@ -657,7 +742,7 @@ impl WorkerClient {
             .arg(encoded)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null());
+            .stderr(Stdio::piped());
         let loader_path = std::env::join_paths(&spec.library_dirs)
             .context("encode audio.cpp worker native library path")?;
         command.env("LD_LIBRARY_PATH", loader_path);
@@ -672,6 +757,10 @@ impl WorkerClient {
             .stdout
             .take()
             .context("audio.cpp worker stdout is unavailable")?;
+        let stderr = child
+            .stderr
+            .take()
+            .context("audio.cpp worker stderr is unavailable")?;
         let mut client = Self {
             child,
             input: Some(TimedWriter {
@@ -682,13 +771,15 @@ impl WorkerClient {
                 reader: output,
                 timeout: WORKER_TIMEOUT,
             }),
+            diagnostics: WorkerDiagnostics::capture(stderr),
             stopped: false,
         };
         let ready: WorkerResponse = match client.read_response() {
             Ok(ready) => ready,
             Err(error) => {
                 let _ = client.stop();
-                return Err(error).context("read audio.cpp worker startup response");
+                return Err(client.with_diagnostics(error))
+                    .context("read audio.cpp worker startup response");
             }
         };
         match ready {
@@ -698,11 +789,17 @@ impl WorkerClient {
             } => Ok(client),
             WorkerResponse::Error { message } => {
                 let _ = client.stop();
-                bail!("audio.cpp worker initialization failed: {message}")
+                bail!(
+                    "audio.cpp worker initialization failed: {message}{}",
+                    client.diagnostic_suffix()
+                )
             }
             other => {
                 let _ = client.stop();
-                bail!("audio.cpp worker returned invalid startup response {other:?}")
+                bail!(
+                    "audio.cpp worker returned invalid startup response {other:?}{}",
+                    client.diagnostic_suffix()
+                )
             }
         }
     }
@@ -725,29 +822,47 @@ impl WorkerClient {
     }
 
     fn request(&mut self, request: &WorkerRequest) -> Result<std::result::Result<Audio, String>> {
-        self.write_request(request)?;
-        let response = self.read_response()?;
-        match response {
-            WorkerResponse::Audio {
-                sample_rate,
-                samples,
-            } => {
-                if sample_rate != SUPERTONIC_SAMPLE_RATE {
-                    bail!("audio.cpp worker returned unexpected sample rate {sample_rate}");
-                }
-                Ok(Ok(Audio {
+        let result = (|| {
+            self.write_request(request)?;
+            let response = self.read_response()?;
+            match response {
+                WorkerResponse::Audio {
                     sample_rate,
-                    pcm: read_pcm(
-                        self.output
-                            .as_mut()
-                            .context("audio.cpp worker output is closed")?,
-                        samples,
-                    )?,
-                }))
+                    samples,
+                } => {
+                    if sample_rate != SUPERTONIC_SAMPLE_RATE {
+                        bail!("audio.cpp worker returned unexpected sample rate {sample_rate}");
+                    }
+                    Ok(Ok(Audio {
+                        sample_rate,
+                        pcm: read_pcm(
+                            self.output
+                                .as_mut()
+                                .context("audio.cpp worker output is closed")?,
+                            samples,
+                        )?,
+                    }))
+                }
+                WorkerResponse::Error { message } => Ok(Err(message)),
+                other => bail!("audio.cpp worker returned invalid synthesis response {other:?}"),
             }
-            WorkerResponse::Error { message } => Ok(Err(message)),
-            other => bail!("audio.cpp worker returned invalid synthesis response {other:?}"),
+        })();
+        match result {
+            Ok(result) => Ok(result),
+            Err(error) => Err(self.with_diagnostics(error)),
         }
+    }
+
+    fn with_diagnostics(&mut self, error: anyhow::Error) -> anyhow::Error {
+        anyhow!("{error:#}{}", self.diagnostic_suffix())
+    }
+
+    fn diagnostic_suffix(&mut self) -> String {
+        let status = self.child.try_wait().ok().flatten();
+        if status.is_some() {
+            self.diagnostics.finish();
+        }
+        render_worker_diagnostics(status.as_ref(), self.diagnostics.render().as_deref())
     }
 
     fn stop(&mut self) -> Result<()> {
@@ -766,11 +881,13 @@ impl WorkerClient {
         if matches!(response, Ok(WorkerResponse::Shutdown))
             && wait_for_exit(&mut self.child, WORKER_STOP_TIMEOUT)?
         {
+            self.diagnostics.finish();
             return Ok(());
         }
         self.input.take();
         self.output.take();
         if wait_for_exit(&mut self.child, WORKER_STOP_TIMEOUT)? {
+            self.diagnostics.finish();
             return Ok(());
         }
         match self.child.kill() {
@@ -784,8 +901,19 @@ impl WorkerClient {
                 "audio.cpp worker did not exit after termination; refusing to start a replacement"
             );
         }
+        self.diagnostics.finish();
         Ok(())
     }
+}
+
+fn render_worker_diagnostics(status: Option<&ExitStatus>, stderr: Option<&str>) -> String {
+    let status = status.map(|status| format!("; worker exited with {status}"));
+    let stderr = stderr.map(|stderr| format!("; native stderr: {stderr}"));
+    format!(
+        "{}{}",
+        status.unwrap_or_default(),
+        stderr.unwrap_or_default()
+    )
 }
 
 impl Drop for WorkerClient {

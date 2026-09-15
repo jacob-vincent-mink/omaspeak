@@ -102,6 +102,26 @@ fn bounded_worker_reap_polling_reports_exit_and_timeout() {
 }
 
 #[test]
+fn native_diagnostics_retain_a_bounded_sanitized_tail() {
+    let mut diagnostics = BoundedDiagnostics::default();
+    diagnostics.append(b"discarded prefix\n");
+    diagnostics.append(&vec![b'x'; MAX_WORKER_STDERR]);
+    diagnostics.append(b"\nuseful tail\x00\x07\n");
+    assert!(diagnostics.bytes.len() <= MAX_WORKER_STDERR);
+    let rendered = diagnostics.render().unwrap();
+    assert!(rendered.starts_with("[earlier output truncated]"));
+    assert!(rendered.ends_with("useful tail"));
+    assert!(!rendered.contains('\0'));
+    assert!(!rendered.contains('\u{7}'));
+
+    assert_eq!(
+        render_worker_diagnostics(None, None),
+        "",
+        "successful silent workers add no diagnostic noise"
+    );
+}
+
+#[test]
 fn worker_pipes_round_trip_without_socket_permissions() {
     let mut child = Command::new("cat")
         .stdin(Stdio::piped())

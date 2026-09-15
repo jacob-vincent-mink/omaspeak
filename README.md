@@ -125,6 +125,7 @@ Daemon installation is explicit:
 
 ```bash
 omaspeak setup systemd          # install and start the user unit
+omaspeak setup systemd --no-start # install and enable it without starting it
 omaspeak setup systemd --status
 omaspeak setup systemd --uninstall
 ```

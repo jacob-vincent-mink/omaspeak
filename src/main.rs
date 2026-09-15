@@ -241,6 +241,7 @@ enum SetupCommand {
         uninstall: bool,
         #[arg(long)]
         status: bool,
+        /// Install and enable the unit without starting or restarting it.
         #[arg(long, conflicts_with_all = ["uninstall", "status"])]
         no_start: bool,
     },
@@ -2091,7 +2092,7 @@ fn guided_full_setup_with(
     selector: &mut impl SetupSelector,
     install_launcher: impl FnOnce(&AppPaths) -> Result<PathBuf>,
     service_is_active: impl FnOnce() -> bool,
-    reload_service: impl FnOnce(bool) -> Result<bool>,
+    reload_service: impl FnMut(bool) -> Result<bool>,
 ) -> Result<()> {
     guided_full_setup_with_validator(
         config_path,
@@ -2116,7 +2117,7 @@ fn guided_full_setup_with_validator(
     validate_runtime: impl FnOnce(&Config, &Path, bool) -> Result<()>,
     install_launcher: impl FnOnce(&AppPaths) -> Result<PathBuf>,
     service_is_active: impl FnOnce() -> bool,
-    reload_service: impl FnOnce(bool) -> Result<bool>,
+    reload_service: impl FnMut(bool) -> Result<bool>,
     check_human: impl FnOnce(&Path, &AppPaths) -> Result<()>,
     check_json: impl FnOnce(&Path, &AppPaths) -> Result<()>,
 ) -> Result<()> {
@@ -2976,7 +2977,7 @@ fn setup_all(
     progress_format: ProgressFormat,
     install_launcher: impl FnOnce(&AppPaths) -> Result<PathBuf>,
     service_is_active: impl FnOnce() -> bool,
-    reload_service: impl FnOnce(bool) -> Result<bool>,
+    reload_service: impl FnMut(bool) -> Result<bool>,
 ) -> Result<()> {
     setup_all_with_validator(
         config_path,
@@ -3006,7 +3007,7 @@ fn setup_all_with_validator(
     progress_format: ProgressFormat,
     install_launcher: impl FnOnce(&AppPaths) -> Result<PathBuf>,
     service_is_active: impl FnOnce() -> bool,
-    reload_service: impl FnOnce(bool) -> Result<bool>,
+    reload_service: impl FnMut(bool) -> Result<bool>,
     validate_runtime: impl FnOnce(&Config, &Path, bool) -> Result<()>,
 ) -> Result<()> {
     let mut config = app_setup::load_config(config_path)?;
@@ -3059,7 +3060,7 @@ fn setup_all_with_config(
     progress_format: ProgressFormat,
     install_launcher: impl FnOnce(&AppPaths) -> Result<PathBuf>,
     service_is_active: impl FnOnce() -> bool,
-    reload_service: impl FnOnce(bool) -> Result<bool>,
+    reload_service: impl FnMut(bool) -> Result<bool>,
     check_human: impl FnOnce(&Path, &AppPaths) -> Result<()>,
     check_json: impl FnOnce(&Path, &AppPaths) -> Result<()>,
 ) -> Result<()> {
@@ -3095,7 +3096,7 @@ fn setup_all_with_config_and_preparer(
     progress_format: ProgressFormat,
     install_launcher: impl FnOnce(&AppPaths) -> Result<PathBuf>,
     service_is_active: impl FnOnce() -> bool,
-    reload_service: impl FnOnce(bool) -> Result<bool>,
+    mut reload_service: impl FnMut(bool) -> Result<bool>,
     check_human: impl FnOnce(&Path, &AppPaths) -> Result<()>,
     check_json: impl FnOnce(&Path, &AppPaths) -> Result<()>,
     prepare_npu: impl FnOnce(&mut Config, &AppPaths, ProgressFormat) -> Result<()>,
@@ -3107,8 +3108,11 @@ fn setup_all_with_config_and_preparer(
         bail!("voice {voice} is unavailable for model {}", spec.id);
     }
     let original = config_snapshot(config_path)?;
+    let launcher_path = app_setup::menu::launcher_path(paths);
+    let original_launcher = config_snapshot(&launcher_path)?;
+    let service_was_active = service_is_active();
+    let mut restart_attempted = false;
     let result = (|| {
-        let service_was_active = service_is_active();
         let directory =
             operations.install(paths, spec, archive, progress_format, accepted_license)?;
         activate_model_for_setup(spec, &mut config)?;
@@ -3119,10 +3123,18 @@ fn setup_all_with_config_and_preparer(
         operations.prove(&mut config, paths)?;
         config.save(config_path)?;
         let launcher = install_launcher(paths)?;
+        if launcher != launcher_path {
+            bail!(
+                "setup launcher installer returned {}; expected {}",
+                launcher.display(),
+                launcher_path.display()
+            );
+        }
         match progress_format {
             ProgressFormat::Human => check_human(config_path, paths)?,
             ProgressFormat::Json => check_json(config_path, paths)?,
         }
+        restart_attempted = service_was_active;
         let service_restarted = reload_service(service_was_active)?;
         print_setup_complete(
             &directory,
@@ -3135,9 +3147,41 @@ fn setup_all_with_config_and_preparer(
         )
     })();
     if let Err(error) = result {
-        if let Err(restore_error) = restore_config_snapshot(config_path, original.as_deref()) {
+        let mut rollback_failures = Vec::new();
+        let config_restored = match restore_config_snapshot(config_path, original.as_deref()) {
+            Ok(()) => true,
+            Err(restore_error) => {
+                rollback_failures.push(format!(
+                    "restore prior config {}: {restore_error:#}",
+                    config_path.display()
+                ));
+                false
+            }
+        };
+        if let Err(restore_error) =
+            restore_launcher_snapshot(&launcher_path, original_launcher.as_deref())
+        {
+            rollback_failures.push(format!(
+                "restore prior launcher {}: {restore_error:#}",
+                launcher_path.display()
+            ));
+        }
+        if restart_attempted && config_restored {
+            match reload_service(true) {
+                Ok(true) => {}
+                Ok(false) => rollback_failures.push(
+                    "restart the previously active daemon after restoring its config: service remained inactive"
+                        .into(),
+                ),
+                Err(restart_error) => rollback_failures.push(format!(
+                    "restart the previously active daemon after restoring its config: {restart_error:#}"
+                )),
+            }
+        }
+        if !rollback_failures.is_empty() {
             return Err(error.context(format!(
-                "setup also failed to restore the prior config: {restore_error:#}"
+                "setup rollback was incomplete: {}",
+                rollback_failures.join("; ")
             )));
         }
         return Err(error);
@@ -3211,6 +3255,28 @@ fn config_snapshot(path: &Path) -> Result<Option<Vec<u8>>> {
 
 fn restore_config_snapshot(path: &Path, bytes: Option<&[u8]>) -> Result<()> {
     let temporary = path.with_extension("toml.tmp");
+    match bytes {
+        Some(bytes) => {
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            fs::write(&temporary, bytes)?;
+            fs::rename(&temporary, path)?;
+        }
+        None => {
+            if path.exists() {
+                fs::remove_file(path)?;
+            }
+            if temporary.exists() {
+                fs::remove_file(temporary)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn restore_launcher_snapshot(path: &Path, bytes: Option<&[u8]>) -> Result<()> {
+    let temporary = path.with_extension("tmp");
     match bytes {
         Some(bytes) => {
             if let Some(parent) = path.parent() {

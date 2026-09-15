@@ -208,6 +208,28 @@ fn process_isolated_audio_cpp_provider_reports_native_failures_without_crashing(
     let output = run(&root, &["say", "request option failure", "--no-play"]);
     assert!(!output.status.success());
     assert!(stderr(&output).contains("audio.cpp synthesis failed"));
+
+    let root = sandbox();
+    let library = build_audio_cpp_stub(&root);
+    audio_cpp_stub_config(&root, library, "exit-load.gguf")
+        .save(&root.join("config/omaspeak/config.toml"))
+        .unwrap();
+    let output = run(&root, &["say", "bounded stderr", "--no-play"]);
+    assert!(!output.status.success());
+    let error = stderr(&output);
+    assert!(
+        error.contains("worker exited with exit status: 70"),
+        "{error}"
+    );
+    assert!(
+        error.contains("audio.cpp startup diagnostic from provider"),
+        "{error}"
+    );
+    assert!(error.contains("[earlier output truncated]"), "{error}");
+    assert!(
+        error.len() < 24 * 1024,
+        "native diagnostics escaped their configured bound"
+    );
 }
 
 #[test]
