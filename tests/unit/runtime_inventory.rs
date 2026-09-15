@@ -1,6 +1,38 @@
 use super::*;
 use std::fs;
 
+fn captured_shell(script: &str) -> ChildOutput {
+    let child = Command::new("sh")
+        .args(["-c", script])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    collect_child_output(child, Duration::from_secs(2)).unwrap()
+}
+
+#[test]
+fn npu_child_capture_suppresses_success_diagnostics_and_preserves_failures() {
+    let success = captured_shell(
+        r#"printf '%s' '{"compiled_models":12,"cache_blobs":["model.blob"],"loaded_from_cache_required":true}'; printf 'benign native diagnostic' >&2"#,
+    );
+    assert_eq!(success.stderr, b"benign native diagnostic");
+    let report = decode_npu_preparation(success).unwrap();
+    assert_eq!(report.compiled_models, 12);
+    assert_eq!(report.cache_blobs, [PathBuf::from("model.blob")]);
+    assert!(report.loaded_from_cache_required);
+
+    let failure = captured_shell("printf 'provider failed' >&2; exit 7");
+    let error = decode_npu_preparation(failure).unwrap_err().to_string();
+    assert!(error.contains("exit status: 7"));
+    assert!(error.contains("provider failed"));
+
+    let malformed = captured_shell("printf 'not-json'; printf 'parse context' >&2");
+    let error = decode_npu_preparation(malformed).unwrap_err().to_string();
+    assert!(error.contains("read isolated NPU preparation evidence"));
+    assert!(error.contains("parse context"));
+}
+
 #[test]
 fn production_npu_cache_entry_point_skips_non_npu_configurations() {
     let root = env::temp_dir().join(format!("omaspeak-runtime-npu-skip-{}", std::process::id()));
