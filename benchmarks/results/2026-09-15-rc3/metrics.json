@@ -1,0 +1,92 @@
+{
+  "schema_version": 1,
+  "application_version": "0.0.1-rc.3",
+  "source_commit": "620fbb7a792aa664c7fa056d0e6d6e36e5a0a4e6",
+  "local_binary_sha256": "802a48b878d9bdeece5f969f80425e21dfd7650518d95f82c5ca4ab1a546178c",
+  "host": {
+    "cpu": "Intel Core Ultra X7 358H",
+    "igpu": "Intel Arc B390",
+    "npu": "Intel Core Ultra Series 3 NPU",
+    "openvino": "2026.3.1"
+  },
+  "method": {
+    "text": "Omaspeak release candidate three is running locally.",
+    "playback": false,
+    "warmup_iterations": 1,
+    "measured_iterations": 5
+  },
+  "local": {
+    "default_cpu": {
+      "cold_load_ms": 1287,
+      "cold_synthesis_ms": 1597,
+      "cold_rtf": 0.42612691651439427,
+      "warm_model_load_ms": 1317,
+      "warm_p50_synthesis_ms": 1658.034759,
+      "warm_p95_synthesis_ms": 1693.566679,
+      "warm_p50_rtf": 0.44241279852517584,
+      "placement_verified": true,
+      "normalized_transcript_exact": true,
+      "warm_report_sha256": "b0d4059b6c9425f0cf17e422db77aa628b63e874951b08f1c409191acf05934a",
+      "transcribed_wav_sha256": "48eb09f81fdd75e837c0a761bfaac4590e42e8dd19f2ada6813dd24a991dd5eb"
+    },
+    "openvino_cpu": {
+      "cold_load_ms": 42,
+      "cold_synthesis_ms": 1322,
+      "cold_rtf": 0.33595256343027713,
+      "warm_model_load_ms": 44,
+      "warm_p50_synthesis_ms": 405.201879,
+      "warm_p95_synthesis_ms": 407.083433,
+      "warm_p50_rtf": 0.1029717170647205,
+      "placement_verified": true,
+      "normalized_transcript_exact": true,
+      "warm_report_sha256": "b0e9ae55ea6b014a1af204fef94dc9ebc4d29a2c59829878c1a8745a2ff3955e",
+      "transcribed_wav_sha256": "acadb6536740e752140c853332572fe32ad2577d07a893d12b98d251ba794e9c"
+    },
+    "openvino_igpu": {
+      "cold_load_ms": 43,
+      "cold_synthesis_ms": 1077,
+      "cold_rtf": 0.2736920656689928,
+      "warm_model_load_ms": 43,
+      "warm_p50_synthesis_ms": 135.40007,
+      "warm_p95_synthesis_ms": 136.447504,
+      "warm_p50_rtf": 0.0344084724705419,
+      "placement_verified": true,
+      "normalized_transcript_exact": false,
+      "normalized_transcript_token_errors": 1,
+      "warm_report_sha256": "9dffceaae32665b04ea55198ad4d6ff9b5a500f17946ee0d5f2bf71559c8134c",
+      "transcribed_wav_sha256": "ed189599e8a55d6b74f397daac4d74e54e91572173826ea541985bb55dc56333"
+    },
+    "openvino_npu": {
+      "cold_load_ms": 194,
+      "cold_synthesis_ms": 710,
+      "cold_rtf": 0.18208410144278578,
+      "warm_model_load_ms": 189,
+      "warm_p50_synthesis_ms": 64.238815,
+      "warm_p95_synthesis_ms": 92.288808,
+      "warm_p50_rtf": 0.01647446043308013,
+      "placement_verified": true,
+      "normalized_transcript_exact": true,
+      "warm_report_sha256": "cb9fe60ca72a44a26470e936d13bba86f81b98014f142587be3057d61f9e9e6f",
+      "transcribed_wav_sha256": "41105db111251deb0c1f25f327cb56c1b75b981e392b72964f0f7ae8400b0c6a"
+    }
+  },
+  "npu_setup_cache": {
+    "ready": true,
+    "fingerprint": "2831a873459475239af5047168e50539f1ed6fbc17d9a4299eca7a2858d35bc8",
+    "blobs": 10,
+    "bytes": 780748228
+  },
+  "cuda_gb10": {
+    "audio_cpp_commit": "e9ff20042ec85af960a720368c6927cda19ad65f",
+    "cuda": "13.0",
+    "driver": "580.173.02",
+    "cold_load_ms": 3491,
+    "cold_synthesis_ms": 237.151,
+    "cold_rtf": 0.076523,
+    "hot_p50_synthesis_ms": 38.498,
+    "hot_p95_synthesis_ms": 45.406,
+    "hot_p50_rtf": 0.012422,
+    "placement_verified": true,
+    "evidence_archive_sha256": "0b9b93b8529597e01b4d8e336a2ec3387fce70609d5170a0ce0bd5e7d68538dd"
+  }
+}

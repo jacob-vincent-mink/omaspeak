@@ -11,5 +11,8 @@ placement evidence, cold load, hot synthesis, real-time factor, and
 cross-provider quality checks.
 
 The earlier direct OpenVINO result used a converted/mixed graph set that is no
-longer in the catalog, so it was removed. No accelerator number is a release
-claim until the official `supertonic-3-openvino` files are measured again.
+longer in the catalog, so it was removed.
+
+Current release evidence:
+
+- [`v0.0.1-rc.3 local and GB10 results`](results/2026-09-15-rc3/RESULTS.md)

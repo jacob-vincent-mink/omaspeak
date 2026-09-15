@@ -123,6 +123,8 @@ omaspeak setup check
 
 The report shows the exact provider path, search directories, capabilities,
 device result, model-proof state, and remediation.
+The [rc.3 hardware results](benchmarks/results/2026-09-15-rc3/RESULTS.md)
+compare default CPU, OpenVINO CPU/iGPU/NPU, and CUDA using file-only output.
 
 ## Speakers and daemon mode
 

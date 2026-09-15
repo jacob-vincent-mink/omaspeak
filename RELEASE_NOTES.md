@@ -19,6 +19,8 @@ This candidate introduces the greenfield native-provider architecture:
 - ordinary setup does not install or start a systemd service;
 - the Rust executable has no load-time dependency on an inference runtime.
 
-Hardware performance and quality results from the former converted/mixed graph
-catalog were withdrawn. Release evidence must be produced again with the pinned
-official archive files before accelerator numbers are published.
+The pinned official model was exercised with file-only synthesis on default
+CPU, OpenVINO CPU/iGPU/NPU, and CUDA on an NVIDIA GB10. Device placement,
+setup-time NPU caching, cold and warm timing, and a one-sentence intelligibility
+check are recorded in the
+[rc.3 hardware evidence](benchmarks/results/2026-09-15-rc3/RESULTS.md).
