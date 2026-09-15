@@ -1,0 +1,9 @@
+{
+  "type": "synthesis",
+  "output": "cuda-integrated.wav",
+  "sample_rate": 44100,
+  "samples": 648272,
+  "audio_seconds": 14.700045351473923,
+  "load_milliseconds": 699,
+  "synthesis_milliseconds": 506
+}

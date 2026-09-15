@@ -5,7 +5,9 @@ reports as historical evidence. The current release architecture is described
 in the repository's `RUNTIME.md` and `ACCELERATOR_SETUP.md`; dated benchmark
 reports do not define the live runtime contract.
 
-The [pre-export/import NPU smoke](FINAL-HEAD-NPU-SMOKE-2026-09-14.md) and
+The [rc.1 export/import NPU proof](RC1-EXPORT-IMPORT-NPU-2026-09-15.md)
+validates the current deterministic cache mechanism on physical hardware. The
+[pre-export/import NPU smoke](FINAL-HEAD-NPU-SMOKE-2026-09-14.md) and
 [earlier setup/NPU smoke](CURRENT-SETUP-SMOKE-2026-09-14.md) predate the
 0.0.1-rc.1 deterministic cache mechanism.
 

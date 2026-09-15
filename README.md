@@ -64,11 +64,14 @@ its vendor runtime. Omaspeak validates each selected runtime before it creates
 the TTS engine. The release does not bundle acceleration libraries.
 
 The Rust Supertonic frontend handles text, voice styles, diffusion, and audio
-assembly for both ONNX Runtime and direct OpenVINO execution. An earlier GB10
-run using ONNX Runtime 1.29 is retained as historical evidence; it does not
-validate the ORT 1.30 Plugin EP release path. The
+assembly for both ONNX Runtime and direct OpenVINO execution. The
+[current GB10 report](benchmarks/cuda-gb10-ort130-2026-09-15.md) validates the
+official ORT 1.30 CUDA Plugin EP with direct WAV output and physical GPU
+telemetry. An earlier ORT 1.29 run is retained as historical evidence. The
 [Dell XPS OpenVINO report](benchmarks/openvino-supertonic/DELL-XPS-DIRECT-OPENVINO-2026-09-14.md)
-records direct CPU, iGPU, and NPU execution and accuracy.
+records direct CPU, iGPU, and NPU execution and accuracy, and the
+[rc.1 NPU cache proof](benchmarks/openvino-supertonic/RC1-EXPORT-IMPORT-NPU-2026-09-15.md)
+validates setup-time compiled-model export and later-process import.
 
 ## Setup
 

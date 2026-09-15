@@ -115,7 +115,8 @@ jobs:
             test -s "${smoke_root}/${package}/${document}"
           done
           test -s "${smoke_root}/${package}/assets/omaspeak-mark.svg"
-          test -s "${smoke_root}/${package}/benchmarks/cuda-gb10-2026-09-14.md"
+          test -s "${smoke_root}/${package}/benchmarks/cuda-gb10-ort130-2026-09-15.md"
+          test -s "${smoke_root}/${package}/benchmarks/openvino-supertonic/RC1-EXPORT-IMPORT-NPU-2026-09-15.md"
           test -s "${smoke_root}/${package}/packaging/systemd/omaspeak.service"
           expected_version="${package#omaspeak-}"
           expected_version="${expected_version%-linux-${PACKAGE_ARCH}}"

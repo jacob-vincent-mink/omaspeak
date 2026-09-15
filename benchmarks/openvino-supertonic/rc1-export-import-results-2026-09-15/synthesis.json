@@ -1,0 +1,9 @@
+{
+  "type": "synthesis",
+  "output": "/home/jacob/src/github.com/jacob-vincent-mink/.omaspeak-npu-proof/npu-rc1-final.wav",
+  "sample_rate": 44100,
+  "samples": 187154,
+  "audio_seconds": 4.243854875283446,
+  "load_milliseconds": 166,
+  "synthesis_milliseconds": 799
+}

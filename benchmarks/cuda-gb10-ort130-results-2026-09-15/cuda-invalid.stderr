@@ -1,0 +1,1 @@
+omaspeak: load vocoder graph /tmp/omaspeak-cuda-xdg/data/omaspeak/models/supertonic-3-int8/vocoder.int8.onnx: configure cuda session: CUDA plugin device ordinal 1 is unavailable
