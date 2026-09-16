@@ -124,3 +124,69 @@ fn lookup_and_activation_populate_official_paths() {
     assert_eq!(config.model.voice_style, "voice_styles");
     assert_eq!(config.model.voice, 0);
 }
+
+#[test]
+fn defaults_cover_all_supported_runtime_devices_without_crossing_formats() {
+    for (backend, runtime, devices) in [
+        ("audiocpp", Runtime::Default, vec!["cpu", "auto"]),
+        ("audiocpp", Runtime::Cuda, vec!["gpu"]),
+        ("audiocpp", Runtime::Vulkan, vec!["gpu"]),
+        ("audiocpp", Runtime::Hip, vec!["gpu"]),
+        (
+            "supertonic",
+            Runtime::Openvino,
+            vec!["cpu", "gpu", "npu", "auto"],
+        ),
+    ] {
+        for device in devices {
+            let spec = default_model(backend, runtime, device).unwrap();
+            assert!(spec.downloadable);
+            assert!(spec.voices.iter().any(|voice| voice.id == 0));
+            for other in models().iter().filter(|other| other.backend != backend) {
+                assert!(!other.compatible_with(backend, runtime, device));
+            }
+        }
+    }
+    for (backend, runtime, device) in [
+        ("missing", Runtime::Default, "cpu"),
+        ("audiocpp", Runtime::Openvino, "cpu"),
+        ("supertonic", Runtime::Default, "cpu"),
+        ("supertonic", Runtime::Openvino, "bogus"),
+    ] {
+        assert!(default_model(backend, runtime, device).is_err());
+    }
+    let mut cpu_only = *model(OPENVINO_MODEL_ID).unwrap();
+    cpu_only.npu_capable = false;
+    assert!(!cpu_only.compatible_with("supertonic", Runtime::Openvino, " NPU "));
+}
+
+#[test]
+fn model_activation_resets_foreign_runtime_state_but_preserves_compatible_provider() {
+    let mut config = Config::default();
+    config.backend.library = Some("/old/libaudiocpp.so".into());
+    config.backend.device_id = 2;
+    config.backend.runtime = Runtime::Cuda;
+    config.backend.device = "gpu".into();
+    config.backend.options.insert("old".into(), "option".into());
+    model(OPENVINO_MODEL_ID).unwrap().activate(&mut config);
+    assert_eq!(config.backend.runtime, Runtime::Openvino);
+    assert_eq!(config.backend.device, "cpu");
+    assert!(config.backend.library.is_none());
+    assert!(config.backend.options.is_empty());
+    assert_eq!(config.backend.device_id, 0);
+    config.backend.openvino_library = Some("/opt/libopenvino_c.so".into());
+    config.backend.device = "npu".into();
+    model(OPENVINO_MODEL_ID).unwrap().activate(&mut config);
+    assert_eq!(config.backend.device, "npu");
+    assert!(config.backend.openvino_library.is_some());
+    model(DEFAULT_MODEL_ID).unwrap().activate(&mut config);
+    assert!(config.backend.openvino_library.is_none());
+    assert_eq!(config.backend.runtime, Runtime::Default);
+    assert_eq!(setup_model(&config).unwrap().id, DEFAULT_MODEL_ID);
+    assert!(
+        serde_json::to_value(model(DEFAULT_MODEL_ID).unwrap())
+            .unwrap()
+            .get("display_name")
+            .is_none()
+    );
+}

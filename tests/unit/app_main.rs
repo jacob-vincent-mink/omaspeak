@@ -2520,7 +2520,7 @@ fn only_engine_loading_commands_require_runtime_path_preparation() {
     }));
     assert!(!command_loads_engine(&TopCommand::Setup {
         command: Some(SetupCommand::All {
-            model: "supertonic-3-openvino".into(),
+            model: Some("supertonic-3-openvino".into()),
             source: None,
             accept_license: None,
             progress_format: ProgressFormat::Human,
@@ -4541,7 +4541,8 @@ fn unattended_setup_validation_boundary_preserves_transaction_semantics() {
         || false,
         |_| unreachable!("failed health check must prevent restart"),
         |config, path, explicit| {
-            assert_eq!(config.backend.runtime, Runtime::Default);
+            assert_eq!(config.backend.runtime, Runtime::Openvino);
+            assert_eq!(config.model.name, omaspeak::catalog::OPENVINO_MODEL_ID);
             assert_eq!(path, app_paths.config_file);
             assert!(!explicit);
             validated.set(true);
@@ -4603,4 +4604,45 @@ fn default_setup_selector_and_accept_wrapper_cover_production_boundaries() {
     drop(connector.join().unwrap());
 
     let _ = is_interactive_terminal();
+}
+
+#[test]
+fn runtime_switch_resolves_model_format_and_retains_voice_on_same_backend() {
+    let root = sandbox();
+    let paths = paths(&root);
+    let mut config = Config::default();
+    config.model.voice = 9;
+    config.save(&paths.config_file).unwrap();
+    let cuda =
+        runtime_configuration_candidate(&paths.config_file, Runtime::Cuda, "gpu", Some(2), None)
+            .unwrap();
+    assert_eq!(cuda.model.voice, 9);
+    assert_eq!(cuda.model.name, omaspeak::catalog::DEFAULT_MODEL_ID);
+    let ov =
+        runtime_configuration_candidate(&paths.config_file, Runtime::Openvino, "npu", None, None)
+            .unwrap();
+    assert_eq!(ov.model.name, omaspeak::catalog::OPENVINO_MODEL_ID);
+    assert!(ov.model.file.is_empty());
+    assert_eq!(ov.backend.device, "npu");
+    ov.save(&paths.config_file).unwrap();
+    assert_eq!(
+        setup_model_id(&paths.config_file, None).unwrap(),
+        omaspeak::catalog::OPENVINO_MODEL_ID
+    );
+    let cpu =
+        runtime_configuration_candidate(&paths.config_file, Runtime::Default, "cpu", None, None)
+            .unwrap();
+    assert_eq!(cpu.model.name, omaspeak::catalog::DEFAULT_MODEL_ID);
+    assert!(!cpu.model.file.is_empty());
+    assert_eq!(
+        setup_model_id(&paths.config_file, Some("explicit-model")).unwrap(),
+        "explicit-model"
+    );
+    let cli = Cli::try_parse_from(["omaspeak", "setup", "all"]).unwrap();
+    assert!(matches!(
+        cli.command,
+        TopCommand::Setup {
+            command: Some(SetupCommand::All { model: None, .. })
+        }
+    ));
 }

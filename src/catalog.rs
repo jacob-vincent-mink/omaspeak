@@ -1,6 +1,10 @@
 use serde::Serialize;
 
+use crate::backend::Runtime;
 use crate::config::Config;
+
+pub const DEFAULT_MODEL_ID: &str = "supertonic-3-gguf";
+pub const OPENVINO_MODEL_ID: &str = "supertonic-3-openvino";
 
 pub const SUPERTONIC_VOICE_NAMES: [&str; 10] =
     ["M1", "M2", "M3", "M4", "M5", "F1", "F2", "F3", "F4", "F5"];
@@ -36,6 +40,8 @@ pub struct ModelSpec {
     pub backend: &'static str,
     pub family: &'static str,
     pub name: &'static str,
+    #[serde(skip)] // Presentation is not part of the schema-1 install identity.
+    pub display_name: &'static str,
     pub description: &'static str,
     pub license: &'static str,
     pub license_url: &'static str,
@@ -201,10 +207,11 @@ const OPENVINO_FILES: &[ModelFile] = &[
 
 const MODELS: &[ModelSpec] = &[
     ModelSpec {
-        id: "supertonic-3-gguf",
+        id: DEFAULT_MODEL_ID,
         backend: "audiocpp",
         family: "supertonic",
         name: "supertonic-3-gguf",
+        display_name: "Supertonic 3 · audio.cpp",
         description: "Supertonic 3 original-precision GGUF for audio.cpp (31 languages)",
         license: "OpenRAIL-M",
         license_url: "https://huggingface.co/supertone-oss-archive/supertonic-3/blob/aafc6e32416a594460b32413efc49d7fe4ce6d46/LICENSE",
@@ -234,10 +241,11 @@ const MODELS: &[ModelSpec] = &[
         files: GGUF_FILES,
     },
     ModelSpec {
-        id: "supertonic-3-openvino",
+        id: OPENVINO_MODEL_ID,
         backend: "supertonic",
         family: "supertonic",
         name: "supertonic-3-openvino",
+        display_name: "Supertonic 3 · OpenVINO",
         description: "Official Supertonic 3 ONNX graphs for direct OpenVINO (31 languages)",
         license: "OpenRAIL-M",
         license_url: "https://huggingface.co/supertone-oss-archive/supertonic-3/blob/aafc6e32416a594460b32413efc49d7fe4ce6d46/LICENSE",
@@ -282,12 +290,96 @@ pub fn model_license_text(spec: &ModelSpec) -> Option<&'static str> {
     (spec.license == "OpenRAIL-M").then_some(include_str!("../licenses/SUPERTONIC-3-MODEL-LICENSE"))
 }
 
+/// Format/adapter compatibility does not establish hardware qualification.
+pub fn default_model(
+    backend: &str,
+    runtime: Runtime,
+    device: &str,
+) -> anyhow::Result<&'static ModelSpec> {
+    let id = match backend {
+        "audiocpp" => DEFAULT_MODEL_ID,
+        "supertonic" => OPENVINO_MODEL_ID,
+        _ => anyhow::bail!("no catalog default for backend {backend:?}"),
+    };
+    let spec = model(id).expect("catalog default exists");
+    anyhow::ensure!(
+        spec.compatible_with(backend, runtime, device),
+        "backend {backend:?} has no compatible default for {runtime:?} / {device}"
+    );
+    Ok(spec)
+}
+
+pub fn setup_model(config: &Config) -> anyhow::Result<&'static ModelSpec> {
+    if let Some(spec) = model(&config.model.name)
+        && spec.compatible_with(
+            &config.backend.kind,
+            config.backend.runtime,
+            &config.backend.device,
+        )
+    {
+        return Ok(spec);
+    }
+    default_model(
+        &config.backend.kind,
+        config.backend.runtime,
+        &config.backend.device,
+    )
+}
+
 impl ModelSpec {
+    pub fn compatible_with(self, backend: &str, runtime: Runtime, device: &str) -> bool {
+        if self.backend != backend || crate::backend::canonical_device(runtime, device).is_err() {
+            return false;
+        }
+        match backend {
+            "audiocpp" => matches!(
+                runtime,
+                Runtime::Default | Runtime::Cuda | Runtime::Vulkan | Runtime::Hip
+            ),
+            "supertonic" => {
+                runtime == Runtime::Openvino
+                    && self.openvino_capable
+                    && (!device.trim().eq_ignore_ascii_case("npu") || self.npu_capable)
+            }
+            _ => false,
+        }
+    }
+
     pub fn download_size(self) -> u64 {
         self.files.iter().map(|file| file.size).sum()
     }
 
     pub fn activate(self, config: &mut Config) {
+        let device = config.backend.canonical_device().unwrap_or_else(|_| {
+            if matches!(
+                config.backend.runtime,
+                Runtime::Cuda | Runtime::Vulkan | Runtime::Hip
+            ) {
+                "gpu".into()
+            } else {
+                "cpu".into()
+            }
+        });
+        config.backend.device = device;
+        if !self.compatible_with(
+            &config.backend.kind,
+            config.backend.runtime,
+            &config.backend.device,
+        ) {
+            config.backend.library = None;
+            config.backend.openvino_library = None;
+            config.backend.openvino_plugins = None;
+            config.backend.library_dirs.clear();
+            config.backend.options.clear();
+            config.backend.device_id = 0;
+            config.backend.fallback = Default::default();
+            config.backend.runtime = if self.backend == "supertonic" {
+                Runtime::Openvino
+            } else {
+                Runtime::Default
+            };
+            config.backend.device = "cpu".into();
+        }
         config.backend.kind = self.backend.into();
         config.model.family = self.family.into();
         config.model.name = self.name.into();

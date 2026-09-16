@@ -156,8 +156,9 @@ enum SetupCommand {
     /// This leaves the systemd unit unchanged; use `omaspeak setup systemd`
     /// explicitly. An already-active daemon is safely restarted after setup.
     All {
-        #[arg(long, default_value = "supertonic-3-gguf")]
-        model: String,
+        /// Catalog model; defaults to the selected backend's compatible profile.
+        #[arg(long)]
+        model: Option<String>,
         /// Use a local pinned file or model directory instead of downloading.
         #[arg(long, value_name = "PATH")]
         source: Option<PathBuf>,
@@ -1888,7 +1889,7 @@ fn setup(command: Option<SetupCommand>, config_path: &Path, paths: &AppPaths) ->
             config_path,
             paths,
             &BuiltinModels,
-            &model,
+            setup_model_id(config_path, model.as_deref())?,
             None,
             source.as_deref(),
             accept_license.as_deref(),
@@ -2711,14 +2712,22 @@ fn runtime_configuration_candidate(
     library_dir: Option<&Path>,
 ) -> Result<Config> {
     let mut config = app_setup::load_config(config_path)?;
-    let runtime_changed = config.backend.runtime != runtime;
+    let backend_kind = if runtime == Runtime::Openvino {
+        "supertonic"
+    } else {
+        "audiocpp"
+    };
+    let default = omaspeak::catalog::default_model(backend_kind, runtime, device)?;
+    let runtime_changed = config.backend.runtime != runtime || config.backend.kind != backend_kind;
+    if config.backend.kind != backend_kind
+        || omaspeak::catalog::model(&config.model.name)
+            .is_some_and(|model| !model.compatible_with(backend_kind, runtime, device))
+    {
+        default.activate(&mut config);
+    }
     config.backend.runtime = runtime;
     config.backend.device = device.into();
-    config.backend.kind = if runtime == Runtime::Openvino {
-        "supertonic".into()
-    } else {
-        "audiocpp".into()
-    };
+    config.backend.kind = backend_kind.into();
     if runtime_changed {
         clear_runtime_provider_configuration(&mut config.backend);
     }
@@ -3034,13 +3043,8 @@ fn choose_model(
         .map(|model| {
             let installed = operations.verify(paths, model).is_ok();
             let runtime_compatible = runtime.is_none_or(|(runtime, device)| {
-                if runtime == Runtime::Openvino {
-                    model.backend == "supertonic"
-                        && model.openvino_capable
-                        && (!device.eq_ignore_ascii_case("npu") || model.npu_capable)
-                } else {
-                    model.backend == "audiocpp"
-                }
+                let backend = if runtime == Runtime::Openvino { "supertonic" } else { "audiocpp" };
+                model.compatible_with(backend, runtime, device)
             });
             let selectable = installed || model.downloadable;
             let active = model.id == config.model.name;
@@ -3084,10 +3088,10 @@ fn choose_model(
                 npu
             );
             if runtime_compatible && selectable {
-                MenuItem::available(format!("{}  {status}", model.id), detail)
+                MenuItem::available(format!("{}  {status}", model.display_name), detail)
             } else {
                 MenuItem::unavailable(
-                    format!("{}  {status}", model.id),
+                    format!("{}  {status}", model.display_name),
                     if !selectable {
                         format!("Use `omaspeak setup model --download {} --source PATH` with a pinned model directory you are licensed to use · {detail}", model.id)
                     } else {
@@ -3542,8 +3546,10 @@ fn setup_model(
         Some(id) => Some(id),
         None => {
             print_models_with(paths, operations);
+            let spec = omaspeak::catalog::setup_model(&app_setup::load_config(config_path)?)?;
             println!(
-                "Run `omaspeak setup model --download supertonic-3-gguf --accept-license OpenRAIL-M` to install the default model."
+                "Run `omaspeak setup model --download {} --accept-license {}` to install the compatible default model.",
+                spec.id, spec.license
             );
             None
         }
@@ -3604,6 +3610,13 @@ fn print_models_with(paths: &AppPaths, operations: &impl ModelSetupOperations) {
             "{}\t{}\t{}\t{}",
             model.id, model.backend, status, model.description
         );
+    }
+}
+
+fn setup_model_id<'a>(config_path: &Path, explicit: Option<&'a str>) -> Result<&'a str> {
+    match explicit {
+        Some(id) => Ok(id),
+        None => Ok(omaspeak::catalog::setup_model(&app_setup::load_config(config_path)?)?.id),
     }
 }
 
