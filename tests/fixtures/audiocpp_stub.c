@@ -85,6 +85,7 @@ int audiocpp_model_load(void *registry, const char *path,
     if (strstr(path, "fail-result")) stub_mode = 5;
     if (strstr(path, "null-samples")) stub_mode = 6;
     if (strstr(path, "huge-audio")) stub_mode = 7;
+    if (strstr(path, "require-F1")) stub_mode = 8;
     *model = loaded;
     return *model ? 0 : 1;
 }
@@ -123,6 +124,7 @@ int audiocpp_request_set_text(void *request, const char *text,
 }
 int audiocpp_request_set_voice_id(void *request, const char *voice) {
     if (!request || !voice) return 1;
+    if (stub_mode == 8 && strcmp(voice, "F1") != 0) return 44;
     return stub_mode == 2 ? 44 : 0;
 }
 int audiocpp_request_set_speaking_rate(void *request, float rate) {

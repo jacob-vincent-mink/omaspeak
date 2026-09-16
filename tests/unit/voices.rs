@@ -39,9 +39,9 @@ fn official_style_directory_provides_stable_voice_ids() {
             name: "M3".into()
         }
     );
-    config.model.voice = 9;
+    config.model.voice = crate::voices::VoiceSelection::Legacy(9);
     validate_selected(&config, &voices).unwrap();
-    config.model.voice = 10;
+    config.model.voice = crate::voices::VoiceSelection::Legacy(10);
     assert!(validate_selected(&config, &voices).is_err());
 }
 
@@ -110,4 +110,40 @@ fn installed_voice_metadata_rejects_unsupported_empty_and_corrupt_models() {
             .to_string()
             .contains("F5.json")
     );
+}
+
+#[test]
+fn legacy_and_named_presets_preserve_all_supertonic_identities() {
+    let voices = supertonic_presets();
+    for (index, name) in SUPERTONIC_PRESET_NAMES.iter().enumerate() {
+        let legacy = VoiceSelection::Legacy(index as i32);
+        let named = VoiceSelection::Name(name.to_lowercase());
+        assert_eq!(legacy.resolve(&voices).unwrap(), index as i32);
+        assert_eq!(named.resolve(&voices).unwrap(), index as i32);
+        assert_eq!(
+            serde_json::to_value(&legacy).unwrap(),
+            serde_json::json!(index)
+        );
+        assert_eq!(
+            serde_json::to_value(&named).unwrap(),
+            serde_json::json!(name.to_lowercase())
+        );
+        assert_eq!(
+            legacy.to_string().parse::<VoiceSelection>().unwrap(),
+            legacy
+        );
+        assert_eq!(named.to_string().parse::<VoiceSelection>().unwrap(), named);
+    }
+    for selection in [
+        VoiceSelection::Legacy(-1),
+        VoiceSelection::Legacy(10),
+        VoiceSelection::Name("unknown".into()),
+        VoiceSelection::Name("".into()),
+    ] {
+        assert!(selection.resolve(&voices).is_err());
+    }
+    assert!(" ".parse::<VoiceSelection>().is_err());
+    for invalid in ["true", "1.5", "{}", "null"] {
+        assert!(serde_json::from_str::<VoiceSelection>(invalid).is_err());
+    }
 }

@@ -1,11 +1,72 @@
 use anyhow::{Context, Result, bail};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::catalog::ModelSpec;
 use crate::config::Config;
 use crate::paths::AppPaths;
 
 pub use crate::catalog::SUPERTONIC_VOICE_NAMES as SUPERTONIC_PRESET_NAMES;
+
+/// Stable preset name, or a legacy numeric ID scoped to the selected model.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(untagged)]
+pub enum VoiceSelection {
+    Legacy(i32),
+    Name(String),
+}
+
+impl From<i32> for VoiceSelection {
+    fn from(id: i32) -> Self {
+        Self::Legacy(id)
+    }
+}
+
+impl std::str::FromStr for VoiceSelection {
+    type Err = anyhow::Error;
+    fn from_str(value: &str) -> Result<Self> {
+        let value = value.trim();
+        anyhow::ensure!(!value.is_empty(), "voice must not be empty");
+        Ok(match value.parse::<i32>() {
+            Ok(id) => Self::Legacy(id),
+            Err(_) => Self::Name(value.to_owned()),
+        })
+    }
+}
+
+impl std::fmt::Display for VoiceSelection {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Legacy(id) => id.fmt(f),
+            Self::Name(name) => name.fmt(f),
+        }
+    }
+}
+
+impl VoiceSelection {
+    pub fn resolve(&self, voices: &[Voice]) -> Result<i32> {
+        voices
+            .iter()
+            .find(|voice| self.matches(voice))
+            .map(|voice| voice.id)
+            .with_context(|| {
+                format!(
+                    "voice {self} is unavailable; choose {}",
+                    voices
+                        .iter()
+                        .map(|v| format!("{} ({})", v.name, v.id))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            })
+    }
+
+    pub fn matches(&self, voice: &Voice) -> bool {
+        match self {
+            Self::Legacy(id) => *id == voice.id,
+            Self::Name(name) => name.eq_ignore_ascii_case(&voice.name),
+        }
+    }
+}
 
 /// One selectable voice exposed by the active model.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -63,7 +124,7 @@ pub fn from_catalog(spec: &ModelSpec) -> Vec<Voice> {
 }
 
 pub fn validate_selected(config: &Config, voices: &[Voice]) -> Result<()> {
-    if voices.iter().any(|voice| voice.id == config.model.voice) {
+    if voices.iter().any(|voice| config.model.voice.matches(voice)) {
         Ok(())
     } else {
         let valid = voices

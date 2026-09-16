@@ -17,7 +17,7 @@ pub(super) fn worker(request: &str) -> Result<()> {
     #[cfg(not(test))]
     omaspeak::audio_cpp::disable_core_dumps()?;
     let engine = Engine::load(&job.config, &job.paths)?;
-    engine.synthesize(SAMPLE, 1.0, job.config.model.voice, &job.output)?;
+    engine.synthesize(SAMPLE, 1.0, resolve_voice(&job.config, None)?, &job.output)?;
     Ok(())
 }
 
@@ -61,7 +61,7 @@ impl VoicePreview {
         fs::DirBuilder::new().mode(0o700).create(&directory)?;
         self.directory = Some(directory.clone());
         let mut config = self.config.clone();
-        config.model.voice = voice;
+        config.model.voice = voice.into();
         config.backend.fallback = Fallback::Error;
         let job = Job {
             config,

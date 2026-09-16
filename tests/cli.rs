@@ -1259,7 +1259,7 @@ fn voices_enumerates_installed_supertonic_speakers_and_marks_the_active_one() {
     config.model.family = "supertonic".into();
     config.model.name = "custom-supertonic".into();
     config.model.voice_style = "voice_styles".into();
-    config.model.voice = 1;
+    config.model.voice = omaspeak::voices::VoiceSelection::Legacy(1);
     config.save(&config_path).unwrap();
 
     let output = run(&root, &["voices", "--json"]);
@@ -1449,7 +1449,7 @@ fn voice_preview_worker_uses_candidate_voice_without_contacting_the_daemon() {
     let root = sandbox();
     let library = build_audio_cpp_stub(&root);
     let mut config = audio_cpp_stub_config(&root, library, "supertonic.gguf");
-    config.model.voice = 5;
+    config.model.voice = omaspeak::voices::VoiceSelection::Legacy(5);
     let paths = omaspeak::paths::AppPaths {
         config_file: root.join("untouched.toml"),
         data_dir: root.join("data"),
@@ -1627,7 +1627,7 @@ fn daemon_bounds_queue_and_cancels_stalled_synthesis_without_publishing_output()
     fs::write(&destination, b"previous output").unwrap();
     let say = |text: &str, output: &Path| omaspeak::protocol::Command::Say {
         text: text.into(),
-        voice: 0,
+        voice: omaspeak::voices::VoiceSelection::Legacy(0),
         speed: 1.0,
         output: Some(output.to_string_lossy().into_owned()),
         no_play: true,
@@ -1957,7 +1957,7 @@ fn synthesis_worker_rejects_control_and_playback_requests_and_exits_cleanly() {
             "playback",
             omaspeak::protocol::Command::Say {
                 text: "should not play".into(),
-                voice: 0,
+                voice: omaspeak::voices::VoiceSelection::Legacy(0),
                 speed: 1.0,
                 output: None,
                 no_play: false,
@@ -1967,7 +1967,7 @@ fn synthesis_worker_rejects_control_and_playback_requests_and_exits_cleanly() {
             "file",
             omaspeak::protocol::Command::Say {
                 text: "file output".into(),
-                voice: 0,
+                voice: omaspeak::voices::VoiceSelection::Legacy(0),
                 speed: 1.0,
                 output: Some(root.join("file.wav").to_string_lossy().into_owned()),
                 no_play: true,
@@ -2168,5 +2168,105 @@ fn playback_without_a_runtime_directory_uses_the_user_fallback() {
     assert!(result.status.success(), "{}", stderr(&result));
     assert!(root.join("fallback.wav.played").exists());
     assert!(!runtime.exists());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn named_config_and_ipc_voices_reach_the_native_preset_without_changing_legacy_ids() {
+    let root = sandbox();
+    let library = build_audio_cpp_stub(&root);
+    let mut config = audio_cpp_stub_config(&root, library, "require-F1.gguf");
+    config.model.voice = omaspeak::voices::VoiceSelection::Name("F1".into());
+    config
+        .save(&root.join("config/omaspeak/config.toml"))
+        .unwrap();
+    let before = fs::read(root.join("config/omaspeak/config.toml")).unwrap();
+    let rejected = run(&root, &["config", "set", "model.voice", "not-a-preset"]);
+    assert!(!rejected.status.success());
+    assert_eq!(
+        fs::read(root.join("config/omaspeak/config.toml")).unwrap(),
+        before
+    );
+    let output = root.join("named.wav");
+    for extra in [vec![], vec!["--voice", "5"], vec!["--voice", "f1"]] {
+        let mut args = vec![
+            "say",
+            "named voice",
+            "--no-play",
+            "--out",
+            output.to_str().unwrap(),
+        ];
+        args.extend(extra);
+        let result = run(&root, &args);
+        assert!(result.status.success(), "{}", stderr(&result));
+        assert!(hound::WavReader::open(&output).unwrap().duration() > 0);
+    }
+    let wrong = run(&root, &["say", "wrong voice", "--no-play", "--voice", "0"]);
+    assert!(!wrong.status.success(), "legacy 0 must remain M1, not F1");
+    let voices = run(&root, &["voices", "--json"]);
+    assert!(voices.status.success(), "{}", stderr(&voices));
+    let schema = run(&root, &["config", "schema", "--json"]);
+    assert!(schema.status.success(), "{}", stderr(&schema));
+    let schema: serde_json::Value = serde_json::from_slice(&schema.stdout).unwrap();
+    let voice = schema["keys"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|v| v["key"] == "model.voice")
+        .unwrap();
+    assert_eq!(voice["value"], "F1");
+    assert!(
+        voice["choices"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|v| v["value"] == "F1")
+    );
+    let mut daemon = ProcessGuard::new(
+        Command::new(env!("CARGO_BIN_EXE_omaspeak"))
+            .arg("daemon")
+            .env("XDG_CONFIG_HOME", root.join("config"))
+            .env("XDG_DATA_HOME", root.join("data"))
+            .env("XDG_CACHE_HOME", root.join("cache"))
+            .env("XDG_STATE_HOME", root.join("state"))
+            .env("XDG_RUNTIME_DIR", root.join("run"))
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap(),
+    );
+    let socket = root.join("run/omaspeak/control.sock");
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while !socket.exists() {
+        assert!(Instant::now() < deadline);
+        assert!(daemon.try_wait().unwrap().is_none());
+        thread::sleep(Duration::from_millis(10));
+    }
+    let spoken = run(
+        &root,
+        &[
+            "say",
+            "daemon named voice",
+            "--no-play",
+            "--out",
+            output.to_str().unwrap(),
+        ],
+    );
+    assert!(spoken.status.success(), "{}", stderr(&spoken));
+    let invalid = run(
+        &root,
+        &["say", "unknown", "--no-play", "--voice", "not-a-voice"],
+    );
+    assert!(!invalid.status.success());
+    assert!(stderr(&invalid).contains("unavailable"));
+    assert!(run(&root, &["stop"]).status.success());
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while daemon.try_wait().unwrap().is_none() {
+        assert!(Instant::now() < deadline);
+        thread::sleep(Duration::from_millis(10));
+    }
+    assert!(daemon.collect_output().status.success());
     fs::remove_dir_all(root).unwrap();
 }

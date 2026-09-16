@@ -110,7 +110,7 @@ fn lookup_and_activation_populate_official_paths() {
     let spec = model("supertonic-3-openvino").unwrap();
     let mut config = Config::default();
     config.model.directory = "/custom".into();
-    config.model.voice = 9;
+    config.model.voice = crate::voices::VoiceSelection::Legacy(9);
     spec.activate(&mut config);
     assert_eq!(config.backend.kind, "supertonic");
     assert_eq!(config.model.name, "supertonic-3-openvino");
@@ -122,7 +122,7 @@ fn lookup_and_activation_populate_official_paths() {
     );
     assert_eq!(config.model.unicode_indexer, "onnx/unicode_indexer.json");
     assert_eq!(config.model.voice_style, "voice_styles");
-    assert_eq!(config.model.voice, 0);
+    assert_eq!(config.model.voice, crate::voices::VoiceSelection::Legacy(0));
 }
 
 #[test]

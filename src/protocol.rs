@@ -14,7 +14,7 @@ pub enum Command {
     Say {
         text: String,
         speed: f32,
-        voice: i32,
+        voice: crate::voices::VoiceSelection,
         output: Option<String>,
         no_play: bool,
     },

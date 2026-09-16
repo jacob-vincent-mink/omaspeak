@@ -568,7 +568,7 @@ fn start_synthesis(job: &mut Job, paths: &AppPaths, worker: &mut ProcessWorker) 
         command: Command::Say {
             text: text.clone(),
             speed: *speed,
-            voice: *voice,
+            voice: voice.clone(),
             output: Some(stage.to_string_lossy().into_owned()),
             no_play: true,
         },

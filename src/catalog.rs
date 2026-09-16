@@ -394,7 +394,7 @@ impl ModelSpec {
         config.model.voice_style = self.voice_style.into();
         config.model.language = self.language.into();
         config.model.steps = self.steps;
-        config.model.voice = 0;
+        config.model.voice = 0.into();
     }
 }
 
