@@ -59,7 +59,9 @@ and a ninth queued request are rejected, queued and active cancellation stay
 separate, cancellation completes within a one-second test budget, original output
 survives, and the remaining queued requests finish. It also checks a slow partial
 client, invalid input, native crash without replay, recovery and config edits
-between cancellation and worker replacement. Other tests cover playback client
+between cancellation and worker replacement, disconnect recovery, full read admission,
+failed publication, and shutdown with active and queued work. The internal worker
+protocol rejects control/playback requests and supports clean shutdown. Other tests cover playback client
 interruption and process cleanup.
 
 [Real OpenVINO CPU evidence](../benchmarks/results/2026-09-16-request-lifecycle/RESULTS.md)

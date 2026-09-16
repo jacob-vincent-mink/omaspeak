@@ -1576,7 +1576,9 @@ fn daemon_bounds_queue_and_cancels_stalled_synthesis_without_publishing_output()
     use std::os::unix::net::UnixStream;
     let root = sandbox();
     let library = build_audio_cpp_stub(&root);
-    audio_cpp_stub_config(&root, library, "supertonic.gguf")
+    let mut config = audio_cpp_stub_config(&root, library, "supertonic.gguf");
+    config.daemon.max_text_bytes = 512;
+    config
         .save(&root.join("config/omaspeak/config.toml"))
         .unwrap();
     let mut daemon = ProcessGuard::new(
@@ -1654,6 +1656,28 @@ fn daemon_bounds_queue_and_cancels_stalled_synthesis_without_publishing_output()
     assert!(
         matches!(receive(&mut slow).result, ResultPayload::Error { code, .. } if code == "invalid_request")
     );
+    let mut oversized = send("too-long", say(&"x".repeat(513), &destination));
+    assert!(
+        matches!(receive(&mut oversized).result, ResultPayload::Error {code, ..} if code == "invalid_request")
+    );
+    let mut partials = Vec::new();
+    for _ in 0..16 {
+        let mut stream = UnixStream::connect(&socket).unwrap();
+        stream.write_all(b"{").unwrap();
+        partials.push(stream);
+    }
+    let mut busy = send("admission-full", omaspeak::protocol::Command::Status);
+    assert!(matches!(receive(&mut busy).result, ResultPayload::Error {code, ..} if code == "busy"));
+    drop(partials);
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        let mut status = send("admission-recovered", omaspeak::protocol::Command::Status);
+        if matches!(receive(&mut status).result, ResultPayload::Status { .. }) {
+            break;
+        }
+        assert!(Instant::now() < deadline);
+        thread::sleep(Duration::from_millis(10));
+    }
     let mut stalled = send("stalled", say("stall-run", &destination));
     let deadline = Instant::now() + Duration::from_secs(3);
     loop {
@@ -1853,6 +1877,109 @@ fn daemon_bounds_queue_and_cancels_stalled_synthesis_without_publishing_output()
         thread::sleep(Duration::from_millis(10));
     }
     assert!(daemon.collect_output().status.success());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn synthesis_worker_rejects_control_and_playback_requests_and_exits_cleanly() {
+    let root = sandbox();
+    let library = build_audio_cpp_stub(&root);
+    let config = audio_cpp_stub_config(&root, library, "supertonic.gguf");
+    let paths = omaspeak::paths::AppPaths {
+        config_file: root.join("config/omaspeak/config.toml"),
+        data_dir: root.join("data"),
+        cache_dir: root.join("cache"),
+        state_dir: root.join("state"),
+        runtime_dir: root.join("run"),
+    };
+    let spec = serde_json::json!({"config": config, "paths": paths}).to_string();
+    let mut process = ProcessGuard::new(
+        Command::new(env!("CARGO_BIN_EXE_omaspeak"))
+            .args(["__request-worker", &spec])
+            .env("XDG_RUNTIME_DIR", root.join("run"))
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap(),
+    );
+    let mut input = process.stdin.take().unwrap();
+    let mut output = BufReader::new(process.stdout.take().unwrap());
+    let mut read = || {
+        let mut line = String::new();
+        output.read_line(&mut line).unwrap();
+        serde_json::from_str::<Response>(&line).unwrap()
+    };
+    let ready = read();
+    assert_eq!(ready.id, "ready");
+    assert!(matches!(ready.result, ResultPayload::Status { .. }));
+    for (id, command) in [
+        ("control", omaspeak::protocol::Command::Status),
+        (
+            "playback",
+            omaspeak::protocol::Command::Say {
+                text: "should not play".into(),
+                voice: 0,
+                speed: 1.0,
+                output: None,
+                no_play: false,
+            },
+        ),
+        (
+            "file",
+            omaspeak::protocol::Command::Say {
+                text: "file output".into(),
+                voice: 0,
+                speed: 1.0,
+                output: Some(root.join("file.wav").to_string_lossy().into_owned()),
+                no_play: true,
+            },
+        ),
+    ] {
+        serde_json::to_writer(
+            &mut input,
+            &Request {
+                protocol: 1,
+                id: id.into(),
+                command,
+            },
+        )
+        .unwrap();
+        input.write_all(b"\n").unwrap();
+        let response = read();
+        assert_eq!(response.id, id);
+        if id == "file" {
+            assert!(matches!(response.result, ResultPayload::Synthesis { .. }));
+            assert!(
+                hound::WavReader::open(root.join("file.wav"))
+                    .unwrap()
+                    .duration()
+                    > 0
+            );
+        } else {
+            assert!(
+                matches!(response.result, ResultPayload::Error {code, ..} if code == "invalid_request")
+            );
+        }
+    }
+    serde_json::to_writer(
+        &mut input,
+        &Request {
+            protocol: 1,
+            id: "stop".into(),
+            command: omaspeak::protocol::Command::Shutdown,
+        },
+    )
+    .unwrap();
+    input.write_all(b"\n").unwrap();
+    drop(input);
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while process.try_wait().unwrap().is_none() {
+        assert!(Instant::now() < deadline);
+        thread::sleep(Duration::from_millis(10));
+    }
+    assert!(process.collect_output().status.success());
     fs::remove_dir_all(root).unwrap();
 }
 
