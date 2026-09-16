@@ -194,8 +194,8 @@ and documentation together.
 
 ## Validation completed
 
-- All-target test suite: 257 passed, none failed.
-- Required line-coverage gate (90.01%): 90.77%.
+- All-target test suite: 260 passed, none failed.
+- Required line-coverage gate (90.01%): 91.54% locally.
 - cargo fmt --check, strict all-target clippy, cargo deny licenses, and
   cargo about generation passed. Updated workflow YAML parses successfully.
 - Device fixtures cover duplicate display names, missing/malformed inventory,
@@ -212,3 +212,11 @@ and documentation together.
 - Hardware unplug/replug, multiple physical microphones, and Bluetooth profile
   changes were not exercised on this desktop; disconnect recovery was simulated.
 - Release archives now include docs/AUDIO-DEVICES.md, linked from README/INSTALL.
+
+## CI portability follow-up
+
+The initial GitHub run passed all tests but measured 89.72% coverage on the
+clean runner. Added real-terminal speaker selection/test/apply/cancel coverage,
+failed-test recovery, bounded discovery cleanup, and route diagnostics without
+relying on installed models or a desktop audio session. Isolated the audio
+fixture's XDG directories from the host. The coverage threshold remains 90.01%.

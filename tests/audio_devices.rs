@@ -38,6 +38,11 @@ impl Fixture {
                 "PATH",
                 format!("{}:/usr/bin:/bin", self.root.join("bin").display()),
             )
+            .env("XDG_CONFIG_HOME", self.root.join("config"))
+            .env("XDG_DATA_HOME", self.root.join("data"))
+            .env("XDG_CACHE_HOME", self.root.join("cache"))
+            .env("XDG_STATE_HOME", self.root.join("state"))
+            .env("XDG_RUNTIME_DIR", self.root.join("run"))
             .env("AUDIO_FIXTURE", &self.root)
             .output()
             .unwrap()
@@ -189,4 +194,136 @@ fn pinned_playback_timeout_reaps_the_child() {
         .parse()
         .unwrap();
     assert_eq!(unsafe { libc::kill(pid, 0) }, -1);
+}
+
+#[test]
+fn interactive_speaker_setup_tests_applies_and_cancels_without_a_model() {
+    let f = Fixture::new();
+    let harness = r#"
+import os,pty,select,sys,time,signal
+pid,fd=pty.fork()
+if pid==0: os.execv(sys.argv[1],[sys.argv[1],'--config',sys.argv[2],'setup','audio'])
+pending=b''
+def until(needle):
+ global pending
+ deadline=time.monotonic()+10
+ while needle not in pending:
+  if time.monotonic()>deadline: raise RuntimeError('missing '+repr(needle)+' '+repr(pending))
+  if select.select([fd],[],[],0.1)[0]: pending+=os.read(fd,65536)
+ pending=pending.split(needle,1)[1]
+try:
+ until(b'Audio device')
+ if sys.argv[3]=='back':
+  os.write(fd,b'\x1b')
+ else:
+  # Both devices have the same label. Select by the highlighted row, then
+  # verify the exact persistent target through the fake player's argv log.
+  os.write(fd,b'\x1b[B\x1b[B\r')
+  until(b'Apply audio device')
+  os.write(fd,b'\x1b[B\r')
+  if sys.argv[3]=='failure': until(b'Audio test failed')
+  until(b'Apply audio device')
+  os.write(fd,b'\r' if sys.argv[3]=='apply' else b'\x1b')
+ until(b'Audio device saved' if sys.argv[3]=='apply' else b'Setup cancelled')
+ _,status=os.waitpid(pid,0)
+ assert os.waitstatus_to_exitcode(status)==0
+finally:
+ try: os.kill(pid,signal.SIGKILL)
+ except ProcessLookupError: pass
+ os.close(fd)
+"#;
+    for action in ["apply", "cancel", "failure", "back"] {
+        f.ok(&["config", "set", "audio.device", "default"]);
+        let before = fs::read(f.root.join("config.toml")).unwrap();
+        f.script(
+            "pw-play",
+            &format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$AUDIO_FIXTURE/args\"\nexit {}\n",
+                if action == "failure" { 1 } else { 0 }
+            ),
+        );
+        let out = Command::new("python3")
+            .args(["-c", harness, env!("CARGO_BIN_EXE_omaspeak")])
+            .arg(f.root.join("config.toml"))
+            .arg(action)
+            .env("TERM", "xterm-256color")
+            .env(
+                "PATH",
+                format!("{}:/usr/bin:/bin", f.root.join("bin").display()),
+            )
+            .env("AUDIO_FIXTURE", &f.root)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{action}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        if action == "apply" {
+            assert_eq!(
+                f.ok(&["config", "get", "audio.device"]).trim(),
+                "pipewire:test-device"
+            );
+        } else {
+            assert_eq!(fs::read(f.root.join("config.toml")).unwrap(), before);
+        }
+        if action != "back" {
+            assert!(
+                fs::read_to_string(f.root.join("args"))
+                    .unwrap()
+                    .starts_with("--target\ntest-device\n")
+            );
+        }
+    }
+}
+
+#[test]
+fn stalled_discovery_is_bounded_and_its_child_is_reaped() {
+    let f = Fixture::new();
+    f.script(
+        "pw-dump",
+        "#!/bin/sh\necho $$ > \"$AUDIO_FIXTURE/discovery.pid\"\nexec sleep 30\n",
+    );
+    let started = std::time::Instant::now();
+    let report: serde_json::Value =
+        serde_json::from_str(&f.ok(&["audio-devices", "--json"])).unwrap();
+    assert!(started.elapsed().as_secs() < 6);
+    assert_eq!(report["error"], "PipeWire discovery timed out");
+    assert_eq!(report["devices"][0]["selector"], "default");
+    let pid: i32 = fs::read_to_string(f.root.join("discovery.pid"))
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    assert_eq!(unsafe { libc::kill(pid, 0) }, -1);
+}
+
+#[test]
+fn audio_diagnostics_distinguish_connected_disconnected_and_default_routes() {
+    let f = Fixture::new();
+    for (selector, available) in [("pipewire:test-device", true), ("pipewire:offline", false)] {
+        f.ok(&["config", "set", "audio.device", selector]);
+        let status: serde_json::Value = serde_json::from_str(&f.ok(&["status", "--json"])).unwrap();
+        assert_eq!(status["running"], false);
+        assert_eq!(status["audio"]["saved"], selector);
+        assert_eq!(status["audio"]["available"], available);
+        assert_eq!(status["audio"]["restart_required"], false);
+        let checks = f.run(&["setup", "check", "--json"]);
+        // Missing models can fail setup independently of the audio route.
+        let checks: Vec<serde_json::Value> = serde_json::from_slice(&checks.stdout).unwrap();
+        let audio = checks
+            .iter()
+            .find(|check| check["name"] == "audio_device")
+            .unwrap();
+        assert_eq!(audio["ok"], available);
+    }
+    f.ok(&["config", "unset", "audio.device"]);
+    let status: serde_json::Value = serde_json::from_str(&f.ok(&["status", "--json"])).unwrap();
+    assert!(status["audio"]["available"].is_null());
+    assert!(f.ok(&["audio-devices"]).contains("USB device"));
+    f.script("pw-dump", "#!/bin/sh\nexit 1\n");
+    let listing = f.run(&["audio-devices"]);
+    assert!(listing.status.success());
+    assert!(String::from_utf8_lossy(&listing.stderr).contains("cannot connect to PipeWire"));
+    assert!(String::from_utf8_lossy(&listing.stdout).contains("System default"));
 }
