@@ -70,7 +70,7 @@ those inputs, without declaring the first release fully qualified.
 | S05 | Partial | CPU/GPU/NPU/Vulkan/CUDA evidence at differing depths; GB10 produced 36 valid CUDA WAVs with verified placement; HIP pending |
 | S06 | Next | Audit existing disconnect/playback cancellation and request IDs; close bounded admission, synthesis stop and cross-app ownership gaps |
 | S07–S10 | Queued | Gated streaming, minimal named voices, complete Kokoro, maintenance and qualified language in that order |
-| S11 | Conditional | Search/filter and transfer resume only when catalog/download scale warrants them |
+| S11 | Deferred — scale not warranted (recorded 2026-09-16) | Catalog remains 3 curated models (Supertonic GGUF/OpenVINO plus the Kokoro addition) and the largest single artifact is ~454 MB; search/filter controls and transfer-resume stay out until an actual catalog or download-scale need appears. Any future resume work must preserve immutable pins and complete-file hashing with interruption tests |
 
 Current evidence: [defaults and gates](MODEL-DEFAULTS.md),
 [installer protections](INSTALLER-PROTECTIONS.md),
