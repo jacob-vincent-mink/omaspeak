@@ -20,6 +20,8 @@ first use was not precompiled. Cold compilation and warm-cache loads are not
 interchangeable. CPU affinity was 0–1, with other qualification lanes assigned
 separate CPUs. This was still a shared host with uncontrolled thermal/memory and
 background workload effects. Five samples per p95 is a coarse tail estimate.
+The normal configuration did not fix the synthesis seed; the separate listening
+comparison below controls that source of output variation.
 
 [Candidate/reference ratios](paired-ratios.json) show no case/voice exceeding the
 predeclared 10% latency or memory threshold in all three rounds. Individual p95
@@ -65,7 +67,18 @@ replies. Variations include `Your`/`You’re`, `build`/`built`, F1 `a.m.`/`A.N.`
 and Omaspeak proper-name spellings. They could arise from synthesis, recognition
 or both; they are listening-review targets, not automated proof of naturalness.
 
-## Blinded listening review
+## Seed-controlled output comparison and listening review
+
+A separate one-round comparison fixed `model.options.seed = "20260916"` for
+both optimized builds and copied the prepared CPU cache. It used one warmup and
+one measured synthesis for all twelve case/voice pairs. **Every reference and
+candidate WAV pair is byte-identical**, as recorded in
+[seeded measurements](seeded-listening.json). This checks output preservation
+for these inputs; it does not establish voice quality or additional languages.
+
+The final local listening pack uses this seed-controlled set. Since the pairs
+are identical, listen to one clip per pair for default-voice quality review;
+there is no audible A/B difference to score on these exact files.
 
 `scripts/build-listening-pack.py` copies the first measured recording from each
 reference/candidate case/voice pair, verifies the stored corpus/audio hashes,
@@ -82,10 +95,15 @@ local qualification artifact directory, rather than adding large WAVs to Git.
 
 ```sh
 # Python 3.11+, reviewed config with fallback=error and pinned provider/model
+# For listening, set model.options.seed = "20260916" in cpu-seeded.toml.
 python3 scripts/measure-model-corpus.py --binary /path/candidate \
   --reference /path/reference --config /path/cpu.toml \
   --out /new/paired --runs 3 --iterations 5
-python3 scripts/build-listening-pack.py /new/paired --out /new/listening-review
+# Use a separate seed-controlled run for listening.
+python3 scripts/measure-model-corpus.py --binary /path/candidate \
+  --reference /path/reference --config /path/cpu-seeded.toml \
+  --cache-seed /new/paired/xdg/cache --out /new/seeded --runs 1 --iterations 1
+python3 scripts/build-listening-pack.py /new/seeded --out /new/listening-review
 
 # For NPU, copy a compatible prepared cache into the isolated run first.
 python3 scripts/measure-model-corpus.py --binary /path/candidate \
