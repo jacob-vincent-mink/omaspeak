@@ -97,6 +97,7 @@ int audiocpp_model_load(void *registry, const char *path,
     if (strstr(path, "huge-audio")) stub_mode = 7;
     if (strstr(path, "require-F1")) stub_mode = 8;
     if (strstr(path, "require-af_heart")) stub_mode = 9;
+    if (strstr(path, "require-language-es")) stub_mode = 10;
     *model = loaded;
     return *model ? 0 : 1;
 }
@@ -128,6 +129,7 @@ void audiocpp_request_free(void *request) { free(request); }
 int audiocpp_request_set_text(void *request, const char *text,
                               const char *language) {
     if (!request || !text || !language) return 1;
+    if (stub_mode == 10 && strcmp(language, "es") != 0) return 44;
     if (strcmp(text, "fail-text") == 0) return 43;
     strncpy(((stub_request *)request)->text, text,
             sizeof(((stub_request *)request)->text) - 1);

@@ -458,6 +458,7 @@ fn socket_client_sends_newline_delimited_request_and_decodes_response() {
                     result: ResultPayload::Status {
                         running: true,
                         pid: 42,
+                        language: String::new(),
                         model: "test-model".into(),
                         sample_rate: 24_000,
                         backend: json!({"kind": "test"}),
@@ -4453,6 +4454,7 @@ fn top_level_online_commands_exchange_protocol_without_loading_an_engine() {
                 Command::Status => ResultPayload::Status {
                     running: true,
                     pid: 42,
+                    language: String::new(),
                     model: "fixture".into(),
                     sample_rate: 16_000,
                     backend: json!({"kind": "injected"}),
