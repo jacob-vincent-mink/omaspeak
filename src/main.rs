@@ -3149,6 +3149,8 @@ fn choose_model(
     let preferred = models
         .iter()
         .position(|model| model.id == config.model.name)
+        .filter(|&index| items[index].enabled)
+        .or_else(|| items.iter().position(|item| item.enabled))
         .unwrap_or_default();
     let Some(selected) = selector.select(
         "Omaspeak model",
@@ -3159,6 +3161,9 @@ fn choose_model(
     else {
         return Ok(None);
     };
+    if !items.get(selected).is_some_and(|item| item.enabled) {
+        bail!("selected model is unavailable for the configured backend/runtime");
+    }
     Ok(Some(models[selected].id.into()))
 }
 

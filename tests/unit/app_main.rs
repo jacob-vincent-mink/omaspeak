@@ -3276,6 +3276,11 @@ fn catalog_status_matrix_and_guided_model_cancellations_use_existing_paths() {
     )
     .unwrap();
 
+    // Cancellation paths must select a model that the active runtime can run.
+    config.backend.kind = "supertonic".into();
+    config.backend.runtime = Runtime::Openvino;
+    config.backend.device = "cpu".into();
+    config.save(&paths.config_file).unwrap();
     let mut selector = ScriptedSelector::new([Some(4), None]);
     assert!(
         guided_model(&paths.config_file, &paths, &operations, &mut selector)
@@ -4646,4 +4651,36 @@ fn runtime_switch_resolves_model_format_and_retains_voice_on_same_backend() {
             command: Some(SetupCommand::All { model: None, .. })
         }
     ));
+}
+
+#[test]
+fn model_picker_prefers_compatible_row_and_rejects_disabled_selection() {
+    let root = sandbox();
+    let paths = paths(&root);
+    Config::default().save(&paths.config_file).unwrap();
+    let operations = FakeModelOperations { installed: true };
+    let mut selector = ScriptedSelector::new([Some(1)]);
+    let chosen = choose_model(
+        &paths.config_file,
+        &paths,
+        &operations,
+        Some((Runtime::Openvino, "npu")),
+        &mut selector,
+    )
+    .unwrap();
+    assert_eq!(chosen.as_deref(), Some("supertonic-3-openvino"));
+    assert_eq!(selector.calls[0].2, 1);
+    for index in [0, usize::MAX] {
+        let mut selector = ScriptedSelector::new([Some(index)]);
+        assert!(
+            choose_model(
+                &paths.config_file,
+                &paths,
+                &operations,
+                Some((Runtime::Openvino, "npu")),
+                &mut selector
+            )
+            .is_err()
+        );
+    }
 }

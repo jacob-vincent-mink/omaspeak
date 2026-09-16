@@ -89,3 +89,7 @@ implemented slice, its tests and remaining limits. See also the
 adds three comparison rounds, broader NPU synthesis, process-group memory and a
 reproducible blinded listening pack. Human ratings and power qualification remain
 open; this does not promote additional hardware or expressive model families.
+
+Model setup now starts on an enabled compatible row when the previous model is
+incompatible with a newly selected runtime. Disabled and out-of-range selections
+are rejected before voice selection or installation. CLI catalog output is unchanged.
