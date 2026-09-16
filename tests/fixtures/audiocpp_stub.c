@@ -26,7 +26,7 @@ typedef struct {
     int threads;
 } audiocpp_backend_config;
 
-typedef struct { int unsupported; int fail_session; int null_session; } stub_model;
+typedef struct { int unsupported; int fail_session; int null_session; char family[32]; } stub_model;
 typedef struct { char text[64]; } stub_request;
 typedef struct {
     float samples[882];
@@ -37,6 +37,7 @@ typedef struct {
 } stub_result;
 
 static int stub_mode;
+static int g_family_is_kokoro = 0;
 
 uint32_t audiocpp_abi_version(void) { return 0x00000100u; }
 const char *audiocpp_last_error(void) { return "stub provider error"; }
@@ -53,10 +54,17 @@ int audiocpp_registry_create(const char *path, void **registry) {
     *registry = calloc(1, 1);
     return *registry ? 0 : 1;
 }
-size_t audiocpp_registry_family_count(const void *registry) { (void)registry; return 1; }
+static const char *const stub_family_names[] = {"supertonic", "kokoro_tts"};
+size_t audiocpp_registry_family_count(const void *registry) {
+    (void)registry;
+    return sizeof(stub_family_names) / sizeof(stub_family_names[0]);
+}
 int audiocpp_registry_family(const void *registry, size_t index, const char **out) {
-    (void)registry; static const char *names[] = {"supertonic"};
-    if (index >= 1) return 1; *out = names[index]; return 0;
+    (void)registry;
+    size_t n = sizeof(stub_family_names) / sizeof(stub_family_names[0]);
+    if (index >= n) return 1;
+    *out = stub_family_names[index];
+    return 0;
 }
 void audiocpp_registry_free(void *registry) { free(registry); }
 
@@ -74,6 +82,8 @@ int audiocpp_model_load(void *registry, const char *path,
     }
     stub_model *loaded = calloc(1, sizeof(*loaded));
     if (!loaded) return 1;
+    strncpy(loaded->family, config->family_hint, sizeof(loaded->family) - 1);
+    g_family_is_kokoro = strcmp(loaded->family, "kokoro_tts") == 0;
     loaded->unsupported = strstr(path, "unsupported") != NULL;
     loaded->fail_session = strstr(path, "fail-session") != NULL;
     loaded->null_session = strstr(path, "null-session") != NULL;
@@ -86,6 +96,7 @@ int audiocpp_model_load(void *registry, const char *path,
     if (strstr(path, "null-samples")) stub_mode = 6;
     if (strstr(path, "huge-audio")) stub_mode = 7;
     if (strstr(path, "require-F1")) stub_mode = 8;
+    if (strstr(path, "require-af_heart")) stub_mode = 9;
     *model = loaded;
     return *model ? 0 : 1;
 }
@@ -125,6 +136,7 @@ int audiocpp_request_set_text(void *request, const char *text,
 int audiocpp_request_set_voice_id(void *request, const char *voice) {
     if (!request || !voice) return 1;
     if (stub_mode == 8 && strcmp(voice, "F1") != 0) return 44;
+    if (stub_mode == 9 && strcmp(voice, "af_heart") != 0) return 44;
     return stub_mode == 2 ? 44 : 0;
 }
 int audiocpp_request_set_speaking_rate(void *request, float rate) {
@@ -168,7 +180,8 @@ int audiocpp_session_run(void *session, void *request, void **result) {
     for (size_t i = 0; i < 882; ++i)
         output->samples[i] = (i % 2 == 0) ? 0.05f : -0.05f;
     output->frames = strcmp(input->text, "empty-audio") == 0 ? 0 : 441;
-    output->sample_rate = strcmp(input->text, "bad-rate") == 0 ? 16000 : 44100;
+    output->sample_rate = strcmp(input->text, "bad-rate") == 0 ? 16000
+                            : (g_family_is_kokoro ? 24000 : 44100);
     output->channels = strcmp(input->text, "bad-channels") == 0 ? 2 : 1;
     output->null_samples = stub_mode == 6;
     if (stub_mode == 7) output->frames = 70000000;

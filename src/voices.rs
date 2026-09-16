@@ -80,6 +80,25 @@ pub fn installed(config: &Config, paths: &AppPaths) -> Result<Vec<Voice>> {
     match config.model.family.as_str() {
         "supertonic" if config.backend.kind == "audiocpp" => Ok(supertonic_presets()),
         "supertonic" => supertonic_voices(config, paths),
+        "kokoro" => {
+            // All 54 voice packs are embedded in the pinned GGUF; the catalog is
+            // the trusted inventory. Require the model file to be installed.
+            let directory = config.model_directory(paths);
+            if !directory.join(&config.model.file).is_file() {
+                bail!(
+                    "Kokoro model file is not installed: {}",
+                    directory.join(&config.model.file).display()
+                );
+            }
+            crate::catalog::model(&config.model.name)
+                .map(from_catalog)
+                .with_context(|| {
+                    format!(
+                        "Kokoro model {:?} has no catalog voice metadata",
+                        config.model.name
+                    )
+                })
+        }
         family => bail!("cannot enumerate voices for model family {family:?}"),
     }
 }
@@ -88,6 +107,15 @@ pub fn installed(config: &Config, paths: &AppPaths) -> Result<Vec<Voice>> {
 pub fn available(config: &Config, paths: &AppPaths) -> Result<Vec<Voice>> {
     if config.model.family == "supertonic" && config.backend.kind == "audiocpp" {
         return Ok(supertonic_presets());
+    }
+    if config.model.family == "kokoro" {
+        let spec = crate::catalog::model(&config.model.name).with_context(|| {
+            format!(
+                "Kokoro model {:?} has no catalog voice metadata",
+                config.model.name
+            )
+        })?;
+        return Ok(from_catalog(spec));
     }
     let directory = config.model_directory(paths);
     if directory.exists() {
@@ -129,7 +157,7 @@ pub fn validate_selected(config: &Config, voices: &[Voice]) -> Result<()> {
     } else {
         let valid = voices
             .iter()
-            .map(|voice| voice.id.to_string())
+            .map(|voice| voice.name.to_string())
             .collect::<Vec<_>>()
             .join(", ");
         bail!(

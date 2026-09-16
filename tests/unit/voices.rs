@@ -46,6 +46,37 @@ fn official_style_directory_provides_stable_voice_ids() {
 }
 
 #[test]
+fn kokoro_inventory_comes_from_the_catalog() {
+    let (mut config, paths) = fixture("kokoro");
+    config.model.family = "kokoro".into();
+    config.model.name = crate::catalog::KOKORO_MODEL_ID.into();
+    config.model.file = "kokoro-82m-q8_0.gguf".into();
+    // Available without an installed model directory (catalog inventory).
+    let voices = available(&config, &paths).unwrap();
+    assert_eq!(voices.len(), 54);
+    assert_eq!(
+        voices[3],
+        Voice {
+            id: 3,
+            name: "af_heart".into()
+        }
+    );
+    // Name and legacy-ID selection both resolve to the same inventory entry.
+    config.model.voice = crate::voices::VoiceSelection::Name("af_heart".into());
+    validate_selected(&config, &voices).unwrap();
+    config.model.voice = crate::voices::VoiceSelection::Legacy(3);
+    validate_selected(&config, &voices).unwrap();
+    // Unknown names and out-of-range legacy IDs are rejected.
+    config.model.voice = crate::voices::VoiceSelection::Name("zz_bogus".into());
+    assert!(validate_selected(&config, &voices).is_err());
+    config.model.voice = crate::voices::VoiceSelection::Legacy(54);
+    assert!(validate_selected(&config, &voices).is_err());
+    // Installed requires the model file to exist.
+    let missing = installed(&config, &paths).unwrap_err();
+    assert!(missing.to_string().contains("not installed"));
+}
+
+#[test]
 fn catalog_inventory_is_available_before_download() {
     let (mut config, paths) = fixture("catalog");
     assert_eq!(

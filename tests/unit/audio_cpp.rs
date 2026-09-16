@@ -225,14 +225,32 @@ fn pcm_protocol_round_trips_finite_samples_and_rejects_bad_shapes() {
 
     let sample = 0.0f32;
     assert_eq!(
-        validate_audio_shape(&sample, 1, SUPERTONIC_SAMPLE_RATE, 1).unwrap(),
+        validate_audio_shape("supertonic", &sample, 1, SUPERTONIC_SAMPLE_RATE, 1).unwrap(),
         1
     );
-    assert!(validate_audio_shape(std::ptr::null(), 1, SUPERTONIC_SAMPLE_RATE, 1).is_err());
-    assert!(validate_audio_shape(&sample, 0, SUPERTONIC_SAMPLE_RATE, 1).is_err());
-    assert!(validate_audio_shape(&sample, 1, 16_000, 1).is_err());
-    assert!(validate_audio_shape(&sample, 1, SUPERTONIC_SAMPLE_RATE, 2).is_err());
-    assert!(validate_audio_shape(&sample, MAX_PCM_SAMPLES + 1, SUPERTONIC_SAMPLE_RATE, 1).is_err());
+    assert!(
+        validate_audio_shape("supertonic", std::ptr::null(), 1, SUPERTONIC_SAMPLE_RATE, 1).is_err()
+    );
+    assert!(validate_audio_shape("supertonic", &sample, 0, SUPERTONIC_SAMPLE_RATE, 1).is_err());
+    assert!(validate_audio_shape("supertonic", &sample, 1, 16_000, 1).is_err());
+    assert!(validate_audio_shape("supertonic", &sample, 1, SUPERTONIC_SAMPLE_RATE, 2).is_err());
+    assert!(
+        validate_audio_shape(
+            "supertonic",
+            &sample,
+            MAX_PCM_SAMPLES + 1,
+            SUPERTONIC_SAMPLE_RATE,
+            1
+        )
+        .is_err()
+    );
+    // Kokoro expects 24 kHz mono; its rate is valid and the Supertonic rate is not.
+    assert_eq!(
+        validate_audio_shape("kokoro", &sample, 1, KOKORO_SAMPLE_RATE, 1).unwrap(),
+        1
+    );
+    assert!(validate_audio_shape("kokoro", &sample, 1, SUPERTONIC_SAMPLE_RATE, 1).is_err());
+    assert!(validate_audio_shape("unknown", &sample, 1, SUPERTONIC_SAMPLE_RATE, 1).is_err());
 }
 
 #[test]
