@@ -361,3 +361,38 @@ fn native_paths_are_explicit_existing_files_and_relative_models_stay_contained()
     config.backend.library = None;
     assert!(resolve_provider_library(&config, &paths.config_file).is_err());
 }
+
+#[test]
+fn kokoro_engine_voice_ids_and_request_languages_cover_every_prefix() {
+    assert_eq!(engine_voice_id("kokoro", 0).unwrap(), "af_alloy");
+    assert_eq!(engine_voice_id("kokoro", 3).unwrap(), "af_heart");
+    assert_eq!(engine_voice_id("kokoro", 16).unwrap(), "am_michael");
+    assert_eq!(engine_voice_id("kokoro", 53).unwrap(), "zm_yunyang");
+    assert_eq!(
+        engine_voice_id("kokoro", 54).unwrap_err().to_string(),
+        "voice 54 is outside the Kokoro voice range 0..53"
+    );
+    assert_eq!(
+        engine_voice_id("kokoro", -1).unwrap_err().to_string(),
+        "voice -1 is outside the Kokoro voice range 0..53"
+    );
+    assert!(engine_voice_id("unknown", 0).is_err());
+    for (prefix, language) in [
+        ('a', "en-us"),
+        ('b', "en-gb"),
+        ('e', "es"),
+        ('f', "fr"),
+        ('h', "hi"),
+        ('i', "it"),
+        ('j', "ja"),
+        ('p', "pt-br"),
+        ('z', "zh"),
+    ] {
+        assert_eq!(
+            kokoro_voice_language(&format!("{prefix}x_voice")),
+            Some(language)
+        );
+    }
+    assert_eq!(kokoro_voice_language("q_unknown"), None);
+    assert_eq!(kokoro_voice_language(""), None);
+}

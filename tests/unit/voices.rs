@@ -178,3 +178,33 @@ fn legacy_and_named_presets_preserve_all_supertonic_identities() {
         assert!(serde_json::from_str::<VoiceSelection>(invalid).is_err());
     }
 }
+
+#[test]
+fn available_reports_missing_catalog_metadata_and_family_errors() {
+    let root = std::env::temp_dir().join(format!(
+        "omaspeak-voices-available-errors-{}",
+        std::process::id()
+    ));
+    let paths = AppPaths {
+        config_file: root.join("config/config.toml"),
+        data_dir: root.join("data"),
+        cache_dir: root.join("cache"),
+        state_dir: root.join("state"),
+        runtime_dir: root.join("run"),
+    };
+    fs::create_dir_all(&root).unwrap();
+    let mut config = Config::default();
+    config.model.family = "kokoro".into();
+    config.model.name = "not-in-catalog".into();
+    let error = available(&config, &paths).unwrap_err().to_string();
+    assert!(error.contains("no catalog voice metadata"), "{error}");
+    config.model.family = "unknown-family".into();
+    config.model.name = "not-in-catalog".into();
+    let error = available(&config, &paths).unwrap_err().to_string();
+    assert!(error.contains("no catalog voice metadata"), "{error}");
+    // A known model without a family still falls back to the catalog inventory.
+    config.model.family = "".to_string();
+    config.model.name = "supertonic-3-gguf".into();
+    assert_eq!(available(&config, &paths).unwrap().len(), 10);
+    fs::remove_dir_all(root).unwrap();
+}
