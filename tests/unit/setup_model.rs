@@ -687,3 +687,33 @@ fn verify_pinned_file_diagnostics_name_expected_and_actual_values() {
     assert!(digest_error.contains("expected") && digest_error.contains("found"));
     fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+fn url_check_reports_render_json_and_human_rows() {
+    let mut buffer: Vec<u8> = Vec::new();
+    let checks = check_urls_with(None, &mut |url| {
+        if url.ends_with("one") {
+            Ok(2)
+        } else {
+            Err("connection refused".into())
+        }
+    });
+    write_url_checks(&checks, &mut buffer, true).unwrap();
+    let parsed: serde_json::Value = serde_json::from_slice(&buffer).unwrap();
+    assert!(parsed.is_array());
+    buffer.clear();
+    write_url_checks(&checks, &mut buffer, false).unwrap();
+    let human = String::from_utf8(buffer).unwrap();
+    assert!(human.contains("unreachable: "));
+    assert!(human.contains("connection refused"));
+}
+
+#[test]
+fn rewritten_url_leaves_non_http_urls_untouched() {
+    let checks = check_urls_with(Some("http://127.0.0.1:9"), &mut |_url| Ok(0));
+    assert!(
+        checks
+            .iter()
+            .any(|check| check.url.starts_with("http://127.0.0.1:9/"))
+    );
+}

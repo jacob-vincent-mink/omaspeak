@@ -677,12 +677,21 @@ fn probe_url(url: &str) -> std::result::Result<u64, String> {
 }
 
 pub fn print_url_checks(checks: &[UrlCheck], json: bool) {
+    write_url_checks(checks, &mut std::io::stdout(), json).expect("write url check report");
+}
+
+pub fn write_url_checks(
+    checks: &[UrlCheck],
+    output: &mut impl std::io::Write,
+    json: bool,
+) -> Result<()> {
     if json {
-        println!(
+        writeln!(
+            output,
             "{}",
             serde_json::to_string_pretty(checks).expect("url check report is serializable")
-        );
-        return;
+        )?;
+        return Ok(());
     }
     for check in checks {
         let detail = check
@@ -690,11 +699,13 @@ pub fn print_url_checks(checks: &[UrlCheck], json: bool) {
             .as_deref()
             .map(|detail| format!(" ({detail})"))
             .unwrap_or_default();
-        println!(
+        writeln!(
+            output,
             "{}: {} {}{}",
             check.status, check.model, check.asset, detail
-        );
+        )?;
     }
+    Ok(())
 }
 
 #[cfg(test)]
