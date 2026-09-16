@@ -231,6 +231,16 @@ enum SetupCommand {
         /// Confirm acceptance of the model license required for catalog installation.
         #[arg(long, value_name = "LICENSE", requires = "download")]
         accept_license: Option<String>,
+        /// HEAD every pinned catalog URL and compare the reported size, without
+        /// downloading or changing user pins; exits nonzero on any failure.
+        #[arg(
+            long,
+            conflicts_with_all = ["list", "download", "set", "verify", "source", "no_activate", "accept_license"]
+        )]
+        check_urls: bool,
+        /// Replace the origin of pinned URLs for mirror or stub testing.
+        #[arg(long, value_name = "PREFIX", requires = "check_urls")]
+        url_prefix: Option<String>,
         /// Install the downloaded model without making it active.
         #[arg(long, requires = "download")]
         no_activate: bool,
@@ -1875,9 +1885,20 @@ fn setup(command: Option<SetupCommand>, config_path: &Path, paths: &AppPaths) ->
             verify,
             source,
             accept_license,
+            check_urls,
+            url_prefix,
             no_activate,
             progress_format,
         } => {
+            if check_urls {
+                let checks = app_setup::model::check_urls(url_prefix.as_deref());
+                app_setup::model::print_url_checks(&checks, json);
+                let failed = checks.iter().filter(|check| check.status != "ok").count();
+                if failed > 0 {
+                    bail!("{failed} of {} pinned catalog URLs failed", checks.len());
+                }
+                return Ok(());
+            }
             if !list
                 && !json
                 && download.is_none()

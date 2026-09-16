@@ -73,7 +73,7 @@ those inputs, without declaring the first release fully qualified.
 | S07 | Evaluated; defer at current pin | [Native streaming probe](../benchmarks/results/2026-09-16-streaming/RESULTS.md) demonstrates early long-form PCM and exact export parity, but full-utterance retention fails the fixed buffering gate; keep offline output |
 | S08 | Done | [Named selection](NAMED-VOICES.md) preserves all legacy IDs and supports config/IPC names |
 | S09 | Done, evidence partially open | Kokoro 82M pinned ([KOKORO.md](KOKORO.md)); fresh-install + voice routing proven in-process; [paired latency recorded](../benchmarks/results/2026-09-16-kokoro/RESULTS.md); listening pack and human ratings still open |
-| S10 | Queued | Catalog maintenance tooling and qualified non-English profile |
+| S10 | Tooling done; language queued | [Pinned URL health check](CATALOG-MAINTENANCE.md) (`setup model --check-urls [--url-prefix]`) with 18/18 healthy pinned URLs; offline-import diagnostics name expected/actual values; qualified non-English profile remains queued |
 | S11 | Conditional | Search/filter and transfer resume only when catalog/download scale warrants them |
 
 Current evidence: [defaults and gates](MODEL-DEFAULTS.md),
