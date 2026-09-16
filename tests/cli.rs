@@ -1569,3 +1569,154 @@ fn playback_worker_waits_for_owned_pause_and_rejects_an_old_wake_daemon() {
         fs::remove_dir_all(root).unwrap();
     }
 }
+
+#[test]
+fn playback_worker_stops_when_wake_ownership_is_lost() {
+    let root = sandbox();
+    let runtime = root.join("run/omawake");
+    fs::create_dir_all(&runtime).unwrap();
+    let listener = UnixListener::bind(runtime.join("control.sock")).unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let output = root.join("sample.wav");
+    let marker = root.join("sample.wav.pid");
+    let player = root.join("test-bin/pw-play");
+    fs::write(&player, "#!/bin/sh\necho $$ > \"$1.pid\"\nexec sleep 30\n").unwrap();
+    fs::set_permissions(&player, fs::Permissions::from_mode(0o755)).unwrap();
+    let observed = marker.clone();
+    let server = thread::spawn(move || {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut stream = loop {
+            match listener.accept() {
+                Ok((stream, _)) => break stream,
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    assert!(Instant::now() < deadline);
+                    thread::sleep(Duration::from_millis(10));
+                }
+                Err(error) => panic!("{error}"),
+            }
+        };
+        stream
+            .set_read_timeout(Some(Duration::from_secs(3)))
+            .unwrap();
+        let mut request = String::new();
+        BufReader::new(&mut stream).read_line(&mut request).unwrap();
+        let request: serde_json::Value = serde_json::from_str(&request).unwrap();
+        writeln!(
+            stream,
+            "{}",
+            serde_json::json!({"protocol":1,"id":request["id"],"type":"state","state":"paused"})
+        )
+        .unwrap();
+        while !observed.exists() {
+            assert!(Instant::now() < deadline, "player did not start");
+            thread::sleep(Duration::from_millis(10));
+        }
+        // Closing the owned connection models a wake daemon crash/restart.
+    });
+    let started = Instant::now();
+    let result = run(&root, &["__voice-playback", output.to_str().unwrap()]);
+    server.join().unwrap();
+    assert!(!result.status.success());
+    assert!(stderr(&result).contains("cancelled"), "{}", stderr(&result));
+    assert!(started.elapsed() < Duration::from_secs(5));
+    let pid: i32 = fs::read_to_string(marker).unwrap().trim().parse().unwrap();
+    assert_eq!(
+        unsafe { libc::kill(pid, 0) },
+        -1,
+        "player survived ownership loss"
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn playback_worker_never_starts_audio_after_a_failed_pause_handshake() {
+    use std::io::Read;
+    for payload in [
+        Some(Vec::new()),
+        Some(b"not-json\n".to_vec()),
+        Some(vec![b'x'; 65_537]),
+        None,
+    ] {
+        let root = sandbox();
+        let runtime = root.join("run/omawake");
+        fs::create_dir_all(&runtime).unwrap();
+        let listener = UnixListener::bind(runtime.join("control.sock")).unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let output = root.join("sample.wav");
+        let marker = root.join("sample.wav.played");
+        let player = root.join("test-bin/pw-play");
+        fs::write(&player, "#!/bin/sh\n: > \"$1.played\"\n").unwrap();
+        fs::set_permissions(&player, fs::Permissions::from_mode(0o755)).unwrap();
+        let server = thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            let mut stream = loop {
+                match listener.accept() {
+                    Ok((stream, _)) => break stream,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        assert!(Instant::now() < deadline);
+                        thread::sleep(Duration::from_millis(10));
+                    }
+                    Err(error) => panic!("{error}"),
+                }
+            };
+            stream
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            let mut request = String::new();
+            BufReader::new(&mut stream).read_line(&mut request).unwrap();
+            if let Some(payload) = payload {
+                let _ = stream.write_all(&payload);
+            } else {
+                assert_eq!(
+                    stream.read(&mut [0]).unwrap(),
+                    0,
+                    "timed-out client retained hold"
+                );
+            }
+        });
+        let result = run(&root, &["__voice-playback", output.to_str().unwrap()]);
+        server.join().unwrap();
+        assert!(!result.status.success());
+        assert!(!marker.exists(), "played without acknowledged ownership");
+        fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[test]
+fn playback_without_a_runtime_directory_uses_the_user_fallback() {
+    let root = sandbox();
+    let user = format!(
+        "omaspeak-test-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    );
+    let runtime = std::env::temp_dir().join(format!("omavoice-{user}"));
+    assert!(!runtime.exists());
+    // No wake daemon is present; the normal player is allowed. Its failure
+    // should fall through to the second player without requiring system audio.
+    fs::write(root.join("test-bin/pw-play"), "#!/bin/sh\nexit 1\n").unwrap();
+    fs::write(
+        root.join("test-bin/aplay"),
+        "#!/bin/sh\n: > \"$1.played\"\n",
+    )
+    .unwrap();
+    for name in ["pw-play", "aplay"] {
+        fs::set_permissions(
+            root.join("test-bin").join(name),
+            fs::Permissions::from_mode(0o755),
+        )
+        .unwrap();
+    }
+    let output = root.join("fallback.wav");
+    let result = Command::new(env!("CARGO_BIN_EXE_omaspeak"))
+        .args(["__voice-playback", output.to_str().unwrap()])
+        .env_remove("XDG_RUNTIME_DIR")
+        .env("USER", &user)
+        .env("PATH", test_path(&root))
+        .output()
+        .unwrap();
+    assert!(result.status.success(), "{}", stderr(&result));
+    assert!(root.join("fallback.wav.played").exists());
+    assert!(!runtime.exists());
+    fs::remove_dir_all(root).unwrap();
+}
