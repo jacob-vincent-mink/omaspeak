@@ -1837,6 +1837,51 @@ fn daemon_bounds_queue_and_cancels_stalled_synthesis_without_publishing_output()
     ));
     assert_eq!(fs::read(&destination).unwrap(), b"previous output");
 
+    // Losing the supervisor process fails its current batch without replay,
+    // and a later independent request can create a replacement.
+    fs::remove_file(root.join("native-started")).unwrap();
+    let mut lost_worker = send("lost-worker", say("stall-run", &destination));
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while !root.join("native-started").exists() {
+        assert!(Instant::now() < deadline);
+        thread::sleep(Duration::from_millis(10));
+    }
+    let mut lost_queued = send(
+        "lost-queued",
+        say("must not replay", &root.join("lost.wav")),
+    );
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        let mut status = send("status", omaspeak::protocol::Command::Status);
+        if matches!(receive(&mut status).result, ResultPayload::Status {ref backend, ..} if backend["requests"]["queued"] == serde_json::json!(["lost-queued"]))
+        {
+            break;
+        }
+        assert!(Instant::now() < deadline);
+    }
+    let children = fs::read_to_string(format!("/proc/{0}/task/{0}/children", daemon.id())).unwrap();
+    let children: Vec<i32> = children
+        .split_whitespace()
+        .map(|pid| pid.parse().unwrap())
+        .collect();
+    assert_eq!(children.len(), 1);
+    assert_eq!(unsafe { libc::kill(children[0], libc::SIGKILL) }, 0);
+    for stream in [&mut lost_worker, &mut lost_queued] {
+        assert!(
+            matches!(receive(stream).result, ResultPayload::Error {code, ..} if code == "runtime")
+        );
+    }
+    assert!(!root.join("lost.wav").exists());
+    assert_eq!(fs::read(&destination).unwrap(), b"previous output");
+    let mut replacement = send(
+        "replacement",
+        say("new independent request", &root.join("replacement.wav")),
+    );
+    assert!(matches!(
+        receive(&mut replacement).result,
+        ResultPayload::Synthesis { .. }
+    ));
+
     // Shutdown during native work cancels both active and queued requests.
     fs::remove_file(root.join("native-started")).unwrap();
     let mut shutdown_active = send("shutdown-active", say("stall-run", &destination));
