@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 static void exit_worker_with_diagnostics(const char *diagnostic) {
     for (int i = 0; i < 4096; ++i)
@@ -140,6 +141,22 @@ int audiocpp_session_run(void *session, void *request, void **result) {
     if (!session || !request) return 1;
     stub_request *input = request;
     if (strcmp(input->text, "fail-run") == 0) return 47;
+    if (strcmp(input->text, "crash-run") == 0) {
+        const char *marker = getenv("OMASPEAK_STUB_CRASHES");
+        if (marker) {
+            FILE *file = fopen(marker, "a");
+            if (file) { fputs("crash\n", file); fclose(file); }
+        }
+        _exit(71);
+    }
+    if (strcmp(input->text, "stall-run") == 0) {
+        const char *marker = getenv("OMASPEAK_STUB_STARTED");
+        if (marker) {
+            FILE *file = fopen(marker, "w");
+            if (file) { fprintf(file, "%d", (int)getpid()); fclose(file); }
+        }
+        sleep(30);
+    }
     if (stub_mode == 4) {
         *result = NULL;
         return 0;

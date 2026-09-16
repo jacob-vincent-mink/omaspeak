@@ -1,5 +1,6 @@
 #![recursion_limit = "256"]
 
+mod request_service;
 mod wake_pause;
 
 mod voice_preview;
@@ -47,6 +48,10 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum TopCommand {
+    #[command(name = "__request-worker", hide = true)]
+    RequestWorker {
+        spec: String,
+    },
     #[command(name = "__voice-playback", hide = true)]
     VoicePlayback {
         output: PathBuf,
@@ -82,6 +87,10 @@ enum TopCommand {
     /// Benchmark one loaded TTS engine, write WAVs, and print JSON.
     Benchmark(BenchmarkArgs),
     Stop,
+    /// Cancel the active speech request, or a specific queued/active request ID.
+    Cancel {
+        request_id: Option<String>,
+    },
     Voices {
         #[arg(long)]
         json: bool,
@@ -482,6 +491,8 @@ fn run_with_paths_and_prepare(
     let config_path = select_config_path(cli.config, paths);
     prepare(&cli.command, &config_path)?;
     match cli.command {
+        TopCommand::RequestWorker { spec } => request_service::worker(&spec),
+        TopCommand::Cancel { request_id } => cancel_request(paths, request_id),
         TopCommand::VoicePreview { request } => voice_preview::worker(&request),
         TopCommand::VoicePlayback { output } => play(&output, || false),
         TopCommand::AudioCppProbe { spec } => omaspeak::audio_cpp::run_provider_probe(&spec),
@@ -515,10 +526,7 @@ fn run_with_paths_and_prepare(
 }
 
 fn command_loads_engine(command: &TopCommand) -> bool {
-    matches!(
-        command,
-        TopCommand::Daemon | TopCommand::Say(_) | TopCommand::Benchmark(_)
-    )
+    matches!(command, TopCommand::Say(_) | TopCommand::Benchmark(_))
 }
 
 #[cfg(target_os = "linux")]
@@ -863,18 +871,17 @@ fn milliseconds(duration: Duration) -> f64 {
 }
 
 fn run_daemon(config_path: &Path, paths: &AppPaths) -> Result<()> {
-    run_daemon_with(config_path, paths, Engine::load, |interrupted| {
-        for signal in [
-            signal_hook::consts::signal::SIGINT,
-            signal_hook::consts::signal::SIGTERM,
-        ] {
-            signal_hook::flag::register(signal, interrupted.clone())
-                .context("install daemon shutdown handler")?;
-        }
-        Ok(())
-    })
+    let interrupted = Arc::new(AtomicBool::new(false));
+    for signal in [
+        signal_hook::consts::signal::SIGINT,
+        signal_hook::consts::signal::SIGTERM,
+    ] {
+        signal_hook::flag::register(signal, interrupted.clone())?;
+    }
+    request_service::serve(config_path, paths, interrupted)
 }
 
+#[cfg(test)]
 fn run_daemon_with<E: SpeechEngine>(
     config_path: &Path,
     paths: &AppPaths,
@@ -888,6 +895,7 @@ fn run_daemon_with<E: SpeechEngine>(
     serve_daemon(&engine, &config, paths, interrupted)
 }
 
+#[cfg(test)]
 fn serve_daemon(
     engine: &impl SpeechEngine,
     config: &Config,
@@ -931,17 +939,21 @@ fn serve_daemon(
     finish_daemon(&socket, &socket_metadata, serve_result)
 }
 
+#[cfg(test)]
 #[derive(Debug)]
 struct DaemonInterrupted;
 
+#[cfg(test)]
 impl std::fmt::Display for DaemonInterrupted {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str("daemon interrupted")
     }
 }
 
+#[cfg(test)]
 impl std::error::Error for DaemonInterrupted {}
 
+#[cfg(test)]
 fn accept_daemon_connection(
     listener: &UnixListener,
     interrupted: &AtomicBool,
@@ -953,6 +965,7 @@ fn accept_daemon_connection(
     )
 }
 
+#[cfg(test)]
 fn accept_daemon_connection_with<T>(
     interrupted: &AtomicBool,
     mut accept: impl FnMut() -> std::io::Result<T>,
@@ -1035,6 +1048,7 @@ fn serve_requests<S: Read + Write>(
     serve_requests_with_cancellation(engine, config, paths, &mut accept, |_| || false)
 }
 
+#[cfg(test)]
 fn serve_requests_with_cancellation<S: Read + Write, C: FnMut() -> bool>(
     engine: &impl SpeechEngine,
     config: &Config,
@@ -1220,6 +1234,10 @@ fn handle_request_with_cancellation(
                 }
             }
         }
+        Command::Cancel { request_id } => Ok(ResultPayload::Cancelled {
+            request_id,
+            count: 0,
+        }),
         Command::Status => Ok(status_payload(engine, config)),
         Command::Shutdown => Ok(ResultPayload::Shutdown),
     };
@@ -1405,6 +1423,19 @@ fn print_status(config_path: &Path, paths: &AppPaths, as_json: bool) -> Result<(
         println!("stopped");
     }
     Ok(())
+}
+
+fn cancel_request(paths: &AppPaths, request_id: Option<String>) -> Result<()> {
+    let response = try_send_request(
+        &paths.socket(),
+        &Request {
+            protocol: 1,
+            id: self::request_id(),
+            command: Command::Cancel { request_id },
+        },
+    )?
+    .ok_or_else(|| anyhow!("daemon is not running"))?;
+    print_response(response)
 }
 
 fn stop(paths: &AppPaths) -> Result<()> {

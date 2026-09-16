@@ -2486,7 +2486,10 @@ fn runtime_catalog_covers_each_device_matrix_and_back_at_device_picker() {
 
 #[test]
 fn only_engine_loading_commands_require_runtime_path_preparation() {
-    assert!(command_loads_engine(&TopCommand::Daemon));
+    assert!(!command_loads_engine(&TopCommand::Daemon));
+    assert!(!command_loads_engine(&TopCommand::RequestWorker {
+        spec: "{}".into()
+    }));
     assert!(command_loads_engine(&TopCommand::Say(SayArgs {
         text: Some("test".into()),
         voice: None,
@@ -4443,6 +4446,10 @@ fn top_level_online_commands_exchange_protocol_without_loading_an_engine() {
                     backend: json!({"kind": "injected"}),
                 },
                 Command::Shutdown => ResultPayload::Shutdown,
+                Command::Cancel { request_id } => ResultPayload::Cancelled {
+                    request_id,
+                    count: 0,
+                },
             };
             write_response(
                 &mut stream,

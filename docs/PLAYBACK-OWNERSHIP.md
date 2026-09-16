@@ -28,8 +28,8 @@ A CLI test proves the player cannot start before acknowledgement and that an
 older wake daemon's rejection prevents playback. All endpoints and the fake
 player are isolated; no microphone or audio device is used.
 
-This completes the ownership mechanism, not all of S06. Prompt synthesis stop,
-bounded admission/queues, active-request cancellation and crash/queue integration
-still need implementation and acceptance evidence. Acoustic playback echo needs
-real-room validation. The companion changes must be deployed together when
-Omawake is running; no unsafe compatibility fallback is provided.
+The [bounded request lifecycle](REQUEST-LIFECYCLE.md) now adds prompt synthesis
+stop, bounded admission, active/queued cancellation and frozen worker recovery.
+Acoustic playback echo still needs real-room validation. The companion wake
+ownership change is required when Omawake is running; no unsafe compatibility
+fallback is provided.
