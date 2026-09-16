@@ -1,5 +1,7 @@
 #![recursion_limit = "256"]
 
+mod wake_pause;
+
 mod voice_preview;
 
 use std::fs;
@@ -45,6 +47,10 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum TopCommand {
+    #[command(name = "__voice-playback", hide = true)]
+    VoicePlayback {
+        output: PathBuf,
+    },
     #[command(name = "__voice-preview", hide = true)]
     VoicePreview {
         request: String,
@@ -477,6 +483,7 @@ fn run_with_paths_and_prepare(
     prepare(&cli.command, &config_path)?;
     match cli.command {
         TopCommand::VoicePreview { request } => voice_preview::worker(&request),
+        TopCommand::VoicePlayback { output } => play(&output, || false),
         TopCommand::AudioCppProbe { spec } => omaspeak::audio_cpp::run_provider_probe(&spec),
         TopCommand::AudioCppWorker { spec } => omaspeak::audio_cpp::run_worker(&spec),
         TopCommand::InventoryProbe { candidate } => {
@@ -3733,16 +3740,25 @@ impl std::fmt::Display for PlaybackCancelled {
 
 impl std::error::Error for PlaybackCancelled {}
 
-fn play(path: &Path, cancelled: impl FnMut() -> bool) -> Result<()> {
+fn play(path: &Path, mut cancelled: impl FnMut() -> bool) -> Result<()> {
+    let pause = wake_pause::WakePause::acquire(&mut cancelled)?;
     play_with(
         path,
         |program, path| {
             let mut command = ProcessCommand::new(program);
             command.arg(path).stdin(Stdio::null());
             configure_child_parent_death(&mut command);
+            if let Some(pause) = &pause {
+                pause.retain_in_player(&mut command);
+            }
             command.spawn()
         },
-        cancelled,
+        || {
+            cancelled()
+                || pause
+                    .as_ref()
+                    .is_some_and(wake_pause::WakePause::disconnected)
+        },
     )
 }
 

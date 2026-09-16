@@ -68,7 +68,7 @@ those inputs, without declaring the first release fully qualified.
 | S02/S03 | Implemented | Complete defaults, compatibility/family checks, stable CLI and scrolling; installed voices support cancellable Space-key preview |
 | S04 | Implemented; final audit pending | Locking, cancellation, disk preflight, license/hash handling and rollback tests; map compiled-cache failure acceptance before closure |
 | S05 | Partial | CPU/GPU/NPU/Vulkan/CUDA evidence at differing depths; GB10 produced 36 valid CUDA WAVs with verified placement; HIP pending |
-| S06 | Next | Audit existing disconnect/playback cancellation and request IDs; close bounded admission, synthesis stop and cross-app ownership gaps |
+| S06 | In progress | [Playback ownership](PLAYBACK-OWNERSHIP.md) implemented for speech and previews; bounded admission, prompt synthesis stop and request cancellation remain |
 | S07–S10 | Queued | Gated streaming, minimal named voices, complete Kokoro, maintenance and qualified language in that order |
 | S11 | Conditional | Search/filter and transfer resume only when catalog/download scale warrants them |
 

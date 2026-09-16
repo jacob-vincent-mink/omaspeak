@@ -1508,3 +1508,64 @@ fn provider_probe_rejects_a_valid_abi_without_the_required_tts_family() {
         stderr(&result)
     );
 }
+
+#[test]
+fn playback_worker_waits_for_owned_pause_and_rejects_an_old_wake_daemon() {
+    use std::io::Read;
+    for accepted in [true, false] {
+        let root = sandbox();
+        let runtime = root.join("run/omawake");
+        fs::create_dir_all(&runtime).unwrap();
+        let listener = UnixListener::bind(runtime.join("control.sock")).unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let output = root.join("sample.wav");
+        let marker = root.join("sample.wav.played");
+        // A silent fake player: no audio device or real daemon is touched.
+        let player = root.join("test-bin/pw-play");
+        fs::write(&player, "#!/bin/sh\n: > \"$1.played\"\n").unwrap();
+        fs::set_permissions(&player, fs::Permissions::from_mode(0o755)).unwrap();
+        let observed = marker.clone();
+        let server = thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            let mut stream = loop {
+                match listener.accept() {
+                    Ok((stream, _)) => break stream,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        assert!(Instant::now() < deadline, "playback worker did not connect");
+                        thread::sleep(Duration::from_millis(10));
+                    }
+                    Err(error) => panic!("accept pause request: {error}"),
+                }
+            };
+            stream
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            let mut request = String::new();
+            BufReader::new(&mut stream).read_line(&mut request).unwrap();
+            let request: serde_json::Value = serde_json::from_str(&request).unwrap();
+            assert_eq!(request["type"], "hold_pause");
+            thread::sleep(Duration::from_millis(100));
+            assert!(
+                !observed.exists(),
+                "player started before pause acknowledgement"
+            );
+            let response = if accepted {
+                serde_json::json!({"protocol":1,"id":request["id"],"type":"state","state":"paused"})
+            } else {
+                serde_json::json!({"protocol":1,"id":request["id"],"type":"error","code":"invalid_request","message":"unknown hold_pause"})
+            };
+            writeln!(stream, "{response}").unwrap();
+            assert_eq!(stream.read(&mut [0]).unwrap(), 0, "hold was not released");
+        });
+        let result = run(&root, &["__voice-playback", output.to_str().unwrap()]);
+        server.join().unwrap();
+        assert_eq!(
+            result.status.success(),
+            accepted,
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        assert_eq!(marker.exists(), accepted);
+        fs::remove_dir_all(root).unwrap();
+    }
+}
