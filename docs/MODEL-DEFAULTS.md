@@ -93,3 +93,7 @@ open; this does not promote additional hardware or expressive model families.
 Model setup now starts on an enabled compatible row when the previous model is
 incompatible with a newly selected runtime. Disabled and out-of-range selections
 are rejected before voice selection or installation. CLI catalog output is unchanged.
+
+[GB10 CUDA corpus results](../benchmarks/results/2026-09-16-cuda/RESULTS.md)
+add current-code ARM64/CUDA file synthesis, independent transcription, memory and
+whole-GPU telemetry. HIP remains pending because no test hardware is available.

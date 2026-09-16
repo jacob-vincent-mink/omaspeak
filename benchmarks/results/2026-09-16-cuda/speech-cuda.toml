@@ -1,0 +1,32 @@
+[backend]
+kind = "audiocpp"
+runtime = "cuda"
+device = "gpu"
+threads = 2
+fallback = "error"
+device_id = 0
+library_dirs = ["/tmp/omaspeak-cuda-proof.mMSyuK/audio.cpp-build/bin"]
+library = "/tmp/omaspeak-cuda-proof.mMSyuK/audio.cpp-build/bin/libaudiocpp.so.0.1.0"
+
+[backend.options]
+
+[model]
+family = "supertonic"
+name = "supertonic-3-gguf"
+directory = "/tmp/omaspeak-rc3-cuda-final/data/omaspeak/models/supertonic-3-gguf"
+file = "supertonic-3-orig.gguf"
+duration_predictor = ""
+text_encoder = ""
+vector_estimator = ""
+vocoder = ""
+tts_json = ""
+unicode_indexer = ""
+voice_style = ""
+language = "en"
+steps = 8
+voice = 0
+
+[model.options]
+
+[daemon]
+max_text_bytes = 65536

@@ -1,0 +1,74 @@
+[
+  {
+    "case": "notification",
+    "voice": "M1",
+    "expected": "Your build finished. All tests passed.",
+    "transcript": "Your build finished. All tests passed."
+  },
+  {
+    "case": "notification",
+    "voice": "F1",
+    "expected": "Your build finished. All tests passed.",
+    "transcript": "Your build finished, all tests passed."
+  },
+  {
+    "case": "reply",
+    "voice": "M1",
+    "expected": "I found the configuration file. I can apply the change and show you the result.",
+    "transcript": "I found the configuration file. I can apply the change and show you the result."
+  },
+  {
+    "case": "reply",
+    "voice": "F1",
+    "expected": "I found the configuration file. I can apply the change and show you the result.",
+    "transcript": "I found the configuration file. I can apply the change and show you the result."
+  },
+  {
+    "case": "numbers",
+    "voice": "M1",
+    "expected": "The meeting starts at 9:30 a.m. on September 15. The total is 123 dollars and 45 cents.",
+    "transcript": "The meeting starts at 9.30 a.m. on September 15. The total is $123.45."
+  },
+  {
+    "case": "numbers",
+    "voice": "F1",
+    "expected": "The meeting starts at 9:30 a.m. on September 15. The total is 123 dollars and 45 cents.",
+    "transcript": "The meeting starts at 9.30 a.m. on September 15. The total is $123.45."
+  },
+  {
+    "case": "names-acronyms",
+    "voice": "M1",
+    "expected": "Jacob opened GitHub, checked the API response, and restarted Omaspeak.",
+    "transcript": "Jacob opened GitHub, checked the API response, and restarted Omispeak."
+  },
+  {
+    "case": "names-acronyms",
+    "voice": "F1",
+    "expected": "Jacob opened GitHub, checked the API response, and restarted Omaspeak.",
+    "transcript": "Jacob opened GitHub, checked the API response, and restarted Omispeak."
+  },
+  {
+    "case": "punctuation",
+    "voice": "M1",
+    "expected": "Ready? Yes! First, save your work; then close the window. That's all.",
+    "transcript": "Ready? Yes. First, save your work, then close the window. That's all."
+  },
+  {
+    "case": "punctuation",
+    "voice": "F1",
+    "expected": "Ready? Yes! First, save your work; then close the window. That's all.",
+    "transcript": "Ready? Yes. First, save your work. Then close the window. That's all."
+  },
+  {
+    "case": "long-reply",
+    "voice": "M1",
+    "expected": "The update is ready for review. I checked the configuration, selected a compatible model, and verified every downloaded file. The service will keep the selected voice available for the next request. If a download fails, your current settings remain available. You can inspect the model details before switching to another voice. The summary includes the source of the model, its download size, and the devices that have been tested. Review those details when you are ready, and keep using the current setup until the new one has passed its checks.",
+    "transcript": "The update is ready for review. I checked the configuration, selected a compatible model, and verified every downloaded file. The service will keep the selected voice available for the next request. If a download fails, your current settings remain available. You can inspect the model details before switching to another voice. The summary includes the source of the model, its download size, and the devices that have been tested. Review those details when you are ready.\nand keep using the current setup until the new one has passed its checks."
+  },
+  {
+    "case": "long-reply",
+    "voice": "F1",
+    "expected": "The update is ready for review. I checked the configuration, selected a compatible model, and verified every downloaded file. The service will keep the selected voice available for the next request. If a download fails, your current settings remain available. You can inspect the model details before switching to another voice. The summary includes the source of the model, its download size, and the devices that have been tested. Review those details when you are ready, and keep using the current setup until the new one has passed its checks.",
+    "transcript": "The update is ready for review. I checked the configuration, selected a compatible model, and verified every downloaded file. The service will keep the selected voice available for the next request. If a download fails, your current settings remain available. You can inspect the model details before switching to another voice. The summary includes the source of the model, its download size, and the devices that have been tested. Review those details when you are ready.\nand keep using the current setup until the new one has passed its checks."
+  }
+]

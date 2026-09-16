@@ -1,0 +1,541 @@
+{
+  "schema_version": 1,
+  "status": "measurement-only; listening and regression comparison required",
+  "binary_sha256": "bf73a0312c5e74c7fdc47cea17b7983daab60d718e82bd8c4356ae0e2354191f",
+  "variants": {
+    "candidate": "bf73a0312c5e74c7fdc47cea17b7983daab60d718e82bd8c4356ae0e2354191f"
+  },
+  "config_sha256": "37784dfd7d46a7892731760a90b3d6a28af14952de0d676e372c4f462721f360",
+  "corpus_sha256": "0b48abbb4896ba33df4602b85890652994d0ad1759faed5fb4c0a4031be15bb7",
+  "corpus_id": "model-defaults-english-v1",
+  "measurements": [
+    {
+      "variant": "candidate",
+      "run": 0,
+      "case": "notification",
+      "voice": "M1",
+      "backend": {
+        "effective_runtime": "cuda",
+        "fallback_used": false,
+        "kind": "audiocpp",
+        "model": "supertonic-3-gguf",
+        "placement_evidence": "audio.cpp accepted the requested backend while creating the model session",
+        "placement_verified": true,
+        "requested_device": "gpu",
+        "requested_runtime": "cuda"
+      },
+      "load_ms": 3516,
+      "summary": {
+        "p50_elapsed_milliseconds": 43.345684000000006,
+        "p50_real_time_factor": 0.01338811467272045,
+        "p50_synthesis_milliseconds": 42.874147,
+        "p95_elapsed_milliseconds": 56.0383,
+        "p95_real_time_factor": 0.017346903592753486,
+        "p95_synthesis_milliseconds": 55.551787,
+        "samples": 3
+      },
+      "max_process_rss_kib": 600188,
+      "audio": [
+        {
+          "sha256": "cd9944259c5fba415e742f5c67aac3eb4a234b42ba6a4e9caef9c6bbddb7e495",
+          "samples": 141226,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "cd9944259c5fba415e742f5c67aac3eb4a234b42ba6a4e9caef9c6bbddb7e495",
+          "samples": 141226,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "cd9944259c5fba415e742f5c67aac3eb4a234b42ba6a4e9caef9c6bbddb7e495",
+          "samples": 141226,
+          "sample_rate": 44100
+        }
+      ]
+    },
+    {
+      "variant": "candidate",
+      "run": 0,
+      "case": "notification",
+      "voice": "F1",
+      "backend": {
+        "effective_runtime": "cuda",
+        "fallback_used": false,
+        "kind": "audiocpp",
+        "model": "supertonic-3-gguf",
+        "placement_evidence": "audio.cpp accepted the requested backend while creating the model session",
+        "placement_verified": true,
+        "requested_device": "gpu",
+        "requested_runtime": "cuda"
+      },
+      "load_ms": 3232,
+      "summary": {
+        "p50_elapsed_milliseconds": 45.4306,
+        "p50_real_time_factor": 0.014030034866196984,
+        "p50_synthesis_milliseconds": 44.957831,
+        "p95_elapsed_milliseconds": 55.81006,
+        "p95_real_time_factor": 0.01726243747878879,
+        "p95_synthesis_milliseconds": 55.315739,
+        "samples": 3
+      },
+      "max_process_rss_kib": 600308,
+      "audio": [
+        {
+          "sha256": "8fe65799bb072ed2341e6bf99d2f0c279bb8d6f7e2f591feb60e29bc53133a5c",
+          "samples": 141314,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "8fe65799bb072ed2341e6bf99d2f0c279bb8d6f7e2f591feb60e29bc53133a5c",
+          "samples": 141314,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "8fe65799bb072ed2341e6bf99d2f0c279bb8d6f7e2f591feb60e29bc53133a5c",
+          "samples": 141314,
+          "sample_rate": 44100
+        }
+      ]
+    },
+    {
+      "variant": "candidate",
+      "run": 0,
+      "case": "reply",
+      "voice": "M1",
+      "backend": {
+        "effective_runtime": "cuda",
+        "fallback_used": false,
+        "kind": "audiocpp",
+        "model": "supertonic-3-gguf",
+        "placement_evidence": "audio.cpp accepted the requested backend while creating the model session",
+        "placement_verified": true,
+        "requested_device": "gpu",
+        "requested_runtime": "cuda"
+      },
+      "load_ms": 3643,
+      "summary": {
+        "p50_elapsed_milliseconds": 48.761965999999994,
+        "p50_real_time_factor": 0.008751266315738932,
+        "p50_synthesis_milliseconds": 48.056557,
+        "p95_elapsed_milliseconds": 62.198775999999995,
+        "p95_real_time_factor": 0.011197445258610089,
+        "p95_synthesis_milliseconds": 61.489463,
+        "samples": 3
+      },
+      "max_process_rss_kib": 601176,
+      "audio": [
+        {
+          "sha256": "ce1e8f79f80481cac10d9e1355c406d7e453b2938b0b543cf62445196abf4d91",
+          "samples": 242170,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "ce1e8f79f80481cac10d9e1355c406d7e453b2938b0b543cf62445196abf4d91",
+          "samples": 242170,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "ce1e8f79f80481cac10d9e1355c406d7e453b2938b0b543cf62445196abf4d91",
+          "samples": 242170,
+          "sample_rate": 44100
+        }
+      ]
+    },
+    {
+      "variant": "candidate",
+      "run": 0,
+      "case": "reply",
+      "voice": "F1",
+      "backend": {
+        "effective_runtime": "cuda",
+        "fallback_used": false,
+        "kind": "audiocpp",
+        "model": "supertonic-3-gguf",
+        "placement_evidence": "audio.cpp accepted the requested backend while creating the model session",
+        "placement_verified": true,
+        "requested_device": "gpu",
+        "requested_runtime": "cuda"
+      },
+      "load_ms": 3576,
+      "summary": {
+        "p50_elapsed_milliseconds": 48.826478,
+        "p50_real_time_factor": 0.008767212244539168,
+        "p50_synthesis_milliseconds": 48.117084999999996,
+        "p95_elapsed_milliseconds": 63.702523,
+        "p95_real_time_factor": 0.011476393383005212,
+        "p95_synthesis_milliseconds": 62.985882000000004,
+        "samples": 3
+      },
+      "max_process_rss_kib": 601280,
+      "audio": [
+        {
+          "sha256": "372261b845ed8acd1ad86ff0bdb49429a28e795e46051195cc3f19f270640ddf",
+          "samples": 242034,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "372261b845ed8acd1ad86ff0bdb49429a28e795e46051195cc3f19f270640ddf",
+          "samples": 242034,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "372261b845ed8acd1ad86ff0bdb49429a28e795e46051195cc3f19f270640ddf",
+          "samples": 242034,
+          "sample_rate": 44100
+        }
+      ]
+    },
+    {
+      "variant": "candidate",
+      "run": 0,
+      "case": "numbers",
+      "voice": "M1",
+      "backend": {
+        "effective_runtime": "cuda",
+        "fallback_used": false,
+        "kind": "audiocpp",
+        "model": "supertonic-3-gguf",
+        "placement_evidence": "audio.cpp accepted the requested backend while creating the model session",
+        "placement_verified": true,
+        "requested_device": "gpu",
+        "requested_runtime": "cuda"
+      },
+      "load_ms": 3683,
+      "summary": {
+        "p50_elapsed_milliseconds": 57.741567,
+        "p50_real_time_factor": 0.00621996978021978,
+        "p50_synthesis_milliseconds": 56.601725,
+        "p95_elapsed_milliseconds": 74.45624000000001,
+        "p95_real_time_factor": 0.00805506956043956,
+        "p95_synthesis_milliseconds": 73.30113300000001,
+        "samples": 3
+      },
+      "max_process_rss_kib": 602028,
+      "audio": [
+        {
+          "sha256": "b01eedcdb93b113337ea673038bcd13bd9c45a22486392c3739a12b24db7fc00",
+          "samples": 401310,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "b01eedcdb93b113337ea673038bcd13bd9c45a22486392c3739a12b24db7fc00",
+          "samples": 401310,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "b01eedcdb93b113337ea673038bcd13bd9c45a22486392c3739a12b24db7fc00",
+          "samples": 401310,
+          "sample_rate": 44100
+        }
+      ]
+    },
+    {
+      "variant": "candidate",
+      "run": 0,
+      "case": "numbers",
+      "voice": "F1",
+      "backend": {
+        "effective_runtime": "cuda",
+        "fallback_used": false,
+        "kind": "audiocpp",
+        "model": "supertonic-3-gguf",
+        "placement_evidence": "audio.cpp accepted the requested backend while creating the model session",
+        "placement_verified": true,
+        "requested_device": "gpu",
+        "requested_runtime": "cuda"
+      },
+      "load_ms": 3661,
+      "summary": {
+        "p50_elapsed_milliseconds": 59.008994,
+        "p50_real_time_factor": 0.006365557388313739,
+        "p50_synthesis_milliseconds": 57.86768,
+        "p95_elapsed_milliseconds": 76.757125,
+        "p95_real_time_factor": 0.008312187348571975,
+        "p95_synthesis_milliseconds": 75.564003,
+        "samples": 3
+      },
+      "max_process_rss_kib": 602128,
+      "audio": [
+        {
+          "sha256": "d6b96d5a08a0ac060ffa1841ad7d934a6539a9363c582908be48de41b58d8492",
+          "samples": 400902,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "d6b96d5a08a0ac060ffa1841ad7d934a6539a9363c582908be48de41b58d8492",
+          "samples": 400902,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "d6b96d5a08a0ac060ffa1841ad7d934a6539a9363c582908be48de41b58d8492",
+          "samples": 400902,
+          "sample_rate": 44100
+        }
+      ]
+    },
+    {
+      "variant": "candidate",
+      "run": 0,
+      "case": "names-acronyms",
+      "voice": "M1",
+      "backend": {
+        "effective_runtime": "cuda",
+        "fallback_used": false,
+        "kind": "audiocpp",
+        "model": "supertonic-3-gguf",
+        "placement_evidence": "audio.cpp accepted the requested backend while creating the model session",
+        "placement_verified": true,
+        "requested_device": "gpu",
+        "requested_runtime": "cuda"
+      },
+      "load_ms": 3191,
+      "summary": {
+        "p50_elapsed_milliseconds": 50.315857,
+        "p50_real_time_factor": 0.009185717523214508,
+        "p50_synthesis_milliseconds": 49.059855,
+        "p95_elapsed_milliseconds": 66.329137,
+        "p95_real_time_factor": 0.012180598134703591,
+        "p95_synthesis_milliseconds": 65.055166,
+        "samples": 3
+      },
+      "max_process_rss_kib": 601260,
+      "audio": [
+        {
+          "sha256": "26192e560bf5dbf7bcadb60190726c185b37351d75905bc3c5e7cd9ab32bbc8c",
+          "samples": 235533,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "26192e560bf5dbf7bcadb60190726c185b37351d75905bc3c5e7cd9ab32bbc8c",
+          "samples": 235533,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "26192e560bf5dbf7bcadb60190726c185b37351d75905bc3c5e7cd9ab32bbc8c",
+          "samples": 235533,
+          "sample_rate": 44100
+        }
+      ]
+    },
+    {
+      "variant": "candidate",
+      "run": 0,
+      "case": "names-acronyms",
+      "voice": "F1",
+      "backend": {
+        "effective_runtime": "cuda",
+        "fallback_used": false,
+        "kind": "audiocpp",
+        "model": "supertonic-3-gguf",
+        "placement_evidence": "audio.cpp accepted the requested backend while creating the model session",
+        "placement_verified": true,
+        "requested_device": "gpu",
+        "requested_runtime": "cuda"
+      },
+      "load_ms": 3595,
+      "summary": {
+        "p50_elapsed_milliseconds": 49.009007,
+        "p50_real_time_factor": 0.00904756272942101,
+        "p50_synthesis_milliseconds": 48.292238000000005,
+        "p95_elapsed_milliseconds": 64.618013,
+        "p95_real_time_factor": 0.011970034177773531,
+        "p95_synthesis_milliseconds": 63.891211000000006,
+        "samples": 3
+      },
+      "max_process_rss_kib": 601192,
+      "audio": [
+        {
+          "sha256": "308ee9568ce955a71d3e39a312a8c7dec30bc6fd28a568e683735accf2340170",
+          "samples": 235388,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "308ee9568ce955a71d3e39a312a8c7dec30bc6fd28a568e683735accf2340170",
+          "samples": 235388,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "308ee9568ce955a71d3e39a312a8c7dec30bc6fd28a568e683735accf2340170",
+          "samples": 235388,
+          "sample_rate": 44100
+        }
+      ]
+    },
+    {
+      "variant": "candidate",
+      "run": 0,
+      "case": "punctuation",
+      "voice": "M1",
+      "backend": {
+        "effective_runtime": "cuda",
+        "fallback_used": false,
+        "kind": "audiocpp",
+        "model": "supertonic-3-gguf",
+        "placement_evidence": "audio.cpp accepted the requested backend while creating the model session",
+        "placement_verified": true,
+        "requested_device": "gpu",
+        "requested_runtime": "cuda"
+      },
+      "load_ms": 3498,
+      "summary": {
+        "p50_elapsed_milliseconds": 48.211053,
+        "p50_real_time_factor": 0.007756428838119949,
+        "p50_synthesis_milliseconds": 47.381579,
+        "p95_elapsed_milliseconds": 60.289861,
+        "p95_real_time_factor": 0.00973331132289995,
+        "p95_synthesis_milliseconds": 59.457731,
+        "samples": 3
+      },
+      "max_process_rss_kib": 601176,
+      "audio": [
+        {
+          "sha256": "74586e8a92348bcd88ac2b1433e186b6e3697a07e80a0479f544e1ca06be6088",
+          "samples": 269393,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "74586e8a92348bcd88ac2b1433e186b6e3697a07e80a0479f544e1ca06be6088",
+          "samples": 269393,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "74586e8a92348bcd88ac2b1433e186b6e3697a07e80a0479f544e1ca06be6088",
+          "samples": 269393,
+          "sample_rate": 44100
+        }
+      ]
+    },
+    {
+      "variant": "candidate",
+      "run": 0,
+      "case": "punctuation",
+      "voice": "F1",
+      "backend": {
+        "effective_runtime": "cuda",
+        "fallback_used": false,
+        "kind": "audiocpp",
+        "model": "supertonic-3-gguf",
+        "placement_evidence": "audio.cpp accepted the requested backend while creating the model session",
+        "placement_verified": true,
+        "requested_device": "gpu",
+        "requested_runtime": "cuda"
+      },
+      "load_ms": 3636,
+      "summary": {
+        "p50_elapsed_milliseconds": 56.857422,
+        "p50_real_time_factor": 0.009077502297208048,
+        "p50_synthesis_milliseconds": 55.420107,
+        "p95_elapsed_milliseconds": 69.335382,
+        "p95_real_time_factor": 0.011122469942264542,
+        "p95_synthesis_milliseconds": 67.905075,
+        "samples": 3
+      },
+      "max_process_rss_kib": 600872,
+      "audio": [
+        {
+          "sha256": "ca264332ba629612b1e200f439f0a4979666ef26ba716240c40a2e08b3dbcd99",
+          "samples": 269240,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "ca264332ba629612b1e200f439f0a4979666ef26ba716240c40a2e08b3dbcd99",
+          "samples": 269240,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "ca264332ba629612b1e200f439f0a4979666ef26ba716240c40a2e08b3dbcd99",
+          "samples": 269240,
+          "sample_rate": 44100
+        }
+      ]
+    },
+    {
+      "variant": "candidate",
+      "run": 0,
+      "case": "long-reply",
+      "voice": "M1",
+      "backend": {
+        "effective_runtime": "cuda",
+        "fallback_used": false,
+        "kind": "audiocpp",
+        "model": "supertonic-3-gguf",
+        "placement_evidence": "audio.cpp accepted the requested backend while creating the model session",
+        "placement_verified": true,
+        "requested_device": "gpu",
+        "requested_runtime": "cuda"
+      },
+      "load_ms": 3703,
+      "summary": {
+        "p50_elapsed_milliseconds": 184.817797,
+        "p50_real_time_factor": 0.005125778339929563,
+        "p50_synthesis_milliseconds": 180.600349,
+        "p95_elapsed_milliseconds": 221.76294099999998,
+        "p95_real_time_factor": 0.006175765722142433,
+        "p95_synthesis_milliseconds": 217.595333,
+        "samples": 3
+      },
+      "max_process_rss_kib": 662232,
+      "audio": [
+        {
+          "sha256": "0263af2bf25de88e4cf9b9b751a925386d3e6d0cb370064743bf90f4979d75e7",
+          "samples": 1553808,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "0263af2bf25de88e4cf9b9b751a925386d3e6d0cb370064743bf90f4979d75e7",
+          "samples": 1553808,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "0263af2bf25de88e4cf9b9b751a925386d3e6d0cb370064743bf90f4979d75e7",
+          "samples": 1553808,
+          "sample_rate": 44100
+        }
+      ]
+    },
+    {
+      "variant": "candidate",
+      "run": 0,
+      "case": "long-reply",
+      "voice": "F1",
+      "backend": {
+        "effective_runtime": "cuda",
+        "fallback_used": false,
+        "kind": "audiocpp",
+        "model": "supertonic-3-gguf",
+        "placement_evidence": "audio.cpp accepted the requested backend while creating the model session",
+        "placement_verified": true,
+        "requested_device": "gpu",
+        "requested_runtime": "cuda"
+      },
+      "load_ms": 3259,
+      "summary": {
+        "p50_elapsed_milliseconds": 187.644474,
+        "p50_real_time_factor": 0.0052130394680716206,
+        "p50_synthesis_milliseconds": 183.488114,
+        "p95_elapsed_milliseconds": 226.49415000000002,
+        "p95_real_time_factor": 0.006317797556451499,
+        "p95_synthesis_milliseconds": 222.373294,
+        "samples": 3
+      },
+      "max_process_rss_kib": 662316,
+      "audio": [
+        {
+          "sha256": "767641738dc17f9a285fec884ea73f69d401cec79a76b0df6a3ecfb9743bd500",
+          "samples": 1552228,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "767641738dc17f9a285fec884ea73f69d401cec79a76b0df6a3ecfb9743bd500",
+          "samples": 1552228,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "767641738dc17f9a285fec884ea73f69d401cec79a76b0df6a3ecfb9743bd500",
+          "samples": 1552228,
+          "sample_rate": 44100
+        }
+      ]
+    }
+  ]
+}
