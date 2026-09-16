@@ -57,8 +57,9 @@ those inputs, without declaring the first release fully qualified.
   playback/TV/music recordings with labels and provenance.
 - A controlled measurement window and readable energy counters for attributed
   resource/power comparisons. Shared-host GPU telemetry is not application power.
-- A selected language and suitable independent evaluation/listening data before
-  promoting the first non-English profile. No blanket multilingual claim.
+- Spanish is selected by the maintainer for the first non-English profile in
+  both apps. Independent Spanish wake recordings and listening evaluation remain
+  required before promotion. No blanket multilingual claim.
 
 ## Omaspeak acceptance status
 
@@ -66,7 +67,7 @@ those inputs, without declaring the first release fully qualified.
 |---|---|---|
 | S01 | Partial | Versioned English corpus, matched seed output, independent transcripts and listening packs; human ratings and controlled resource gates remain open |
 | S02/S03 | Implemented | Complete defaults, compatibility/family checks, stable CLI and scrolling; installed voices support cancellable Space-key preview |
-| S04 | Implemented; final audit pending | Locking, cancellation, disk preflight, license/hash handling and rollback tests; map compiled-cache failure acceptance before closure |
+| S04 | Implemented; acceptance mapped | [Installer audit](INSTALLER-PROTECTIONS.md) maps fresh setup, failed cache/probe, corruption, cancellation, lock and disk-budget checks; documented limits remain |
 | S05 | Partial | CPU/GPU/NPU/Vulkan/CUDA evidence at differing depths; GB10 produced 36 valid CUDA WAVs with verified placement; HIP pending |
 | S06 | In progress | [Playback ownership](PLAYBACK-OWNERSHIP.md) implemented for speech and previews; bounded admission, prompt synthesis stop and request cancellation remain |
 | S07–S10 | Queued | Gated streaming, minimal named voices, complete Kokoro, maintenance and qualified language in that order |

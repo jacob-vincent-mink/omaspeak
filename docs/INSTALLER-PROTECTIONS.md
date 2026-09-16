@@ -50,3 +50,22 @@ license and activation tests continue to cover the transaction boundaries.
 The TUI now uses the same isolated family-aware probe as runtime CLI setup.
 A file named `libaudiocpp.so` is no longer treated as a ready provider merely
 because it exists.
+
+## Acceptance audit, 2026-09-16
+
+The current failure tests were inspected, not just counted. The lifecycle-branch
+full suite also ran these tests successfully. S04's implementation checks map to:
+
+| Boundary | Existing acceptance evidence |
+|---|---|
+| Fresh setup | `fresh_full_setup_stages_audio_cpp_cpu_and_gguf_together` exercises coherent provider/model selection before activation |
+| Failed installed-model proof | `installed_model_with_failed_provider_proof_keeps_active_config_unchanged` checks original config bytes and explicit installed-but-not-activated remediation |
+| Failed cache compilation | `setup_precompile_failure_leaves_config_launcher_and_service_untouched` injects an NPU compile failure and asserts unchanged config with no launcher or restart call |
+| Later setup failures | `setup_transaction_restores_existing_and_new_configs_on_late_failures` covers config restoration/removal; separate tests cover concurrent rollback errors |
+| Corrupt downloads/cache | `tests/unit/setup_model.rs` verifies size/hash limits before publication, partial cleanup and replacement of corrupt reusable cache |
+| Competing installs, cancellation, disk budget | `tests/unit/install_guard.rs` checks lock exclusion/reuse, owned staging cleanup, original asset preservation, insufficient space/overflow and real signal cancellation |
+
+This closes the acceptance mapping for implemented S04 protections. Injected
+failures establish transaction ordering; they do not simulate every driver or
+mid-compilation disk failure. Unknown compiled-cache sizing and forced-kill debris
+remain the documented limits above, rather than claims of completed features.
