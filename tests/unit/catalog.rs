@@ -208,7 +208,7 @@ fn kokoro_model_is_pinned_and_audiocpp_compatible() {
     assert_eq!(KOKORO_VOICE_IDS.len(), 54);
     assert_eq!(
         spec.voices.iter().map(|v| v.name).collect::<Vec<_>>(),
-        KOKORO_VOICE_IDS.iter().copied().collect::<Vec<_>>()
+        KOKORO_VOICE_IDS.to_vec()
     );
     let file = &spec.files[0];
     assert_eq!(file.size, 189_611_360);
