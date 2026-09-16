@@ -1,5 +1,7 @@
 #![recursion_limit = "256"]
 
+mod voice_preview;
+
 use std::fs;
 use std::io::{BufRead, BufReader, IsTerminal, Read, Write};
 use std::os::fd::{AsRawFd, RawFd};
@@ -43,6 +45,10 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum TopCommand {
+    #[command(name = "__voice-preview", hide = true)]
+    VoicePreview {
+        request: String,
+    },
     #[command(name = "__audiocpp-probe", hide = true)]
     AudioCppProbe {
         #[arg(long)]
@@ -278,6 +284,24 @@ trait SetupSelector {
         preferred: usize,
     ) -> Result<Option<usize>>;
 
+    #[allow(clippy::too_many_arguments)]
+    fn select_voice(
+        &mut self,
+        items: &[MenuItem],
+        preferred: usize,
+        _candidate: &Config,
+        _paths: &AppPaths,
+        _voices: &[omaspeak::voices::Voice],
+        _installed: bool,
+    ) -> Result<Option<usize>> {
+        self.select(
+            "Omaspeak voice",
+            "Choose the default speaker.",
+            items,
+            preferred,
+        )
+    }
+
     fn input(&mut self, _title: &str, _help: &str) -> Result<Option<String>> {
         Ok(Some(String::new()))
     }
@@ -330,6 +354,35 @@ impl SetupSelector for TerminalSetupSelector {
         preferred: usize,
     ) -> Result<Option<usize>> {
         app_setup::wizard::select(title, help, items, preferred)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn select_voice(
+        &mut self,
+        items: &[MenuItem],
+        preferred: usize,
+        candidate: &Config,
+        paths: &AppPaths,
+        voices: &[omaspeak::voices::Voice],
+        installed: bool,
+    ) -> Result<Option<usize>> {
+        let mut preview = voice_preview::VoicePreview::new(
+            candidate.clone(),
+            paths.clone(),
+            voices.iter().map(|v| v.id).collect(),
+            installed,
+        );
+        app_setup::wizard::select_with_preview(
+            "Omaspeak voice",
+            if installed {
+                "Space play/stop sample · Enter choose voice"
+            } else {
+                "Install the model to preview · Enter choose voice"
+            },
+            items,
+            preferred,
+            &mut preview,
+        )
     }
 
     fn input(&mut self, title: &str, help: &str) -> Result<Option<String>> {
@@ -438,6 +491,7 @@ fn run_with_paths_and_prepare(
     let config_path = select_config_path(cli.config, paths);
     prepare(&cli.command, &config_path)?;
     match cli.command {
+        TopCommand::VoicePreview { request } => voice_preview::worker(&request),
         TopCommand::AudioCppProbe { spec } => omaspeak::audio_cpp::run_provider_probe(&spec),
         TopCommand::AudioCppWorker { spec } => omaspeak::audio_cpp::run_worker(&spec),
         TopCommand::InventoryProbe { candidate } => {
@@ -2246,7 +2300,7 @@ fn guided_full_setup_with_validator(
     };
     let spec = operations.resolve(&model)?;
     let installed = operations.verify(paths, spec).is_ok();
-    let Some(voice) = choose_voice(config_path, paths, spec, installed, selector)? else {
+    let Some(voice) = choose_voice_for_config(&candidate, paths, spec, installed, selector)? else {
         println!("Setup cancelled.");
         return Ok(());
     };
@@ -2992,6 +3046,16 @@ fn choose_voice(
     selector: &mut impl SetupSelector,
 ) -> Result<Option<omaspeak::voices::Voice>> {
     let current = app_setup::load_config(config_path)?;
+    choose_voice_for_config(&current, paths, spec, installed, selector)
+}
+
+fn choose_voice_for_config(
+    current: &Config,
+    paths: &AppPaths,
+    spec: &omaspeak::catalog::ModelSpec,
+    installed: bool,
+    selector: &mut impl SetupSelector,
+) -> Result<Option<omaspeak::voices::Voice>> {
     let mut candidate = current.clone();
     spec.activate(&mut candidate);
     let voices = if installed {
@@ -3020,12 +3084,8 @@ fn choose_voice(
             )
         })
         .collect::<Vec<_>>();
-    let selected = selector.select(
-        "Omaspeak voice",
-        "Choose the default speaker. `omaspeak say --voice ID` can override it per request.",
-        &items,
-        preferred,
-    )?;
+    let selected =
+        selector.select_voice(&items, preferred, &candidate, paths, &voices, installed)?;
     Ok(selected.map(|index| voices[index].clone()))
 }
 

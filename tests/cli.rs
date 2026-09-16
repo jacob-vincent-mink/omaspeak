@@ -1442,3 +1442,31 @@ fn systemd_lifecycle_uses_user_manager_and_propagates_failures() {
             .success()
     );
 }
+
+#[cfg(target_os = "linux")]
+#[test]
+fn voice_preview_worker_uses_candidate_voice_without_contacting_the_daemon() {
+    let root = sandbox();
+    let library = build_audio_cpp_stub(&root);
+    let mut config = audio_cpp_stub_config(&root, library, "supertonic.gguf");
+    config.model.voice = 5;
+    let paths = omaspeak::paths::AppPaths {
+        config_file: root.join("untouched.toml"),
+        data_dir: root.join("data"),
+        cache_dir: root.join("cache"),
+        state_dir: root.join("state"),
+        runtime_dir: root.join("run"),
+    };
+    fs::create_dir_all(&paths.runtime_dir).unwrap();
+    let listener = UnixListener::bind(paths.socket()).unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let output = root.join("preview.wav");
+    let request =
+        serde_json::json!({"config": config, "paths": paths, "output": output}).to_string();
+    let result = run(&root, &["__voice-preview", &request]);
+    assert!(result.status.success(), "{}", stderr(&result));
+    assert!(hound::WavReader::open(&output).unwrap().duration() > 0);
+    assert!(listener.accept().is_err());
+    assert!(!paths.config_file.exists());
+    assert!(!paths.state_dir.join("last.wav").exists());
+}

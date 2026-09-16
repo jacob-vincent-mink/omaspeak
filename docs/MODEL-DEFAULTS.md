@@ -49,5 +49,32 @@ underrun and cancellation budgets; this slice adds no streaming claim.
 
 The corpus establishes reproducible inputs; listening, multilingual coverage,
 repeated performance/memory runs and additional device evidence remain S01/S05
-work. S03 provider-family discovery and larger-list UI, and S04 installer
+work. S03 provider-family discovery, and S04 installer
 locking/cancellation/disk preflight, remain separate implementation slices.
+
+## Setup list and voice auditions (S03)
+
+The terminal list now tracks its height as well as its width, keeps the
+highlighted row visible, and shows a position counter. Arrow keys move through
+the list; terminal resizing recalculates the viewport. Noninteractive catalog
+output is unchanged.
+
+In `omaspeak setup model`, choose an installed model to open its voice list.
+Press **Space** to play or stop a sample of the highlighted voice; **Enter**
+chooses it and **Escape** cancels. Moving to another voice stops the previous
+sample. Full setup previews the pending runtime selection. Models awaiting
+installation show an install-first message; preview never downloads assets or
+accepts a model license on the user's behalf.
+
+A preview uses the verified installed assets, a fixed short English sentence,
+and the selected runtime with fallback disabled. Preparation and playback run
+outside the TUI and remain cancellable. Private temporary WAVs are removed on
+completion, cancellation or error. A 120-second bound covers preparation and
+playback. Preview does not submit to or stop the daemon, save configuration,
+replace `last.wav`, or activate a voice. Playback uses `pw-play`, falling back
+to `aplay` when the first executable cannot be started. Errors stay in the list.
+
+[Preview smoke evidence](../benchmarks/results/voice-preview/RESULTS.md) records
+real OpenVINO CPU synthesis through the TUI with a silent test player.
+Provider-family discovery and additional installer protections remain pending;
+this is the list-navigation portion of S03 plus the requested preset audition.
