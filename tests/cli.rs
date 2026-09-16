@@ -1724,16 +1724,11 @@ fn daemon_bounds_queue_and_cancels_stalled_synthesis_without_publishing_output()
     assert!(
         matches!(receive(&mut overflow).result, ResultPayload::Error { code, .. } if code == "busy")
     );
-    let mut cancel_queued = send(
-        "cancel-q0",
-        omaspeak::protocol::Command::Cancel {
-            request_id: Some("q0".into()),
-        },
-    );
-    assert!(matches!(
-        receive(&mut cancel_queued).result,
-        ResultPayload::Cancelled { count: 1, .. }
-    ));
+    let cancel_queued = run(&root, &["cancel", "q0"]);
+    assert!(cancel_queued.status.success(), "{}", stderr(&cancel_queued));
+    let cancelled: serde_json::Value = serde_json::from_slice(&cancel_queued.stdout).unwrap();
+    assert_eq!(cancelled["count"], 1);
+    assert_eq!(cancelled["request_id"], "q0");
     assert!(
         matches!(receive(&mut queued[0]).result, ResultPayload::Error { code, .. } if code == "cancelled")
     );
@@ -1744,14 +1739,11 @@ fn daemon_bounds_queue_and_cancels_stalled_synthesis_without_publishing_output()
     )
     .unwrap();
     let began = Instant::now();
-    let mut cancel_active = send(
-        "cancel-active",
-        omaspeak::protocol::Command::Cancel { request_id: None },
-    );
-    assert!(matches!(
-        receive(&mut cancel_active).result,
-        ResultPayload::Cancelled { count: 1, .. }
-    ));
+    let cancel_active = run(&root, &["cancel"]);
+    assert!(cancel_active.status.success(), "{}", stderr(&cancel_active));
+    let cancelled: serde_json::Value = serde_json::from_slice(&cancel_active.stdout).unwrap();
+    assert_eq!(cancelled["count"], 1);
+    assert!(cancelled["request_id"].is_null());
     assert!(
         began.elapsed() < Duration::from_secs(1),
         "cancellation waited for native synthesis"
