@@ -97,3 +97,6 @@ are rejected before voice selection or installation. CLI catalog output is uncha
 [GB10 CUDA corpus results](../benchmarks/results/2026-09-16-cuda/RESULTS.md)
 add current-code ARM64/CUDA file synthesis, independent transcription, memory and
 whole-GPU telemetry. HIP remains pending because no test hardware is available.
+
+[Completion tracker](COMPLETION.md) records the approved remaining sequence,
+current acceptance status and external evidence gates.
