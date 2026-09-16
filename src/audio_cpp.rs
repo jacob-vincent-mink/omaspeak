@@ -1173,7 +1173,9 @@ pub fn run_provider_probe(spec_json: &str) -> Result<()> {
     disable_core_dumps()?;
     let spec: ProviderProbeSpec =
         serde_json::from_str(spec_json).context("decode audio.cpp provider probe spec")?;
-    Api::load(&spec.library).map(|_| ())
+    let api = Api::load(&spec.library)?;
+    crate::provider_families::require(&api._library, &["supertonic"])?;
+    Ok(())
 }
 
 /// Disable core collection before a hidden process touches optional native code.

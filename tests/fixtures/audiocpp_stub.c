@@ -52,6 +52,11 @@ int audiocpp_registry_create(const char *path, void **registry) {
     *registry = calloc(1, 1);
     return *registry ? 0 : 1;
 }
+size_t audiocpp_registry_family_count(const void *registry) { (void)registry; return 1; }
+int audiocpp_registry_family(const void *registry, size_t index, const char **out) {
+    (void)registry; static const char *names[] = {"supertonic"};
+    if (index >= 1) return 1; *out = names[index]; return 0;
+}
 void audiocpp_registry_free(void *registry) { free(registry); }
 
 int audiocpp_model_load(void *registry, const char *path,

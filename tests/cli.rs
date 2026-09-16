@@ -1470,3 +1470,41 @@ fn voice_preview_worker_uses_candidate_voice_without_contacting_the_daemon() {
     assert!(!paths.config_file.exists());
     assert!(!paths.state_dir.join("last.wav").exists());
 }
+
+#[cfg(target_os = "linux")]
+#[test]
+fn provider_probe_rejects_a_valid_abi_without_the_required_tts_family() {
+    let root = sandbox();
+    let source = root.join("wrong-family.c");
+    let stub = fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/audiocpp_stub.c"),
+    )
+    .unwrap();
+    fs::write(
+        &source,
+        stub.replace(
+            "static const char *names[] = {\"supertonic\"}",
+            "static const char *names[] = {\"unrelated\"}",
+        ),
+    )
+    .unwrap();
+    let library = root.join("wrong-family.so");
+    assert!(
+        Command::new("cc")
+            .args(["-shared", "-fPIC"])
+            .arg(source)
+            .arg("-o")
+            .arg(&library)
+            .status()
+            .unwrap()
+            .success()
+    );
+    let spec = serde_json::json!({"library": library, "library_dirs": [root]}).to_string();
+    let result = run(&root, &["__audiocpp-probe", "--spec", &spec]);
+    assert!(!result.status.success());
+    assert!(
+        stderr(&result).contains("missing required model family supertonic"),
+        "{}",
+        stderr(&result)
+    );
+}

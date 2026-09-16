@@ -323,21 +323,6 @@ impl SetupSelector for TerminalSetupSelector {
         config: &Config,
         path: &Path,
     ) -> Result<omaspeak::runtime_inventory::Probe> {
-        if config.backend.kind == "audiocpp" {
-            let library = omaspeak::audio_cpp::discover_provider_library(config, path)?
-                .context("audio.cpp provider was not found")?;
-            return Ok(omaspeak::runtime_inventory::Probe {
-                ready: true,
-                loadable: true,
-                device_accessible: Some(true),
-                evidence: omaspeak::runtime_inventory::Evidence {
-                    versions: vec![format!("audio.cpp provider {}", library.display())],
-                    provider_path: Some(library),
-                    ..Default::default()
-                },
-                errors: Vec::new(),
-            });
-        }
         omaspeak::runtime_inventory::apply_with(
             config,
             path,

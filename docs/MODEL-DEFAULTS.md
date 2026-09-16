@@ -49,8 +49,8 @@ underrun and cancellation budgets; this slice adds no streaming claim.
 
 The corpus establishes reproducible inputs; listening, multilingual coverage,
 repeated performance/memory runs and additional device evidence remain S01/S05
-work. S03 provider-family discovery, and S04 installer
-locking/cancellation/disk preflight, remain separate implementation slices.
+work. Provider-family checks and installer locking/cancellation/disk preflight are
+now documented in [installer protections](INSTALLER-PROTECTIONS.md).
 
 ## Setup list and voice auditions (S03)
 
@@ -76,5 +76,11 @@ to `aplay` when the first executable cannot be started. Errors stay in the list.
 
 [Preview smoke evidence](../benchmarks/results/voice-preview/RESULTS.md) records
 real OpenVINO CPU synthesis through the TUI with a silent test player.
-Provider-family discovery and additional installer protections remain pending;
-this is the list-navigation portion of S03 plus the requested preset audition.
+This is the list-navigation portion of S03 plus the requested preset audition.
+The subsequent family checks and installer guards complement this flow.
+
+## Subsequent implementation
+
+See [provider and installer boundaries](INSTALLER-PROTECTIONS.md) for the next
+implemented slice, its tests and remaining limits. See also the
+[corpus measurements](../benchmarks/results/2026-09-16-model-corpus/RESULTS.md).

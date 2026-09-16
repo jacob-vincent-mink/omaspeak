@@ -1,0 +1,91 @@
+{
+  "asr": "whisper.cpp 1.9.3 Base.en CPU",
+  "asr_model_sha256": "a03779c86df3323075f5e796cb2ce5029f00ec8869eee3fdfb897afe36c6d002",
+  "status": "independent ASR spot check; not listening or voice-similarity qualification",
+  "cases": [
+    {
+      "case": "notification",
+      "voice": "M1",
+      "expected": "Your build finished. All tests passed.",
+      "transcribed": "Your build finished. All tests passed.",
+      "audio_sha256": "21920d355bcfbda621cd17f9efd33c27da9b01a819fe6fa079b2053f644ed8c5"
+    },
+    {
+      "case": "notification",
+      "voice": "F1",
+      "expected": "Your build finished. All tests passed.",
+      "transcribed": "Your build finished. All tests passed.",
+      "audio_sha256": "6919c6c0be092272c1f70e1b9cfb1291e916668b79d80f025a118f63e8e6516e"
+    },
+    {
+      "case": "reply",
+      "voice": "M1",
+      "expected": "I found the configuration file. I can apply the change and show you the result.",
+      "transcribed": "I found the configuration file. I can apply the change and show you the result.",
+      "audio_sha256": "02732e6b44ee707abfc3d2a6db71582e03d2da056ac9cf39b1101d3877d3eaae"
+    },
+    {
+      "case": "reply",
+      "voice": "F1",
+      "expected": "I found the configuration file. I can apply the change and show you the result.",
+      "transcribed": "I found the configuration file. I can apply the change and show you the result.",
+      "audio_sha256": "4d3c1c08fc192482c332ccb14229e8f2c221f08d3ba8b3538712413e7a8c6324"
+    },
+    {
+      "case": "numbers",
+      "voice": "M1",
+      "expected": "The meeting starts at 9:30 a.m. on September 15. The total is 123 dollars and 45 cents.",
+      "transcribed": "The meeting starts at 9.30 a.m. on September 15. The total is $123.45.",
+      "audio_sha256": "057275d2224eebd51d1b719ce52c943488d85ed8e347e8e1b316ae31cc388004"
+    },
+    {
+      "case": "numbers",
+      "voice": "F1",
+      "expected": "The meeting starts at 9:30 a.m. on September 15. The total is 123 dollars and 45 cents.",
+      "transcribed": "The meeting starts at 9.30 a.m. on September 15. The total is $123.45.",
+      "audio_sha256": "470633544b5cbd98a443ddad19d2438dcd6f5cc7c7dd0ed451a34dc7c04566c6"
+    },
+    {
+      "case": "names-acronyms",
+      "voice": "M1",
+      "expected": "Jacob opened GitHub, checked the API response, and restarted Omaspeak.",
+      "transcribed": "Jacob opened GitHub, checked the API response, and restarted ALMA speak.",
+      "audio_sha256": "971d7d88d13f396f6f266d34565db04402a89ec696038f24e5a10b6dbcaf89f2"
+    },
+    {
+      "case": "names-acronyms",
+      "voice": "F1",
+      "expected": "Jacob opened GitHub, checked the API response, and restarted Omaspeak.",
+      "transcribed": "Jacob opened GitHub, checked the API response, and restarted Omah speak.",
+      "audio_sha256": "b2a15892b68c2851c0cc0102a72a9af2897ba9343b3d9f348c9b8c4a77679ca5"
+    },
+    {
+      "case": "punctuation",
+      "voice": "M1",
+      "expected": "Ready? Yes! First, save your work; then close the window. That's all.",
+      "transcribed": "Ready? Yes. First, save your work. Then close the window. That's all.",
+      "audio_sha256": "1e7529f789192f165b8875fff6173624045103c972b8295e042bba0f45050ece"
+    },
+    {
+      "case": "punctuation",
+      "voice": "F1",
+      "expected": "Ready? Yes! First, save your work; then close the window. That's all.",
+      "transcribed": "Ready? Yes. First, save your work. Then close the window. That's all.",
+      "audio_sha256": "a95503e343ed61b9b7f1d9299de7869678255b7b861cef5b3d500fee24d8110e"
+    },
+    {
+      "case": "long-reply",
+      "voice": "M1",
+      "expected": "The update is ready for review. I checked the configuration, selected a compatible model, and verified every downloaded file. The service will keep the selected voice available for the next request. If a download fails, your current settings remain available. You can inspect the model details before switching to another voice. The summary includes the source of the model, its download size, and the devices that have been tested. Review those details when you are ready, and keep using the current setup until the new one has passed its checks.",
+      "transcribed": "The update is ready for review. I checked the configuration, selected a compatible model, and verified every downloaded file. The service will keep the selected voice available for the next request. If a download fails, your current settings remain available. You can inspect the model details before switching to another voice. The summary includes the source of the model, its download size, and the devices that have been tested.\nReview those details when you are ready, and keep using the current setup until the new one has passed its checks.",
+      "audio_sha256": "a881d3a16e147cbb769482755474213dd1ca6e940e4017abc16ebbb518aa9ea0"
+    },
+    {
+      "case": "long-reply",
+      "voice": "F1",
+      "expected": "The update is ready for review. I checked the configuration, selected a compatible model, and verified every downloaded file. The service will keep the selected voice available for the next request. If a download fails, your current settings remain available. You can inspect the model details before switching to another voice. The summary includes the source of the model, its download size, and the devices that have been tested. Review those details when you are ready, and keep using the current setup until the new one has passed its checks.",
+      "transcribed": "The update is ready for review. I checked the configuration, selected a compatible model, and verified every downloaded file. The service will keep the selected voice available for the next request. If a download fails, your current settings remain available. You can inspect the model details before switching to another voice. The summary includes the source of the model, its download size, and the devices that have been tested.\nReview those details when you are ready, and keep using the current setup until the new one has passed its checks.",
+      "audio_sha256": "e26e5355d25463f092c51494a32bf4e6d306c861daa441b2fdd0eabf00eb8adc"
+    }
+  ]
+}

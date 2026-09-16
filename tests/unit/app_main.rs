@@ -1897,11 +1897,12 @@ fn native_provider_helpers_cover_setup_defaults_and_custom_models() {
     let mut config = Config::default();
     config.backend.library = Some(provider.canonicalize().unwrap());
 
-    let probe = TerminalSetupSelector
-        .probe_runtime(&config, &paths.config_file)
-        .unwrap();
-    assert!(probe.ready);
-    assert!(probe.evidence.versions[0].contains("libaudiocpp"));
+    // A file with the right basename is not evidence of a runnable provider.
+    assert!(
+        TerminalSetupSelector
+            .probe_runtime(&config, &paths.config_file)
+            .is_err()
+    );
 
     pin_audio_cpp_library(&mut config, &paths.config_file).unwrap();
     assert!(config.backend.library.as_deref().unwrap().is_file());

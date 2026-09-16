@@ -1,3 +1,4 @@
+mod install_guard;
 pub mod menu;
 pub mod model;
 pub mod systemd;

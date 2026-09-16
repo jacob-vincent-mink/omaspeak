@@ -1,3 +1,4 @@
+use super::install_guard::{self, InstallGuard};
 use std::fs::{self, File};
 use std::io::{BufReader, BufWriter, Read, Write};
 use std::path::{Component, Path, PathBuf};
@@ -52,6 +53,7 @@ pub fn install(
     progress: ProgressFormat,
     accepted_license: Option<&str>,
 ) -> Result<PathBuf> {
+    let mut guard = InstallGuard::acquire(&paths.data_dir, spec.id)?;
     let target = model_directory(paths, spec);
     if verify_directory(&target, spec).is_ok() {
         emit(progress, "already-installed", spec, None, None, None)?;
@@ -62,11 +64,25 @@ pub fn install(
     let models = paths.data_dir.join("models");
     fs::create_dir_all(&models)?;
     fs::create_dir_all(paths.data_dir.join("downloads"))?;
+    let downloads = paths.data_dir.join("downloads").join(spec.id);
+    let missing = if source_override.is_some() {
+        0
+    } else {
+        spec.files
+            .iter()
+            .filter(|file| {
+                verify_pinned_file(&downloads.join(file.path), file.size, file.sha256).is_err()
+            })
+            .map(|file| file.size)
+            .sum()
+    };
+    install_guard::preflight(&models, &downloads, spec.download_size(), missing)?;
     let staging = models.join(format!(".{}.install-{}", spec.id, std::process::id()));
     if staging.exists() {
         fs::remove_dir_all(&staging)?;
     }
     fs::create_dir_all(&staging)?;
+    guard.staging(&staging);
 
     let prepared = (|| -> Result<()> {
         match source_override {
@@ -86,6 +102,7 @@ pub fn install(
     if old.exists() {
         fs::remove_dir_all(&old)?;
     }
+    install_guard::check_cancelled()?;
     if target.exists() {
         fs::rename(&target, &old)?;
     }
@@ -188,7 +205,7 @@ fn copy_verified(source: &Path, target: &Path, file: &ModelFile) -> Result<()> {
     let part = parent.join(format!(".{name}.part-{}", std::process::id()));
     let _ = fs::remove_file(&part);
     let copied = (|| -> Result<()> {
-        fs::copy(source, &part)?;
+        install_guard::copy(source, &part)?;
         verify_pinned_file(&part, file.size, file.sha256)?;
         fs::rename(&part, target)?;
         Ok(())
@@ -243,7 +260,11 @@ fn download_file(
         Some(0),
         Some(file.size),
     )?;
-    let response = ureq::get(file.url)
+    let response = ureq::AgentBuilder::new()
+        .timeout_connect(std::time::Duration::from_secs(10))
+        .timeout_read(std::time::Duration::from_secs(5))
+        .build()
+        .get(file.url)
         .call()
         .with_context(|| format!("download {} from {}", file.path, file.url))?;
     let result =
@@ -270,6 +291,7 @@ fn write_pinned_download(
     let mut reported = 0_u64;
     let mut buffer = [0_u8; 128 * 1024];
     loop {
+        install_guard::check_cancelled()?;
         let count = input.read(&mut buffer)?;
         if count == 0 {
             break;
@@ -507,6 +529,7 @@ fn sha256_file(path: &Path) -> Result<String> {
     let mut hasher = Sha256::new();
     let mut buffer = [0_u8; 128 * 1024];
     loop {
+        install_guard::check_cancelled()?;
         let count = input.read(&mut buffer)?;
         if count == 0 {
             break;
