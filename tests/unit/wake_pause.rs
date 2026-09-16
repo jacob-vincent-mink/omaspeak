@@ -73,3 +73,68 @@ fn rejects_unowned_pause_acknowledgement() {
     server.join().unwrap();
     fs::remove_dir_all(directory).unwrap();
 }
+
+#[test]
+fn lost_malformed_and_oversized_pause_replies_fail_without_an_owner() {
+    for payload in [b"".to_vec(), b"not-json\n".to_vec(), vec![b'x'; 65_537]] {
+        let (directory, listener) = listener("bad-reply");
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = String::new();
+            BufReader::new(&mut stream).read_line(&mut request).unwrap();
+            let _ = stream.write_all(&payload);
+        });
+        assert!(WakePause::acquire_at(&directory.join("control.sock"), &mut || false).is_err());
+        server.join().unwrap();
+        fs::remove_dir_all(directory).unwrap();
+    }
+    let (directory, _listener) = listener("not-socket");
+    assert!(WakePause::acquire_at(&directory.join("x".repeat(200)), &mut || false).is_err());
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn waiting_for_pause_is_cancellable_and_closes_the_pending_connection() {
+    let (directory, listener) = listener("cancel-wait");
+    let server = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        let mut request = String::new();
+        BufReader::new(&mut stream).read_line(&mut request).unwrap();
+        assert_eq!(stream.read(&mut [0]).unwrap(), 0);
+    });
+    let started = Instant::now();
+    let error = WakePause::acquire_at(&directory.join("control.sock"), &mut || {
+        started.elapsed() > Duration::from_millis(50)
+    })
+    .err()
+    .unwrap();
+    assert!(error.downcast_ref::<PlaybackCancelled>().is_some());
+    assert!(started.elapsed() < Duration::from_secs(1));
+    server.join().unwrap();
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn a_silent_wake_daemon_cannot_hold_playback_preparation_forever() {
+    let (directory, listener) = listener("deadline");
+    let server = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let mut request = String::new();
+        BufReader::new(&mut stream).read_line(&mut request).unwrap();
+        assert_eq!(stream.read(&mut [0]).unwrap(), 0);
+    });
+    let started = Instant::now();
+    let error = WakePause::acquire_at(&directory.join("control.sock"), &mut || false)
+        .err()
+        .unwrap();
+    assert!(error.to_string().contains("within 3 seconds"));
+    assert!(started.elapsed() < Duration::from_secs(5));
+    server.join().unwrap();
+    fs::remove_dir_all(directory).unwrap();
+}
