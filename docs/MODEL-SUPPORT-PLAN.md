@@ -5,13 +5,21 @@ audio.cpp `e9ff20042ec85af960a720368c6927cda19ad65f`. This is an assessment and
 implementation plan, not a provider/model rollout. No candidate models were
 downloaded or benchmarked, and user configuration was not changed.
 
+## Review order and scope
+
+Read [PRIORITIES.md](PRIORITIES.md) first for the ranked backlog, dependencies,
+release cuts, deferred experiments and recommended explicit declines. It
+supersedes the ordering below. This assessment preserves the technical research;
+a capability appearing here is not a commitment to implement it.
+
 ## Recommendation
 
 Retain Supertonic 3 as the working default across existing backends. Generalize
 the audio.cpp adapter and voice representation, add Kokoro for preset-voice
-choice, then Qwen3 CustomVoice/Base/VoiceDesign for expressive speech, cloning
-and designed voices. Evaluate PocketTTS as a smaller cloning option after its
-artifact and voice licensing/access requirements are resolved.
+choice. Prioritize responsive playback and cancellation before advanced voice
+features. Qwen3 CustomVoice and Base are optional experiments for delivery style
+and cloning; defer VoiceDesign, PocketTTS and broader authoring features under
+the scope decisions in PRIORITIES.md.
 
 For OpenVINO, preserve the existing official Supertonic ONNX path. Intel's
 Kokoro IR is the strongest next investigation; downloadable Qwen3 IR is useful
@@ -135,7 +143,11 @@ be separate tools without expanding the ordinary `say` flow.
 
 ## Request and voice design
 
-Introduce `SynthesisRequest` with text, language, named voice/profile, speaking
+The full optional design is described here for review, not for up-front
+implementation. Initially add only text, language, preset voice and rate; add
+reference/style fields only if their corresponding experiments are promoted.
+
+A later `SynthesisRequest` could include text, language, named voice/profile, speaking
 rate, optional instruction/style, optional reference audio/transcript, seed and
 bounded generation options. Resolve it into a typed family adapter. Keep
 Supertonic's steps/language handling in its adapter rather than sending its
@@ -154,7 +166,8 @@ Migrate existing numeric voice IDs through the selected Supertonic profile
 (0 -> M1, etc.). Do not reinterpret `0` as a different speaker after a model
 switch. Persist a compatible default and make the new voice visible in setup.
 
-Illustrative future commands, not implemented by this plan:
+Illustrative future commands, not implemented by this plan; clone/style remain
+optional and the design command is deferred:
 
 ```text
 omaspeak voices list --model kokoro-82m-q8
@@ -169,7 +182,7 @@ to populate setup: use catalog metadata, then probe only the selected model.
 Voice previews and cloning must not leave old request conditioning in the next
 request. Measure first-audio latency separately from total generation time.
 
-## Implementation sequence and acceptance
+## Technical implementation notes (subject to priorities)
 
 1. **Catalog and provider discovery.** Implement the shared contract, default
    coverage and filtered setup. Expand the packaged provider only for families
