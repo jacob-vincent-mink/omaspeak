@@ -456,6 +456,7 @@ fn socket_client_sends_newline_delimited_request_and_decodes_response() {
                     protocol: 1,
                     id: incoming.id,
                     result: ResultPayload::Status {
+                        audio: serde_json::Value::Null,
                         running: true,
                         pid: 42,
                         model: "test-model".into(),
@@ -2405,7 +2406,7 @@ fn top_level_guide_routes_every_choice_and_rejects_invalid_selection() {
             .iter()
             .map(|item| item.label.as_str())
             .collect::<Vec<_>>(),
-        ["Full setup", "Runtime", "Model", "Check"]
+        ["Full setup", "Runtime", "Model", "Check", "Audio"]
     );
 
     for selections in [
@@ -4430,6 +4431,7 @@ fn top_level_online_commands_exchange_protocol_without_loading_an_engine() {
                     synthesis_milliseconds: 2,
                 },
                 Command::Status => ResultPayload::Status {
+                    audio: serde_json::Value::Null,
                     running: true,
                     pid: 42,
                     model: "fixture".into(),
@@ -4603,4 +4605,37 @@ fn default_setup_selector_and_accept_wrapper_cover_production_boundaries() {
     drop(connector.join().unwrap());
 
     let _ = is_interactive_terminal();
+}
+
+#[test]
+fn unavailable_audio_does_not_block_file_synthesis_or_look_like_an_inference_error() {
+    let root = sandbox();
+    let paths = paths(&root);
+    let mut config = Config::default();
+    config.audio.device = "pipewire:".into();
+    let engine = FakeEngine {
+        fail: false,
+        runtime: Runtime::Default,
+    };
+    for no_play in [true, false] {
+        let response = handle_request(
+            &engine,
+            &config,
+            &paths,
+            request(Command::Say {
+                text: "hello".into(),
+                speed: 1.0,
+                voice: 0,
+                output: None,
+                no_play,
+            }),
+        );
+        if no_play {
+            assert!(matches!(response.result, ResultPayload::Synthesis { .. }));
+        } else {
+            assert!(
+                matches!(response.result, ResultPayload::Error { code, .. } if code == "audio")
+            );
+        }
+    }
 }
