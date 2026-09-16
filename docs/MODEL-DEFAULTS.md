@@ -84,3 +84,8 @@ The subsequent family checks and installer guards complement this flow.
 See [provider and installer boundaries](INSTALLER-PROTECTIONS.md) for the next
 implemented slice, its tests and remaining limits. See also the
 [corpus measurements](../benchmarks/results/2026-09-16-model-corpus/RESULTS.md).
+
+[Paired release-build and NPU evidence](../benchmarks/results/2026-09-16-qualification/RESULTS.md)
+adds three comparison rounds, broader NPU synthesis, process-group memory and a
+reproducible blinded listening pack. Human ratings and power qualification remain
+open; this does not promote additional hardware or expressive model families.

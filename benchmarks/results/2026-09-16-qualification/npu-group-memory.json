@@ -1,0 +1,48 @@
+{
+  "command": [
+    "env",
+    "XDG_CACHE_HOME=/home/jacob/src/github.com/jacob-vincent-mink/.qualification/20260916/npu-cache",
+    "XDG_STATE_HOME=/home/jacob/src/github.com/jacob-vincent-mink/.qualification/20260916/npu-state",
+    "XDG_RUNTIME_DIR=/home/jacob/src/github.com/jacob-vincent-mink/.qualification/20260916/npu-run",
+    "taskset",
+    "-c",
+    "4,5",
+    "../.qualification/20260916/bin/omaspeak-candidate",
+    "--config",
+    "../.qualification/20260916/speech-npu.toml",
+    "benchmark",
+    "--text",
+    "The update is ready for review. I checked the configuration, selected a compatible model, and verified every downloaded file. The service will keep the selected voice available for the next request. If a download fails, your current settings remain available. You can inspect the model details before switching to another voice. The summary includes the source of the model, its download size, and the devices that have been tested. Review those details when you are ready, and keep using the current setup until the new one has passed its checks.",
+    "--voice",
+    "M1",
+    "--out-dir",
+    "../.qualification/20260916/speech-npu-group-audio",
+    "--warmup",
+    "1",
+    "--iterations",
+    "3"
+  ],
+  "sample_period_seconds": 0.2,
+  "power": {
+    "status": "unavailable",
+    "reason": "[Errno 13] Permission denied: '/sys/class/powercap/intel-rapl:0/energy_uj'"
+  },
+  "peak_group_rss_bytes": 1407569920,
+  "peak_group_members": 1,
+  "rss_definition": "sum of resident pages across the process group; shared pages may be counted twice",
+  "initial_load_average": [
+    6.18017578125,
+    5.92724609375,
+    4.962890625
+  ],
+  "wall_seconds": 5.314939617004711,
+  "exit_code": 0,
+  "user_cpu_seconds": 1.259131,
+  "system_cpu_seconds": 1.390037,
+  "max_process_rss_kib": 1564276,
+  "final_load_average": [
+    6.7265625,
+    6.044921875,
+    5.00634765625
+  ]
+}
