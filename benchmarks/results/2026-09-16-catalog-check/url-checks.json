@@ -1,0 +1,110 @@
+[
+  {
+    "model": "supertonic-3-gguf",
+    "asset": "supertonic-3-orig.gguf",
+    "url": "https://huggingface.co/audio-cpp/audio.cpp-gguf/resolve/09fe073ba154561f4474162e8bd4ab233a848eca/Supertonic-3-GGUF/supertonic-3-orig.gguf?download=true",
+    "status": "ok"
+  },
+  {
+    "model": "supertonic-3-openvino",
+    "asset": "onnx/duration_predictor.onnx",
+    "url": "https://huggingface.co/supertone-oss-archive/supertonic-3/resolve/aafc6e32416a594460b32413efc49d7fe4ce6d46/onnx/duration_predictor.onnx?download=true",
+    "status": "ok"
+  },
+  {
+    "model": "supertonic-3-openvino",
+    "asset": "onnx/text_encoder.onnx",
+    "url": "https://huggingface.co/supertone-oss-archive/supertonic-3/resolve/aafc6e32416a594460b32413efc49d7fe4ce6d46/onnx/text_encoder.onnx?download=true",
+    "status": "ok"
+  },
+  {
+    "model": "supertonic-3-openvino",
+    "asset": "onnx/vector_estimator.onnx",
+    "url": "https://huggingface.co/supertone-oss-archive/supertonic-3/resolve/aafc6e32416a594460b32413efc49d7fe4ce6d46/onnx/vector_estimator.onnx?download=true",
+    "status": "ok"
+  },
+  {
+    "model": "supertonic-3-openvino",
+    "asset": "onnx/vocoder.onnx",
+    "url": "https://huggingface.co/supertone-oss-archive/supertonic-3/resolve/aafc6e32416a594460b32413efc49d7fe4ce6d46/onnx/vocoder.onnx?download=true",
+    "status": "ok"
+  },
+  {
+    "model": "supertonic-3-openvino",
+    "asset": "onnx/tts.json",
+    "url": "https://huggingface.co/supertone-oss-archive/supertonic-3/resolve/aafc6e32416a594460b32413efc49d7fe4ce6d46/onnx/tts.json?download=true",
+    "status": "ok"
+  },
+  {
+    "model": "supertonic-3-openvino",
+    "asset": "onnx/unicode_indexer.json",
+    "url": "https://huggingface.co/supertone-oss-archive/supertonic-3/resolve/aafc6e32416a594460b32413efc49d7fe4ce6d46/onnx/unicode_indexer.json?download=true",
+    "status": "ok"
+  },
+  {
+    "model": "supertonic-3-openvino",
+    "asset": "voice_styles/M1.json",
+    "url": "https://huggingface.co/supertone-oss-archive/supertonic-3/resolve/aafc6e32416a594460b32413efc49d7fe4ce6d46/voice_styles/M1.json?download=true",
+    "status": "ok"
+  },
+  {
+    "model": "supertonic-3-openvino",
+    "asset": "voice_styles/M2.json",
+    "url": "https://huggingface.co/supertone-oss-archive/supertonic-3/resolve/aafc6e32416a594460b32413efc49d7fe4ce6d46/voice_styles/M2.json?download=true",
+    "status": "ok"
+  },
+  {
+    "model": "supertonic-3-openvino",
+    "asset": "voice_styles/M3.json",
+    "url": "https://huggingface.co/supertone-oss-archive/supertonic-3/resolve/aafc6e32416a594460b32413efc49d7fe4ce6d46/voice_styles/M3.json?download=true",
+    "status": "ok"
+  },
+  {
+    "model": "supertonic-3-openvino",
+    "asset": "voice_styles/M4.json",
+    "url": "https://huggingface.co/supertone-oss-archive/supertonic-3/resolve/aafc6e32416a594460b32413efc49d7fe4ce6d46/voice_styles/M4.json?download=true",
+    "status": "ok"
+  },
+  {
+    "model": "supertonic-3-openvino",
+    "asset": "voice_styles/M5.json",
+    "url": "https://huggingface.co/supertone-oss-archive/supertonic-3/resolve/aafc6e32416a594460b32413efc49d7fe4ce6d46/voice_styles/M5.json?download=true",
+    "status": "ok"
+  },
+  {
+    "model": "supertonic-3-openvino",
+    "asset": "voice_styles/F1.json",
+    "url": "https://huggingface.co/supertone-oss-archive/supertonic-3/resolve/aafc6e32416a594460b32413efc49d7fe4ce6d46/voice_styles/F1.json?download=true",
+    "status": "ok"
+  },
+  {
+    "model": "supertonic-3-openvino",
+    "asset": "voice_styles/F2.json",
+    "url": "https://huggingface.co/supertone-oss-archive/supertonic-3/resolve/aafc6e32416a594460b32413efc49d7fe4ce6d46/voice_styles/F2.json?download=true",
+    "status": "ok"
+  },
+  {
+    "model": "supertonic-3-openvino",
+    "asset": "voice_styles/F3.json",
+    "url": "https://huggingface.co/supertone-oss-archive/supertonic-3/resolve/aafc6e32416a594460b32413efc49d7fe4ce6d46/voice_styles/F3.json?download=true",
+    "status": "ok"
+  },
+  {
+    "model": "supertonic-3-openvino",
+    "asset": "voice_styles/F4.json",
+    "url": "https://huggingface.co/supertone-oss-archive/supertonic-3/resolve/aafc6e32416a594460b32413efc49d7fe4ce6d46/voice_styles/F4.json?download=true",
+    "status": "ok"
+  },
+  {
+    "model": "supertonic-3-openvino",
+    "asset": "voice_styles/F5.json",
+    "url": "https://huggingface.co/supertone-oss-archive/supertonic-3/resolve/aafc6e32416a594460b32413efc49d7fe4ce6d46/voice_styles/F5.json?download=true",
+    "status": "ok"
+  },
+  {
+    "model": "kokoro-82m-gguf",
+    "asset": "kokoro-82m-q8_0.gguf",
+    "url": "https://huggingface.co/audio-cpp/audio.cpp-gguf/resolve/1b13cd58245c74e3ff4ca06925766c5ef7991bd4/Kokoro-82M-GGUF/kokoro-82m-q8_0.gguf?download=true",
+    "status": "ok"
+  }
+]

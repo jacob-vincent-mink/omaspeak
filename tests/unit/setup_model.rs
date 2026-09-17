@@ -608,3 +608,112 @@ fn a_second_installer_cannot_replace_an_active_profile() {
     install(&app, spec, Some(&source), ProgressFormat::Human, None).unwrap();
     verify(&app, spec).unwrap();
 }
+
+#[test]
+fn url_checks_report_ok_mismatch_and_unreachable_without_writes() {
+    let probes: &mut dyn FnMut(&str) -> std::result::Result<u64, String> = &mut |url: &str| {
+        if url.contains("supertonic-3-orig.gguf") {
+            Ok(454_072_836)
+        } else if url.contains("/onnx/") {
+            Err("request failed: connection refused".into())
+        } else {
+            Ok(1)
+        }
+    };
+    let checks = check_urls_with(None, probes);
+    let mut seen = 0;
+    for spec in crate::catalog::models() {
+        seen += spec.files.len();
+    }
+    assert_eq!(checks.len(), seen);
+    let ok = checks.iter().find(|check| check.status == "ok").unwrap();
+    assert!(ok.detail.is_none());
+    assert!(ok.url.contains("https://"));
+    let mismatch = checks
+        .iter()
+        .find(|check| check.status == "size-mismatch")
+        .unwrap();
+    assert!(mismatch.detail.as_deref().unwrap().contains("pinned size"));
+    let unreachable = checks
+        .iter()
+        .find(|check| check.status == "unreachable")
+        .unwrap();
+    assert!(
+        unreachable
+            .detail
+            .as_deref()
+            .unwrap()
+            .contains("connection refused")
+    );
+}
+
+#[test]
+fn url_prefix_replaces_the_origin_and_keeps_the_path() {
+    let checks = check_urls_with(Some("http://127.0.0.1:9"), &mut |_url| Ok(0));
+    assert!(!checks.is_empty());
+    assert!(
+        checks
+            .iter()
+            .all(|check| check.url.starts_with("http://127.0.0.1:9/"))
+    );
+    assert!(
+        checks
+            .iter()
+            .all(|check| !check.url.contains("huggingface.co"))
+    );
+    let checks = check_urls_with(Some("http://127.0.0.1:9"), &mut |_url| Ok(0));
+    assert!(checks.iter().all(|check| !check.url.contains("//9")));
+}
+
+#[test]
+fn verify_pinned_file_diagnostics_name_expected_and_actual_values() {
+    let dir = temp("verify-diagnostics");
+    let path = dir.join("asset.bin");
+    fs::write(&path, b"short").unwrap();
+    let size_error = verify_pinned_file(&path, 10, &digest(b"short"))
+        .err()
+        .unwrap()
+        .to_string();
+    assert!(
+        size_error.contains("expected 10 bytes, found 5"),
+        "{size_error}"
+    );
+    fs::write(&path, [0_u8; 10]).unwrap();
+    let digest_error = verify_pinned_file(&path, 10, &digest(b"other"))
+        .err()
+        .unwrap()
+        .to_string();
+    assert!(digest_error.contains("checksum mismatch"), "{digest_error}");
+    assert!(digest_error.contains("expected") && digest_error.contains("found"));
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn url_check_reports_render_json_and_human_rows() {
+    let mut buffer: Vec<u8> = Vec::new();
+    let checks = check_urls_with(None, &mut |url| {
+        if url.ends_with("one") {
+            Ok(2)
+        } else {
+            Err("connection refused".into())
+        }
+    });
+    write_url_checks(&checks, &mut buffer, true).unwrap();
+    let parsed: serde_json::Value = serde_json::from_slice(&buffer).unwrap();
+    assert!(parsed.is_array());
+    buffer.clear();
+    write_url_checks(&checks, &mut buffer, false).unwrap();
+    let human = String::from_utf8(buffer).unwrap();
+    assert!(human.contains("unreachable: "));
+    assert!(human.contains("connection refused"));
+}
+
+#[test]
+fn rewritten_url_leaves_non_http_urls_untouched() {
+    let checks = check_urls_with(Some("http://127.0.0.1:9"), &mut |_url| Ok(0));
+    assert!(
+        checks
+            .iter()
+            .any(|check| check.url.starts_with("http://127.0.0.1:9/"))
+    );
+}
