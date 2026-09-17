@@ -1,6 +1,6 @@
 [package]
 name = "omaspeak"
-version = "0.0.2-rc.2"
+version = "0.0.2"
 edition = "2024"
 description = "Local Supertonic text-to-speech CLI and daemon with runtime-selectable inference backends"
 license = "MIT"

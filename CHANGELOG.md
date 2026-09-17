@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.0.2-rc.2 - 2026-09-17
+## 0.0.2 - 2026-09-17
 
 - Pin Kokoro 82M as a second speech family: 54 named voices plus legacy
   numeric IDs, 24 kHz output, fresh-install proof with activation rollback,
@@ -14,6 +14,8 @@
   retention failed the buffering gate); the offline path is unchanged.
 - Prove wake ownership through speech: speech and previews cannot retrigger
   wake actions, and playback cancellation releases ownership.
+- `status --json` reports the same `backend.requests` shape with and without a
+  running daemon; the stopped daemon no longer reports null.
 
 - Add persistent audio-device selection, PipeWire discovery, Audio setup and
   model-free device tests, dynamic schema choices, and routing diagnostics.
