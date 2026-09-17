@@ -66,10 +66,13 @@ those inputs, without declaring the first release fully qualified.
 |---|---|---|
 | S01 | Partial | Versioned English corpus, matched seed output, independent transcripts and listening packs; human ratings and controlled resource gates remain open |
 | S02/S03 | Implemented | Complete defaults, compatibility/family checks, stable CLI and scrolling; installed voices support cancellable Space-key preview |
-| S04 | Implemented; final audit pending | Locking, cancellation, disk preflight, license/hash handling and rollback tests; map compiled-cache failure acceptance before closure |
+| S04 | Implemented; final audit closed (2026-09-16) | Locking, cancellation, disk preflight, license/hash handling and rollback tests; `setup check` maps an unready NPU cache to a remediation row (tested both states), `setup cache --prepare` guards wrong runtimes, compiler failures carry the retry guidance, and activation-proof failures map to complete-provider acceptance |
 | S05 | Partial | CPU/GPU/NPU/Vulkan/CUDA evidence at differing depths; GB10 produced 36 valid CUDA WAVs with verified placement; HIP pending |
-| S06 | Next | Audit existing disconnect/playback cancellation and request IDs; close bounded admission, synthesis stop and cross-app ownership gaps |
-| S07–S10 | Queued | Gated streaming, minimal named voices, complete Kokoro, maintenance and qualified language in that order |
+| S06 | Implemented | Bounded requests, cancellation, request identity and owned playback pauses (PRs #4/#5) |
+| S07 | Deferred at current pin (recorded) | Streaming evaluation retained the offline path; unbounded session retention failed the buffering gate (PR #6) |
+| S08 | Done | Named preset voice selection with legacy numeric identity preserved (PR #7) |
+| S09 | Done, evidence partially open | Kokoro 82M pinned with fresh-install/voice-routing proof and paired latency ([KOKORO.md](KOKORO.md), PR #8); listening pack and human ratings still open |
+| S10 | Done | Catalog URL health check + import diagnostics (PR #9) and the Spanish speech profile proven to reach inference and status ([2026-09-16-spanish](../benchmarks/results/2026-09-16-spanish/RESULTS.md), PR #10) |
 | S11 | Deferred — scale not warranted (recorded 2026-09-16) | Catalog remains 3 curated models (Supertonic GGUF/OpenVINO plus the Kokoro addition) and the largest single artifact is ~454 MB; search/filter controls and transfer-resume stay out until an actual catalog or download-scale need appears. Any future resume work must preserve immutable pins and complete-file hashing with interruption tests |
 
 Current evidence: [defaults and gates](MODEL-DEFAULTS.md),
