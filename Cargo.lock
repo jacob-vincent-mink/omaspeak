@@ -560,7 +560,7 @@ dependencies = [
 
 [[package]]
 name = "omaspeak"
-version = "0.0.1-rc.4"
+version = "0.0.2-rc.1"
 dependencies = [
  "anyhow",
  "clap",
