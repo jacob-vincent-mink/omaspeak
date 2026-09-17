@@ -232,3 +232,30 @@ fn kokoro_model_is_pinned_and_audiocpp_compatible() {
     assert_eq!(config.model.file, "kokoro-82m-q8_0.gguf");
     assert_eq!(config.backend.kind, "audiocpp");
 }
+
+#[test]
+fn kokoro_bundles_the_catalog_managed_espeak_data_package() {
+    let spec = model("kokoro-82m-gguf").unwrap();
+    let espeak = spec
+        .files
+        .iter()
+        .find(|file| file.path == "espeak-ng-data.bin")
+        .expect("espeak data package pinned with the kokoro model");
+    assert_eq!(espeak.size, 18_383_744);
+    assert_eq!(
+        espeak.sha256,
+        "dc913a1bcaf2929fb4f0dcad4260b22b5612b5ed259fa430e5b0feeff8db38cb"
+    );
+    assert!(
+        espeak
+            .url
+            .contains("/releases/download/v0.0.2/espeak-ng-data-1.52.0.bin")
+    );
+    // GPL-3.0 data notice travels with the model license text.
+    let license = crate::catalog::model_license_text(spec).unwrap();
+    assert!(license.contains("Apache-2.0"), "model license present");
+    assert!(
+        license.contains("GNU GENERAL PUBLIC LICENSE"),
+        "gpl data notice present"
+    );
+}

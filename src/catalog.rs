@@ -488,12 +488,24 @@ const OPENVINO_FILES: &[ModelFile] = &[
     },
 ];
 
-const KOKORO_FILES: &[ModelFile] = &[ModelFile {
-    path: "kokoro-82m-q8_0.gguf",
-    url: "https://huggingface.co/audio-cpp/audio.cpp-gguf/resolve/1b13cd58245c74e3ff4ca06925766c5ef7991bd4/Kokoro-82M-GGUF/kokoro-82m-q8_0.gguf?download=true",
-    size: 189_611_360,
-    sha256: "378abf37a0d086774f88e341165a51af631d09452ae37caed5e7cdc34c9889e6",
-}];
+const KOKORO_FILES: &[ModelFile] = &[
+    ModelFile {
+        path: "kokoro-82m-q8_0.gguf",
+        url: "https://huggingface.co/audio-cpp/audio.cpp-gguf/resolve/1b13cd58245c74e3ff4ca06925766c5ef7991bd4/Kokoro-82M-GGUF/kokoro-82m-q8_0.gguf?download=true",
+        size: 189_611_360,
+        sha256: "378abf37a0d086774f88e341165a51af631d09452ae37caed5e7cdc34c9889e6",
+    },
+    // Static phonemizer data package (eSpeak-ng 1.52.0), catalog-managed with
+    // the model: downloaded, size/sha256-verified and installed into the model
+    // directory, where the engine's AUDIOCPP_ESPEAK_DATA override finds it.
+    // eSpeak-ng data is GPL-3.0; its license text ships in MODEL-LICENSE.
+    ModelFile {
+        path: "espeak-ng-data.bin",
+        url: "https://github.com/jacob-vincent-mink/omaspeak/releases/download/v0.0.2/espeak-ng-data-1.52.0.bin",
+        size: 18_383_744,
+        sha256: "dc913a1bcaf2929fb4f0dcad4260b22b5612b5ed259fa430e5b0feeff8db38cb",
+    },
+];
 
 const MODELS: &[ModelSpec] = &[
     ModelSpec {
@@ -582,7 +594,7 @@ const MODELS: &[ModelSpec] = &[
         original_model_source: KOKORO_MODEL_SOURCE,
         original_model_revision: "",
         license_file: "MODEL-LICENSE",
-        license_sha256: "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+        license_sha256: "791a61f7afcb80f050e546b6778b98bb86e5ffe4e096dbeff07691f8999ba0ad",
         model_file: "kokoro-82m-q8_0.gguf",
         duration_predictor: "",
         text_encoder: "",

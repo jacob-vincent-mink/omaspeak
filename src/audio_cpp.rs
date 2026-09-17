@@ -829,6 +829,16 @@ impl WorkerClient {
         let loader_path = std::env::join_paths(&spec.library_dirs)
             .context("encode audio.cpp worker native library path")?;
         command.env("LD_LIBRARY_PATH", loader_path);
+        if spec.family == "kokoro" {
+            // Catalog-managed eSpeak-ng data: installed into the model
+            // directory next to the GGUF, size/sha256-verified with the
+            // model. The engine's phonemizer honors this override before
+            // its executable-relative search, so the data package is
+            // managed with the model it serves.
+            if let Some(directory) = std::path::Path::new(&spec.model).parent() {
+                command.env("AUDIOCPP_ESPEAK_DATA", directory.join("espeak-ng-data.bin"));
+            }
+        }
         #[cfg(target_os = "linux")]
         {
             let parent = std::process::id() as libc::pid_t;
