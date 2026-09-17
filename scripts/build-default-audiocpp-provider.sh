@@ -16,13 +16,18 @@ if [[ "${actual_commit}" != "${AUDIOCPP_COMMIT}" ]]; then
   exit 1
 fi
 
+# The packaged provider must serve every catalog family: Supertonic for the
+# default OpenVINO/NPU pairing and Kokoro 82M (catalog kokoro-82m-gguf) with
+# the statically linked eSpeak-ng phonemizer whose data package ships beside
+# the executable.
 cmake -S "${source_directory}" -B "${build_directory}" \
   -DCMAKE_BUILD_TYPE=Release \
   -DAUDIOCPP_VERSION="${AUDIOCPP_COMMIT:0:7}" \
   -DAUDIOCPP_BUILD_C_API=ON \
   -DAUDIOCPP_DEPLOYMENT_BUILD=OFF \
   -DAUDIOCPP_MODEL_SET=custom \
-  -DAUDIOCPP_MODELS=supertonic \
+  -DAUDIOCPP_MODELS="supertonic;kokoro_tts" \
+  -DAUDIOCPP_STATIC_ESPEAK=ON \
   -DENGINE_ENABLE_NATIVE_CPU=OFF \
   -DENGINE_ENABLE_LLAMAFILE=OFF \
   -DENGINE_ENABLE_OPENMP=ON \
@@ -39,4 +44,7 @@ test -f "${provider}"
 test "$(readelf -d "${provider}" | sed -n 's/.*Library soname: \[\([^]]*\)\].*/\1/p')" = \
   "libaudiocpp.so.0"
 nm -D --defined-only "${provider}" | grep 'audiocpp_abi_version@@AUDIOCPP_0' >/dev/null
+espeak_data="${build_directory}/bin/espeak-ng-data.bin"
+test -s "${espeak_data}"
 printf '%s\n' "${provider}"
+printf '%s\n' "${espeak_data}"

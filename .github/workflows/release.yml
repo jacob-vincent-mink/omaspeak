@@ -54,12 +54,15 @@ jobs:
           build="${RUNNER_TEMP}/audio.cpp-build"
           git clone --filter=blob:none https://github.com/0xShug0/audio.cpp.git "${source}"
           git -C "${source}" checkout "${AUDIOCPP_COMMIT}"
-          provider=$(./scripts/build-default-audiocpp-provider.sh "${source}" "${build}")
+          provider=$(./scripts/build-default-audiocpp-provider.sh "${source}" "${build}" | head -1)
+          espeak_data=$(./scripts/build-default-audiocpp-provider.sh "${source}" "${build}" | tail -1)
+          test "${provider}" != "${espeak_data}"
           strip --strip-unneeded "${provider}"
           test "$(git -C "${source}" rev-parse HEAD)" = "${AUDIOCPP_COMMIT}"
           echo "AUDIOCPP_SOURCE=${source}" >> "${GITHUB_ENV}"
           echo "AUDIOCPP_PROVIDER=${provider}" >> "${GITHUB_ENV}"
           echo "OMASPEAK_TEST_AUDIOCPP_LIBRARY=${provider}" >> "${GITHUB_ENV}"
+          echo "AUDIOCPP_ESPEAK_DATA=${espeak_data}" >> "${GITHUB_ENV}"
 
       - name: Test and build the runtime-neutral executable
         run: |
@@ -85,6 +88,7 @@ jobs:
           cargo about generate about.hbs > "${root}/licenses/RUST-DEPENDENCIES.txt"
           cp target/release/omaspeak "${root}/omaspeak"
           cp "${AUDIOCPP_PROVIDER}" "${root}/lib/libaudiocpp.so.0.1.0"
+          cp "${AUDIOCPP_ESPEAK_DATA}" "${root}/espeak-ng-data.bin"
           ln -s libaudiocpp.so.0.1.0 "${root}/lib/libaudiocpp.so.0"
           ln -s libaudiocpp.so.0 "${root}/lib/libaudiocpp.so"
           while IFS= read -r -d '' license; do
