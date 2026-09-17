@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.0.2-rc.1 - 2026-09-17
+## 0.0.2-rc.2 - 2026-09-17
 
 - Pin Kokoro 82M as a second speech family: 54 named voices plus legacy
   numeric IDs, 24 kHz output, fresh-install proof with activation rollback,
