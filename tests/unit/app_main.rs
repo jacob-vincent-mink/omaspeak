@@ -677,7 +677,7 @@ fn config_helpers_cover_supported_values_defaults_and_schema() {
         .iter()
         .find(|item| item["key"] == "model.family")
         .unwrap();
-    assert_eq!(family["choices"], json!(["supertonic"]));
+    assert_eq!(family["choices"], json!(["supertonic", "kokoro"]));
     assert!(
         description["keys"]
             .as_array()
@@ -3036,7 +3036,7 @@ fn builtin_model_boundaries_and_offline_command_validation_are_actionable() {
     let root = sandbox();
     let paths = paths(&root);
     let spec = BuiltinModels.resolve("supertonic-3-openvino").unwrap();
-    assert_eq!(BuiltinModels.models().len(), 2);
+    assert_eq!(BuiltinModels.models().len(), 3);
     assert!(BuiltinModels.verify(&paths, spec).is_err());
     assert!(
         BuiltinModels

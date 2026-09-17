@@ -46,6 +46,37 @@ fn official_style_directory_provides_stable_voice_ids() {
 }
 
 #[test]
+fn kokoro_inventory_comes_from_the_catalog() {
+    let (mut config, paths) = fixture("kokoro");
+    config.model.family = "kokoro".into();
+    config.model.name = crate::catalog::KOKORO_MODEL_ID.into();
+    config.model.file = "kokoro-82m-q8_0.gguf".into();
+    // Available without an installed model directory (catalog inventory).
+    let voices = available(&config, &paths).unwrap();
+    assert_eq!(voices.len(), 54);
+    assert_eq!(
+        voices[3],
+        Voice {
+            id: 3,
+            name: "af_heart".into()
+        }
+    );
+    // Name and legacy-ID selection both resolve to the same inventory entry.
+    config.model.voice = crate::voices::VoiceSelection::Name("af_heart".into());
+    validate_selected(&config, &voices).unwrap();
+    config.model.voice = crate::voices::VoiceSelection::Legacy(3);
+    validate_selected(&config, &voices).unwrap();
+    // Unknown names and out-of-range legacy IDs are rejected.
+    config.model.voice = crate::voices::VoiceSelection::Name("zz_bogus".into());
+    assert!(validate_selected(&config, &voices).is_err());
+    config.model.voice = crate::voices::VoiceSelection::Legacy(54);
+    assert!(validate_selected(&config, &voices).is_err());
+    // Installed requires the model file to exist.
+    let missing = installed(&config, &paths).unwrap_err();
+    assert!(missing.to_string().contains("not installed"));
+}
+
+#[test]
 fn catalog_inventory_is_available_before_download() {
     let (mut config, paths) = fixture("catalog");
     assert_eq!(
@@ -146,4 +177,34 @@ fn legacy_and_named_presets_preserve_all_supertonic_identities() {
     for invalid in ["true", "1.5", "{}", "null"] {
         assert!(serde_json::from_str::<VoiceSelection>(invalid).is_err());
     }
+}
+
+#[test]
+fn available_reports_missing_catalog_metadata_and_family_errors() {
+    let root = std::env::temp_dir().join(format!(
+        "omaspeak-voices-available-errors-{}",
+        std::process::id()
+    ));
+    let paths = AppPaths {
+        config_file: root.join("config/config.toml"),
+        data_dir: root.join("data"),
+        cache_dir: root.join("cache"),
+        state_dir: root.join("state"),
+        runtime_dir: root.join("run"),
+    };
+    fs::create_dir_all(&root).unwrap();
+    let mut config = Config::default();
+    config.model.family = "kokoro".into();
+    config.model.name = "not-in-catalog".into();
+    let error = available(&config, &paths).unwrap_err().to_string();
+    assert!(error.contains("no catalog voice metadata"), "{error}");
+    config.model.family = "unknown-family".into();
+    config.model.name = "not-in-catalog".into();
+    let error = available(&config, &paths).unwrap_err().to_string();
+    assert!(error.contains("no catalog voice metadata"), "{error}");
+    // A known model without a family still falls back to the catalog inventory.
+    config.model.family = "".to_string();
+    config.model.name = "supertonic-3-gguf".into();
+    assert_eq!(available(&config, &paths).unwrap().len(), 10);
+    fs::remove_dir_all(root).unwrap();
 }

@@ -190,3 +190,45 @@ fn model_activation_resets_foreign_runtime_state_but_preserves_compatible_provid
             .is_none()
     );
 }
+
+#[test]
+fn kokoro_model_is_pinned_and_audiocpp_compatible() {
+    let spec = crate::catalog::model(KOKORO_MODEL_ID).expect("kokoro in catalog");
+    assert_eq!(spec.backend, "audiocpp");
+    assert_eq!(spec.family, "kokoro");
+    assert_eq!(spec.model_file, "kokoro-82m-q8_0.gguf");
+    assert_eq!(spec.license, "Apache-2.0");
+    assert!(!spec.requires_acceptance);
+    assert!(spec.downloadable);
+    assert!(!spec.openvino_capable && !spec.npu_capable);
+    assert_eq!(spec.voices.len(), 54);
+    assert_eq!(spec.voices[3].name, "af_heart");
+    assert_eq!(spec.voices[49].name, "zf_xiaoyi");
+    assert_eq!(spec.voices[53].name, "zm_yunyang");
+    assert_eq!(KOKORO_VOICE_IDS.len(), 54);
+    assert_eq!(
+        spec.voices.iter().map(|v| v.name).collect::<Vec<_>>(),
+        KOKORO_VOICE_IDS.to_vec()
+    );
+    let file = &spec.files[0];
+    assert_eq!(file.size, 189_611_360);
+    assert_eq!(file.sha256.len(), 64);
+    assert!(
+        file.url
+            .contains("1b13cd58245c74e3ff4ca06925766c5ef7991bd4")
+    );
+    assert!(spec.license_sha256.len() == 64);
+    // Family-compatible on the portable audio.cpp runtimes, not on direct OpenVINO.
+    assert!(spec.compatible_with("audiocpp", Runtime::Default, "cpu"));
+    assert!(spec.compatible_with("audiocpp", Runtime::Cuda, "gpu"));
+    assert!(!spec.compatible_with("supertonic", Runtime::Openvino, "cpu"));
+    // License text is embedded and the pin is non-empty.
+    assert!(crate::catalog::model_license_text(spec).is_some());
+    // Activation switches a default config onto the Kokoro profile.
+    let mut config = Config::default();
+    spec.activate(&mut config);
+    assert_eq!(config.model.name, KOKORO_MODEL_ID);
+    assert_eq!(config.model.family, "kokoro");
+    assert_eq!(config.model.file, "kokoro-82m-q8_0.gguf");
+    assert_eq!(config.backend.kind, "audiocpp");
+}

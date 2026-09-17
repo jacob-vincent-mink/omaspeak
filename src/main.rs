@@ -1680,6 +1680,17 @@ fn schema(path: &Path, paths: &AppPaths) -> Result<Value> {
         .filter(|_| named)
         .map(|v| json!(v.name))
         .unwrap_or_else(|| json!(config.model.voice));
+    // Kokoro ignores generation steps; allow 0 for that family.
+    let steps_min = if config.model.family == "kokoro" {
+        0
+    } else {
+        1
+    };
+    let steps_description = if config.model.family == "kokoro" {
+        "Supertonic denoising steps; unused by Kokoro (0)"
+    } else {
+        "Supertonic denoising steps"
+    };
     let voice_choices = voice_inventory.into_iter()
         .map(|voice| json!({"value":if named {json!(voice.name)} else {json!(voice.id)},"label":voice.name}))
         .collect::<Vec<_>>();
@@ -1696,7 +1707,7 @@ fn schema(path: &Path, paths: &AppPaths) -> Result<Value> {
             {"key":"backend.openvino_library","type":"path","section":"Backend","label":"OpenVINO library","description":"Exact OpenVINO C API library","value":config.backend.openvino_library,"file_value":null,"compiled":true,"restart_required":true},
             {"key":"backend.openvino_plugins","type":"path","section":"Backend","label":"OpenVINO plugins","description":"Exact OpenVINO plugins.xml","value":config.backend.openvino_plugins,"file_value":null,"compiled":true,"restart_required":true},
             {"key":"backend.threads","type":"integer","section":"Backend","label":"Threads","description":"Inference threads","value":config.backend.threads,"file_value":null,"compiled":true,"restart_required":true,"min":1,"max":64},
-            {"key":"model.family","type":"enum","section":"Model","label":"Family","description":"TTS model family","value":config.model.family,"file_value":null,"compiled":true,"restart_required":true,"choices":["supertonic"]},
+            {"key":"model.family","type":"enum","section":"Model","label":"Family","description":"TTS model family","value":config.model.family,"file_value":null,"compiled":true,"restart_required":true,"choices":["supertonic","kokoro"]},
             {"key":"model.name","type":"string","section":"Model","label":"Model","description":"Active catalog or custom model name","value":config.model.name,"file_value":null,"compiled":true,"restart_required":true},
             {"key":"model.directory","type":"path","section":"Model","label":"Directory","description":"Model asset directory","value":config.model_directory(paths),"file_value":config.model.directory,"compiled":true,"restart_required":true},
             {"key":"model.file","type":"string","section":"Model","label":"Model file","description":"Single-file native model inside the model directory","value":config.model.file,"file_value":null,"compiled":true,"restart_required":true},
@@ -1708,7 +1719,7 @@ fn schema(path: &Path, paths: &AppPaths) -> Result<Value> {
             {"key":"model.unicode_indexer","type":"string","section":"Model","label":"Unicode indexer","description":"Supertonic unicode indexer filename","value":config.model.unicode_indexer,"file_value":null,"compiled":true,"restart_required":true},
             {"key":"model.voice_style","type":"string","section":"Model","label":"Voice styles","description":"Supertonic voice style filename","value":config.model.voice_style,"file_value":null,"compiled":true,"restart_required":true},
             {"key":"model.language","type":"enum","section":"Model","label":"Language","description":"Supertonic generation language","value":config.model.language,"file_value":null,"compiled":true,"restart_required":true,"choices":["en","ko","ja","ar","bg","cs","da","de","el","es","et","fi","fr","hi","hr","hu","id","it","lt","lv","nl","pl","pt","ro","ru","sk","sl","sv","tr","uk","vi"]},
-            {"key":"model.steps","type":"integer","section":"Model","label":"Generation steps","description":"Supertonic denoising steps","value":config.model.steps,"file_value":null,"compiled":true,"restart_required":true,"min":1},
+            {"key":"model.steps","type":"integer","section":"Model","label":"Generation steps","description":steps_description,"value":config.model.steps,"file_value":null,"compiled":true,"restart_required":true,"min":steps_min},
             {"key":"model.voice","type":"enum","section":"Model","label":"Voice","description":"Default TTS speaker; preset name or legacy numeric ID","value":voice_value,"file_value":null,"compiled":true,"restart_required":true,"choices":voice_choices},
             {"key":"daemon.max_text_bytes","type":"integer","section":"Daemon","label":"Maximum text bytes","description":"Largest accepted UTF-8 request payload","value":config.daemon.max_text_bytes,"file_value":null,"compiled":true,"restart_required":true,"min":1}],
         "collections":[

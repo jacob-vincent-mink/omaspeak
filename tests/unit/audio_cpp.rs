@@ -225,14 +225,32 @@ fn pcm_protocol_round_trips_finite_samples_and_rejects_bad_shapes() {
 
     let sample = 0.0f32;
     assert_eq!(
-        validate_audio_shape(&sample, 1, SUPERTONIC_SAMPLE_RATE, 1).unwrap(),
+        validate_audio_shape("supertonic", &sample, 1, SUPERTONIC_SAMPLE_RATE, 1).unwrap(),
         1
     );
-    assert!(validate_audio_shape(std::ptr::null(), 1, SUPERTONIC_SAMPLE_RATE, 1).is_err());
-    assert!(validate_audio_shape(&sample, 0, SUPERTONIC_SAMPLE_RATE, 1).is_err());
-    assert!(validate_audio_shape(&sample, 1, 16_000, 1).is_err());
-    assert!(validate_audio_shape(&sample, 1, SUPERTONIC_SAMPLE_RATE, 2).is_err());
-    assert!(validate_audio_shape(&sample, MAX_PCM_SAMPLES + 1, SUPERTONIC_SAMPLE_RATE, 1).is_err());
+    assert!(
+        validate_audio_shape("supertonic", std::ptr::null(), 1, SUPERTONIC_SAMPLE_RATE, 1).is_err()
+    );
+    assert!(validate_audio_shape("supertonic", &sample, 0, SUPERTONIC_SAMPLE_RATE, 1).is_err());
+    assert!(validate_audio_shape("supertonic", &sample, 1, 16_000, 1).is_err());
+    assert!(validate_audio_shape("supertonic", &sample, 1, SUPERTONIC_SAMPLE_RATE, 2).is_err());
+    assert!(
+        validate_audio_shape(
+            "supertonic",
+            &sample,
+            MAX_PCM_SAMPLES + 1,
+            SUPERTONIC_SAMPLE_RATE,
+            1
+        )
+        .is_err()
+    );
+    // Kokoro expects 24 kHz mono; its rate is valid and the Supertonic rate is not.
+    assert_eq!(
+        validate_audio_shape("kokoro", &sample, 1, KOKORO_SAMPLE_RATE, 1).unwrap(),
+        1
+    );
+    assert!(validate_audio_shape("kokoro", &sample, 1, SUPERTONIC_SAMPLE_RATE, 1).is_err());
+    assert!(validate_audio_shape("unknown", &sample, 1, SUPERTONIC_SAMPLE_RATE, 1).is_err());
 }
 
 #[test]
@@ -342,4 +360,39 @@ fn native_paths_are_explicit_existing_files_and_relative_models_stay_contained()
     );
     config.backend.library = None;
     assert!(resolve_provider_library(&config, &paths.config_file).is_err());
+}
+
+#[test]
+fn kokoro_engine_voice_ids_and_request_languages_cover_every_prefix() {
+    assert_eq!(engine_voice_id("kokoro", 0).unwrap(), "af_alloy");
+    assert_eq!(engine_voice_id("kokoro", 3).unwrap(), "af_heart");
+    assert_eq!(engine_voice_id("kokoro", 16).unwrap(), "am_michael");
+    assert_eq!(engine_voice_id("kokoro", 53).unwrap(), "zm_yunyang");
+    assert_eq!(
+        engine_voice_id("kokoro", 54).unwrap_err().to_string(),
+        "voice 54 is outside the Kokoro voice range 0..53"
+    );
+    assert_eq!(
+        engine_voice_id("kokoro", -1).unwrap_err().to_string(),
+        "voice -1 is outside the Kokoro voice range 0..53"
+    );
+    assert!(engine_voice_id("unknown", 0).is_err());
+    for (prefix, language) in [
+        ('a', "en-us"),
+        ('b', "en-gb"),
+        ('e', "es"),
+        ('f', "fr"),
+        ('h', "hi"),
+        ('i', "it"),
+        ('j', "ja"),
+        ('p', "pt-br"),
+        ('z', "zh"),
+    ] {
+        assert_eq!(
+            kokoro_voice_language(&format!("{prefix}x_voice")),
+            Some(language)
+        );
+    }
+    assert_eq!(kokoro_voice_language("q_unknown"), None);
+    assert_eq!(kokoro_voice_language(""), None);
 }

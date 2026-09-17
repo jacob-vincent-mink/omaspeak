@@ -1483,8 +1483,8 @@ fn provider_probe_rejects_a_valid_abi_without_the_required_tts_family() {
     fs::write(
         &source,
         stub.replace(
-            "static const char *names[] = {\"supertonic\"}",
-            "static const char *names[] = {\"unrelated\"}",
+            "static const char *const stub_family_names[] = {\"supertonic\", \"kokoro_tts\"};",
+            "static const char *const stub_family_names[] = {\"unrelated\"};",
         ),
     )
     .unwrap();
@@ -1499,7 +1499,9 @@ fn provider_probe_rejects_a_valid_abi_without_the_required_tts_family() {
             .unwrap()
             .success()
     );
-    let spec = serde_json::json!({"library": library, "library_dirs": [root]}).to_string();
+    let spec =
+        serde_json::json!({"library": library, "library_dirs": [root], "family": "supertonic"})
+            .to_string();
     let result = run(&root, &["__audiocpp-probe", "--spec", &spec]);
     assert!(!result.status.success());
     assert!(
@@ -2268,5 +2270,106 @@ fn named_config_and_ipc_voices_reach_the_native_preset_without_changing_legacy_i
         thread::sleep(Duration::from_millis(10));
     }
     assert!(daemon.collect_output().status.success());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn kokoro_voice_selects_engine_id_language_and_24khz_output() {
+    let root = sandbox();
+    let library = build_audio_cpp_stub(&root);
+    let mut config = audio_cpp_stub_config(&root, library, "require-af_heart.gguf");
+    config.model.family = "kokoro".into();
+    config.model.name = "kokoro-82m-gguf".into();
+    config.model.file = "require-af_heart.gguf".into();
+    config.model.voice = omaspeak::voices::VoiceSelection::Name("af_heart".into());
+    config
+        .save(&root.join("config/omaspeak/config.toml"))
+        .unwrap();
+
+    // Default voice (af_heart) synthesizes to a 24 kHz WAV.
+    let output = root.join("kokoro.wav");
+    let result = run(
+        &root,
+        &[
+            "say",
+            "Hello from Kokoro.",
+            "--no-play",
+            "--out",
+            output.to_str().unwrap(),
+        ],
+    );
+    assert!(result.status.success(), "{}", stderr(&result));
+    let spec = hound::WavReader::open(&output).unwrap().spec();
+    assert_eq!(spec.sample_rate, 24_000);
+    assert_eq!(spec.channels, 1u16);
+    let frames: Vec<i16> = hound::WavReader::open(&output)
+        .unwrap()
+        .into_samples()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert!(
+        !frames.is_empty() && frames.iter().any(|&s| s != 0),
+        "expected non-silent audio"
+    );
+
+    // Legacy numeric IDs resolve to the same engine voice IDs (0 = af_alloy).
+    let wrong = run(&root, &["say", "x", "--no-play", "--voice", "0"]);
+    assert!(
+        !wrong.status.success(),
+        "legacy 0 is af_alloy; the stub only accepts af_heart"
+    );
+    let by_name = run(&root, &["say", "x", "--no-play", "--voice", "af_heart"]);
+    assert!(by_name.status.success(), "{}", stderr(&by_name));
+
+    // Another named voice resolves to its engine ID and is rejected by the
+    // stub (proving the engine saw \"am_michael\", not a number).
+    let other = run(&root, &["say", "x", "--no-play", "--voice", "am_michael"]);
+    assert!(!other.status.success(), "the stub accepts only af_heart");
+
+    // Voices list and schema reflect the Kokoro inventory.
+    let voices = run(&root, &["voices", "--json"]);
+    assert!(voices.status.success(), "{}", stderr(&voices));
+    let voices: serde_json::Value = serde_json::from_slice(&voices.stdout).unwrap();
+    let list = voices["voices"]
+        .as_array()
+        .or_else(|| voices.as_array())
+        .unwrap();
+    assert_eq!(list.len(), 54);
+    assert!(
+        list.iter()
+            .any(|v| v["name"] == "af_heart" && v["active"] == true)
+    );
+    let schema = run(&root, &["config", "schema", "--json"]);
+    let schema: serde_json::Value = serde_json::from_slice(&schema.stdout).unwrap();
+    let family = schema["keys"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|v| v["key"] == "model.family")
+        .unwrap();
+    assert!(
+        family["choices"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|c| c == "kokoro")
+    );
+    let steps = schema["keys"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|v| v["key"] == "model.steps")
+        .unwrap();
+    assert_eq!(steps["min"], 0, "Kokoro leaves steps unused");
+
+    // Config round-trips a named Kokoro voice and keeps it through set/get.
+    let set = run(&root, &["config", "set", "model.voice", "bf_emma"]);
+    assert!(set.status.success(), "{}", stderr(&set));
+    let get = run(&root, &["config", "get", "model.voice"]);
+    assert!(get.status.success());
+    assert!(String::from_utf8(get.stdout).unwrap().contains("bf_emma"));
+    let set_bad = run(&root, &["config", "set", "model.voice", "zz_not_a_voice"]);
+    assert!(!set_bad.status.success());
     fs::remove_dir_all(root).unwrap();
 }
