@@ -456,6 +456,7 @@ fn socket_client_sends_newline_delimited_request_and_decodes_response() {
                     protocol: 1,
                     id: incoming.id,
                     result: ResultPayload::Status {
+                        audio: serde_json::Value::Null,
                         running: true,
                         pid: 42,
                         model: "test-model".into(),
@@ -2412,7 +2413,7 @@ fn top_level_guide_routes_every_choice_and_rejects_invalid_selection() {
             .iter()
             .map(|item| item.label.as_str())
             .collect::<Vec<_>>(),
-        ["Full setup", "Runtime", "Model", "Check"]
+        ["Full setup", "Runtime", "Model", "Check", "Audio"]
     );
 
     for selections in [
@@ -4451,6 +4452,7 @@ fn top_level_online_commands_exchange_protocol_without_loading_an_engine() {
                     synthesis_milliseconds: 2,
                 },
                 Command::Status => ResultPayload::Status {
+                    audio: serde_json::Value::Null,
                     running: true,
                     pid: 42,
                     model: "fixture".into(),
