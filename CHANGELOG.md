@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.0.3-rc.1 - 2026-09-17
+
+- The eSpeak-ng phonemizer data package is catalog-managed with the Kokoro
+  model: pinned release asset, downloaded/verified/installed into the model
+  directory, and the worker points the engine at it via
+  AUDIOCPP_ESPEAK_DATA. MODEL-LICENSE carries the GPL-3.0 notice for the
+  data package; nothing model-shaped ships inside the core package.
+
 ## 0.0.2 - 2026-09-17
 
 - Pin Kokoro 82M as a second speech family: 54 named voices plus legacy

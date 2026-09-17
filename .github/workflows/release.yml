@@ -88,7 +88,6 @@ jobs:
           cargo about generate about.hbs > "${root}/licenses/RUST-DEPENDENCIES.txt"
           cp target/release/omaspeak "${root}/omaspeak"
           cp "${AUDIOCPP_PROVIDER}" "${root}/lib/libaudiocpp.so.0.1.0"
-          cp "${AUDIOCPP_ESPEAK_DATA}" "${root}/espeak-ng-data.bin"
           ln -s libaudiocpp.so.0.1.0 "${root}/lib/libaudiocpp.so.0"
           ln -s libaudiocpp.so.0 "${root}/lib/libaudiocpp.so"
           while IFS= read -r -d '' license; do
