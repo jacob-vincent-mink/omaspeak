@@ -18,6 +18,9 @@ pub enum Command {
         output: Option<String>,
         no_play: bool,
     },
+    Cancel {
+        request_id: Option<String>,
+    },
     Status,
     Shutdown,
 }
@@ -47,6 +50,10 @@ pub enum ResultPayload {
         model: String,
         sample_rate: i32,
         backend: serde_json::Value,
+    },
+    Cancelled {
+        request_id: Option<String>,
+        count: usize,
     },
     Shutdown,
     Error {

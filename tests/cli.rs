@@ -1570,6 +1570,456 @@ fn playback_worker_waits_for_owned_pause_and_rejects_an_old_wake_daemon() {
     }
 }
 
+#[cfg(target_os = "linux")]
+#[test]
+fn daemon_bounds_queue_and_cancels_stalled_synthesis_without_publishing_output() {
+    use std::os::unix::net::UnixStream;
+    let root = sandbox();
+    let library = build_audio_cpp_stub(&root);
+    let mut config = audio_cpp_stub_config(&root, library, "supertonic.gguf");
+    config.daemon.max_text_bytes = 512;
+    config
+        .save(&root.join("config/omaspeak/config.toml"))
+        .unwrap();
+    let mut daemon = ProcessGuard::new(
+        Command::new(env!("CARGO_BIN_EXE_omaspeak"))
+            .arg("daemon")
+            .env("OMASPEAK_STUB_STARTED", root.join("native-started"))
+            .env("OMASPEAK_STUB_CRASHES", root.join("native-crashes"))
+            .env("XDG_CONFIG_HOME", root.join("config"))
+            .env("XDG_DATA_HOME", root.join("data"))
+            .env("XDG_CACHE_HOME", root.join("cache"))
+            .env("XDG_STATE_HOME", root.join("state"))
+            .env("XDG_RUNTIME_DIR", root.join("run"))
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap(),
+    );
+    let socket = root.join("run/omaspeak/control.sock");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !socket.exists() {
+        assert!(Instant::now() < deadline);
+        assert!(daemon.try_wait().unwrap().is_none());
+        thread::sleep(Duration::from_millis(10));
+    }
+    let send = |id: &str, command: omaspeak::protocol::Command| {
+        let mut stream = UnixStream::connect(&socket).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(3)))
+            .unwrap();
+        let request = Request {
+            protocol: 1,
+            id: id.into(),
+            command,
+        };
+        serde_json::to_writer(&mut stream, &request).unwrap();
+        stream.write_all(b"\n").unwrap();
+        stream
+    };
+    let receive = |stream: &mut UnixStream| {
+        let mut line = String::new();
+        BufReader::new(stream).read_line(&mut line).unwrap();
+        serde_json::from_str::<Response>(&line).unwrap()
+    };
+    let destination = root.join("preserved.wav");
+    fs::write(&destination, b"previous output").unwrap();
+    let say = |text: &str, output: &Path| omaspeak::protocol::Command::Say {
+        text: text.into(),
+        voice: 0,
+        speed: 1.0,
+        output: Some(output.to_string_lossy().into_owned()),
+        no_play: true,
+    };
+    let mut bad_json = UnixStream::connect(&socket).unwrap();
+    bad_json
+        .set_read_timeout(Some(Duration::from_secs(3)))
+        .unwrap();
+    bad_json.write_all(b"not-json\n").unwrap();
+    assert!(
+        matches!(receive(&mut bad_json).result, ResultPayload::Error { code, .. } if code == "invalid_request")
+    );
+    let mut slow = UnixStream::connect(&socket).unwrap();
+    slow.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+    slow.write_all(b"{\"protocol\":1").unwrap();
+    let responsiveness = Instant::now();
+    let mut status = send("responsive", omaspeak::protocol::Command::Status);
+    assert!(matches!(
+        receive(&mut status).result,
+        ResultPayload::Status { .. }
+    ));
+    assert!(
+        responsiveness.elapsed() < Duration::from_secs(1),
+        "partial client blocked status"
+    );
+    assert!(
+        matches!(receive(&mut slow).result, ResultPayload::Error { code, .. } if code == "invalid_request")
+    );
+    let mut oversized = send("too-long", say(&"x".repeat(513), &destination));
+    assert!(
+        matches!(receive(&mut oversized).result, ResultPayload::Error {code, ..} if code == "invalid_request")
+    );
+    let mut partials = Vec::new();
+    for _ in 0..16 {
+        let mut stream = UnixStream::connect(&socket).unwrap();
+        stream.write_all(b"{").unwrap();
+        partials.push(stream);
+    }
+    let mut busy = send("admission-full", omaspeak::protocol::Command::Status);
+    assert!(matches!(receive(&mut busy).result, ResultPayload::Error {code, ..} if code == "busy"));
+    drop(partials);
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        let mut status = send("admission-recovered", omaspeak::protocol::Command::Status);
+        if matches!(receive(&mut status).result, ResultPayload::Status { .. }) {
+            break;
+        }
+        assert!(Instant::now() < deadline);
+        thread::sleep(Duration::from_millis(10));
+    }
+    let mut stalled = send("stalled", say("stall-run", &destination));
+    let deadline = Instant::now() + Duration::from_secs(3);
+    loop {
+        let mut status = send("status", omaspeak::protocol::Command::Status);
+        let response = receive(&mut status);
+        if matches!(response.result, ResultPayload::Status { ref backend, .. } if backend["requests"]["active"] == "stalled")
+        {
+            break;
+        }
+        assert!(Instant::now() < deadline);
+        thread::sleep(Duration::from_millis(10));
+    }
+    let native_deadline = Instant::now() + Duration::from_secs(2);
+    while !root.join("native-started").exists() {
+        assert!(
+            Instant::now() < native_deadline,
+            "native synthesis never started"
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
+    let mut duplicate = send("stalled", say("other", &root.join("duplicate.wav")));
+    assert!(
+        matches!(receive(&mut duplicate).result, ResultPayload::Error { code, .. } if code == "duplicate_request")
+    );
+    let mut queued = Vec::new();
+    for n in 0..8 {
+        queued.push(send(
+            &format!("q{n}"),
+            say("after cancellation", &root.join(format!("q{n}.wav"))),
+        ));
+        // Wait for admission, making the capacity assertion deterministic.
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            let mut stream = send("status", omaspeak::protocol::Command::Status);
+            let response = receive(&mut stream);
+            if matches!(response.result, ResultPayload::Status { ref backend, .. } if backend["requests"]["queued"].as_array().unwrap().len() == n + 1)
+            {
+                break;
+            }
+            assert!(Instant::now() < deadline);
+        }
+    }
+    let mut overflow = send("overflow", say("overflow", &root.join("overflow.wav")));
+    assert!(
+        matches!(receive(&mut overflow).result, ResultPayload::Error { code, .. } if code == "busy")
+    );
+    let cancel_queued = run(&root, &["cancel", "q0"]);
+    assert!(cancel_queued.status.success(), "{}", stderr(&cancel_queued));
+    let cancelled: serde_json::Value = serde_json::from_slice(&cancel_queued.stdout).unwrap();
+    assert_eq!(cancelled["count"], 1);
+    assert_eq!(cancelled["request_id"], "q0");
+    assert!(
+        matches!(receive(&mut queued[0]).result, ResultPayload::Error { code, .. } if code == "cancelled")
+    );
+    // An unrelated config edit must not silently change the worker after cancel.
+    fs::write(
+        root.join("config/omaspeak/config.toml"),
+        "[backend]\nkind = \"unsupported\"\n",
+    )
+    .unwrap();
+    let began = Instant::now();
+    let cancel_active = run(&root, &["cancel"]);
+    assert!(cancel_active.status.success(), "{}", stderr(&cancel_active));
+    let cancelled: serde_json::Value = serde_json::from_slice(&cancel_active.stdout).unwrap();
+    assert_eq!(cancelled["count"], 1);
+    assert!(cancelled["request_id"].is_null());
+    assert!(
+        began.elapsed() < Duration::from_secs(1),
+        "cancellation waited for native synthesis"
+    );
+    assert!(
+        matches!(receive(&mut stalled).result, ResultPayload::Error { code, .. } if code == "cancelled")
+    );
+    assert_eq!(fs::read(&destination).unwrap(), b"previous output");
+    for (n, stream) in queued.iter_mut().enumerate().skip(1) {
+        let response = receive(stream);
+        assert_eq!(response.id, format!("q{n}"));
+        assert!(
+            matches!(response.result, ResultPayload::Synthesis { .. }),
+            "{response:?}"
+        );
+        assert!(root.join(format!("q{n}.wav")).exists());
+    }
+    assert!(!root.join("q0.wav").exists());
+    assert!(!root.join("overflow.wav").exists());
+    assert!(!fs::read_dir(&root).unwrap().any(|entry| {
+        entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with(".omaspeak-")
+    }));
+    let mut malformed = send("", omaspeak::protocol::Command::Status);
+    assert!(
+        matches!(receive(&mut malformed).result, ResultPayload::Error { code, .. } if code == "invalid_request")
+    );
+    let mut no_match = send(
+        "cancel-absent",
+        omaspeak::protocol::Command::Cancel {
+            request_id: Some("absent".into()),
+        },
+    );
+    assert!(matches!(
+        receive(&mut no_match).result,
+        ResultPayload::Cancelled { count: 0, .. }
+    ));
+    let mut crash = send("crash", say("crash-run", &destination));
+    assert!(
+        matches!(receive(&mut crash).result, ResultPayload::Error { code, .. } if code == "runtime")
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("native-crashes")).unwrap(),
+        "crash\n",
+        "failed request was replayed"
+    );
+    assert_eq!(fs::read(&destination).unwrap(), b"previous output");
+    let mut recovered = send("recovered", say("after crash", &root.join("recovered.wav")));
+    assert!(matches!(
+        receive(&mut recovered).result,
+        ResultPayload::Synthesis { .. }
+    ));
+    // Publishing over a directory must fail without leaving a staged file or
+    // poisoning the warm worker for later requests.
+    let blocked_output = root.join("output-directory");
+    fs::create_dir(&blocked_output).unwrap();
+    let mut blocked = send("blocked-output", say("cannot publish", &blocked_output));
+    assert!(
+        matches!(receive(&mut blocked).result, ResultPayload::Error { code, .. } if code == "runtime")
+    );
+    assert!(blocked_output.is_dir());
+
+    // A vanished client must release active synthesis and its queued successor
+    // must still finish, without publishing the cancelled request's output.
+    fs::remove_file(root.join("native-started")).unwrap();
+    let disconnected = send("disconnected", say("stall-run", &destination));
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while !root.join("native-started").exists() {
+        assert!(Instant::now() < deadline);
+        thread::sleep(Duration::from_millis(10));
+    }
+    let mut successor = send(
+        "successor",
+        say("client went away", &root.join("successor.wav")),
+    );
+    drop(disconnected);
+    assert!(matches!(
+        receive(&mut successor).result,
+        ResultPayload::Synthesis { .. }
+    ));
+    assert_eq!(fs::read(&destination).unwrap(), b"previous output");
+
+    // Losing the supervisor process fails its current batch without replay,
+    // and a later independent request can create a replacement.
+    fs::remove_file(root.join("native-started")).unwrap();
+    let mut lost_worker = send("lost-worker", say("stall-run", &destination));
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while !root.join("native-started").exists() {
+        assert!(Instant::now() < deadline);
+        thread::sleep(Duration::from_millis(10));
+    }
+    let mut lost_queued = send(
+        "lost-queued",
+        say("must not replay", &root.join("lost.wav")),
+    );
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        let mut status = send("status", omaspeak::protocol::Command::Status);
+        if matches!(receive(&mut status).result, ResultPayload::Status {ref backend, ..} if backend["requests"]["queued"] == serde_json::json!(["lost-queued"]))
+        {
+            break;
+        }
+        assert!(Instant::now() < deadline);
+    }
+    let children = fs::read_to_string(format!("/proc/{0}/task/{0}/children", daemon.id())).unwrap();
+    let children: Vec<i32> = children
+        .split_whitespace()
+        .map(|pid| pid.parse().unwrap())
+        .collect();
+    assert_eq!(children.len(), 1);
+    assert_eq!(unsafe { libc::kill(children[0], libc::SIGKILL) }, 0);
+    for stream in [&mut lost_worker, &mut lost_queued] {
+        assert!(
+            matches!(receive(stream).result, ResultPayload::Error {code, ..} if code == "runtime")
+        );
+    }
+    assert!(!root.join("lost.wav").exists());
+    assert_eq!(fs::read(&destination).unwrap(), b"previous output");
+    let mut replacement = send(
+        "replacement",
+        say("new independent request", &root.join("replacement.wav")),
+    );
+    assert!(matches!(
+        receive(&mut replacement).result,
+        ResultPayload::Synthesis { .. }
+    ));
+
+    // Shutdown during native work cancels both active and queued requests.
+    fs::remove_file(root.join("native-started")).unwrap();
+    let mut shutdown_active = send("shutdown-active", say("stall-run", &destination));
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while !root.join("native-started").exists() {
+        assert!(Instant::now() < deadline);
+        thread::sleep(Duration::from_millis(10));
+    }
+    let mut shutdown_queued = send("shutdown-queued", say("never run", &root.join("never.wav")));
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        let mut status = send("status", omaspeak::protocol::Command::Status);
+        if matches!(receive(&mut status).result, ResultPayload::Status { ref backend, .. } if backend["requests"]["queued"] == serde_json::json!(["shutdown-queued"]))
+        {
+            break;
+        }
+        assert!(Instant::now() < deadline);
+    }
+    let stopped = run(&root, &["stop"]);
+    assert!(stopped.status.success(), "{}", stderr(&stopped));
+    for stream in [&mut shutdown_active, &mut shutdown_queued] {
+        assert!(
+            matches!(receive(stream).result, ResultPayload::Error { code, .. } if code == "cancelled")
+        );
+    }
+    assert_eq!(fs::read(&destination).unwrap(), b"previous output");
+    assert!(!root.join("never.wav").exists());
+    assert!(!fs::read_dir(&root).unwrap().any(|entry| {
+        entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with(".omaspeak-")
+    }));
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while daemon.try_wait().unwrap().is_none() {
+        assert!(Instant::now() < deadline);
+        thread::sleep(Duration::from_millis(10));
+    }
+    assert!(daemon.collect_output().status.success());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn synthesis_worker_rejects_control_and_playback_requests_and_exits_cleanly() {
+    let root = sandbox();
+    let library = build_audio_cpp_stub(&root);
+    let config = audio_cpp_stub_config(&root, library, "supertonic.gguf");
+    let paths = omaspeak::paths::AppPaths {
+        config_file: root.join("config/omaspeak/config.toml"),
+        data_dir: root.join("data"),
+        cache_dir: root.join("cache"),
+        state_dir: root.join("state"),
+        runtime_dir: root.join("run"),
+    };
+    let spec = serde_json::json!({"config": config, "paths": paths}).to_string();
+    let mut process = ProcessGuard::new(
+        Command::new(env!("CARGO_BIN_EXE_omaspeak"))
+            .args(["__request-worker", &spec])
+            .env("XDG_RUNTIME_DIR", root.join("run"))
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap(),
+    );
+    let mut input = process.stdin.take().unwrap();
+    let mut output = BufReader::new(process.stdout.take().unwrap());
+    let mut read = || {
+        let mut line = String::new();
+        output.read_line(&mut line).unwrap();
+        serde_json::from_str::<Response>(&line).unwrap()
+    };
+    let ready = read();
+    assert_eq!(ready.id, "ready");
+    assert!(matches!(ready.result, ResultPayload::Status { .. }));
+    for (id, command) in [
+        ("control", omaspeak::protocol::Command::Status),
+        (
+            "playback",
+            omaspeak::protocol::Command::Say {
+                text: "should not play".into(),
+                voice: 0,
+                speed: 1.0,
+                output: None,
+                no_play: false,
+            },
+        ),
+        (
+            "file",
+            omaspeak::protocol::Command::Say {
+                text: "file output".into(),
+                voice: 0,
+                speed: 1.0,
+                output: Some(root.join("file.wav").to_string_lossy().into_owned()),
+                no_play: true,
+            },
+        ),
+    ] {
+        serde_json::to_writer(
+            &mut input,
+            &Request {
+                protocol: 1,
+                id: id.into(),
+                command,
+            },
+        )
+        .unwrap();
+        input.write_all(b"\n").unwrap();
+        let response = read();
+        assert_eq!(response.id, id);
+        if id == "file" {
+            assert!(matches!(response.result, ResultPayload::Synthesis { .. }));
+            assert!(
+                hound::WavReader::open(root.join("file.wav"))
+                    .unwrap()
+                    .duration()
+                    > 0
+            );
+        } else {
+            assert!(
+                matches!(response.result, ResultPayload::Error {code, ..} if code == "invalid_request")
+            );
+        }
+    }
+    serde_json::to_writer(
+        &mut input,
+        &Request {
+            protocol: 1,
+            id: "stop".into(),
+            command: omaspeak::protocol::Command::Shutdown,
+        },
+    )
+    .unwrap();
+    input.write_all(b"\n").unwrap();
+    drop(input);
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while process.try_wait().unwrap().is_none() {
+        assert!(Instant::now() < deadline);
+        thread::sleep(Duration::from_millis(10));
+    }
+    assert!(process.collect_output().status.success());
+    fs::remove_dir_all(root).unwrap();
+}
+
 #[test]
 fn playback_worker_stops_when_wake_ownership_is_lost() {
     let root = sandbox();
