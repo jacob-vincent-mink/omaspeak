@@ -6,7 +6,7 @@ fn request_variants_and_responses_round_trip() {
         Command::Say {
             text: "hello".into(),
             speed: 1.0,
-            voice: 0,
+            voice: crate::voices::VoiceSelection::Legacy(0),
             output: Some("out.wav".into()),
             no_play: true,
         },

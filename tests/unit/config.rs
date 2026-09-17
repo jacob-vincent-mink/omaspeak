@@ -15,7 +15,7 @@ fn partial_config_uses_defaults() {
             "#,
     )
     .unwrap();
-    assert_eq!(cfg.model.voice, 2);
+    assert_eq!(cfg.model.voice, crate::voices::VoiceSelection::Legacy(2));
     assert_eq!(cfg.model.family, "supertonic");
     assert_eq!(cfg.model.language, "en");
     assert_eq!(cfg.model.steps, 8);
@@ -94,4 +94,21 @@ fn config_io_failures_identify_the_failed_operation() {
     fs::create_dir(config.with_extension("toml.tmp")).unwrap();
     let error = Config::default().save(&config).unwrap_err();
     assert!(error.to_string().contains("write temporary config"));
+}
+
+#[test]
+fn named_voice_round_trips_without_rewriting_legacy_ids() {
+    for (value, selected) in [
+        ("5", crate::voices::VoiceSelection::Legacy(5)),
+        ("\"F1\"", crate::voices::VoiceSelection::Name("F1".into())),
+    ] {
+        let config: Config = toml::from_str(&format!("[model]\nvoice = {value}\n")).unwrap();
+        assert_eq!(config.model.voice, selected);
+        let encoded = toml::to_string(&config).unwrap();
+        assert!(encoded.contains(&format!("voice = {value}")));
+        assert_eq!(
+            toml::from_str::<Config>(&encoded).unwrap().model.voice,
+            selected
+        );
+    }
 }

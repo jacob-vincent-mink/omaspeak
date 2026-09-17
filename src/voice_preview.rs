@@ -17,7 +17,7 @@ pub(super) fn worker(request: &str) -> Result<()> {
     #[cfg(not(test))]
     omaspeak::audio_cpp::disable_core_dumps()?;
     let engine = Engine::load(&job.config, &job.paths)?;
-    engine.synthesize(SAMPLE, 1.0, job.config.model.voice, &job.output)?;
+    engine.synthesize(SAMPLE, 1.0, resolve_voice(&job.config, None)?, &job.output)?;
     Ok(())
 }
 
@@ -61,7 +61,7 @@ impl VoicePreview {
         fs::DirBuilder::new().mode(0o700).create(&directory)?;
         self.directory = Some(directory.clone());
         let mut config = self.config.clone();
-        config.model.voice = voice;
+        config.model.voice = voice.into();
         config.backend.fallback = Fallback::Error;
         let job = Job {
             config,
@@ -92,12 +92,12 @@ impl VoicePreview {
     }
 
     fn poll_inner(&mut self) -> Result<Option<String>> {
-        self.poll_with(spawn_player)
+        self.poll_with(spawn_playback_worker)
     }
 
     fn poll_with(
         &mut self,
-        mut spawn: impl FnMut(&str, &Path) -> std::io::Result<Child>,
+        mut spawn: impl FnMut(&Path) -> std::io::Result<Child>,
     ) -> Result<Option<String>> {
         let Some(child) = self.child.as_mut() else {
             return Ok(None);
@@ -123,19 +123,17 @@ impl VoicePreview {
             .as_ref()
             .context("missing sample directory")?
             .join("sample.wav");
-        for player in ["pw-play", "aplay"] {
-            if let Ok(child) = spawn(player, &output) {
-                self.child = Some(child);
-                self.playing = true;
-                return Ok(Some("Playing sample · Space to stop".into()));
-            }
-        }
-        bail!("No WAV player found; install pw-play or aplay to preview voices.")
+        self.child = Some(spawn(&output).context("Start voice sample playback worker")?);
+        self.playing = true;
+        Ok(Some("Preparing playback · Space to stop".into()))
     }
 }
 
-fn spawn_player(player: &str, output: &Path) -> std::io::Result<Child> {
-    let mut command = ProcessCommand::new(player);
+fn spawn_playback_worker(output: &Path) -> std::io::Result<Child> {
+    // Pause negotiation and playback stay outside the TUI. The existing preview
+    // process-group cancellation also kills this worker and its player.
+    let mut command = ProcessCommand::new(std::env::current_exe()?);
+    command.arg("__voice-playback");
     command
         .arg(output)
         .stdin(Stdio::null())

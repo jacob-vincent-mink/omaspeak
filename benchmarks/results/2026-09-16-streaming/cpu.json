@@ -1,0 +1,147 @@
+{
+  "backend": "cpu",
+  "library": "/tmp/omaspeak-cuda-proof.mMSyuK/audio.cpp-build/bin/libaudiocpp.so.0.1.0",
+  "model": "/tmp/omaspeak-rc3-cuda-final/data/omaspeak/models/supertonic-3-gguf/supertonic-3-orig.gguf",
+  "pull_delay_ms": 0,
+  "streaming_first": false,
+  "abi": 256,
+  "seed": 20260916,
+  "steps": 8,
+  "voice": "M1",
+  "cases": [
+    {
+      "mode": "offline",
+      "case": "warmup",
+      "text_bytes": 53,
+      "rss_before": 693616640,
+      "first_audio_s": 1.8709709430113435,
+      "total_s": 1.8709737589815632,
+      "audio_s": 3.7535827664399095,
+      "sample_rate": 44100,
+      "pcm_bytes": 662132,
+      "sha256": "14400658b34d9170650bd3f54eb6c592b97d414b45da8c76a10efdf5b5945a12"
+    },
+    {
+      "mode": "offline",
+      "case": "short",
+      "text_bytes": 53,
+      "rss_before": 716554240,
+      "first_audio_s": 1.8199938810430467,
+      "total_s": 1.819996105041355,
+      "audio_s": 3.7535827664399095,
+      "sample_rate": 44100,
+      "pcm_bytes": 662132,
+      "sha256": "14400658b34d9170650bd3f54eb6c592b97d414b45da8c76a10efdf5b5945a12"
+    },
+    {
+      "mode": "offline",
+      "case": "long",
+      "text_bytes": 1208,
+      "rss_before": 716623872,
+      "first_audio_s": 35.808280489000026,
+      "total_s": 35.808282168989535,
+      "audio_s": 74.70732426303854,
+      "sample_rate": 44100,
+      "pcm_bytes": 13178372,
+      "sha256": "c27df9b2d7bc7fd847313bd996b6d1e5af906e49b5eb901b375ddb27d19fb5c7"
+    },
+    {
+      "mode": "streaming",
+      "case": "warmup",
+      "text_bytes": 53,
+      "rss_before": 786014208,
+      "chunks": [
+        {
+          "available_s": 1.8271596159902401,
+          "audio_s": 3.7535827664399095,
+          "bytes": 662132,
+          "rss": 788373504
+        }
+      ],
+      "first_audio_s": 1.8271596159902401,
+      "chunks_sha256": "14400658b34d9170650bd3f54eb6c592b97d414b45da8c76a10efdf5b5945a12",
+      "chunks_audio_s": 3.7535827664399095,
+      "rss_before_finish": 788373504,
+      "total_s": 1.827809921989683,
+      "audio_s": 3.7535827664399095,
+      "sample_rate": 44100,
+      "pcm_bytes": 662132,
+      "sha256": "14400658b34d9170650bd3f54eb6c592b97d414b45da8c76a10efdf5b5945a12"
+    },
+    {
+      "mode": "streaming",
+      "case": "short",
+      "text_bytes": 53,
+      "rss_before": 788377600,
+      "chunks": [
+        {
+          "available_s": 1.810680762049742,
+          "audio_s": 3.7535827664399095,
+          "bytes": 662132,
+          "rss": 788377600
+        }
+      ],
+      "first_audio_s": 1.810680762049742,
+      "chunks_sha256": "14400658b34d9170650bd3f54eb6c592b97d414b45da8c76a10efdf5b5945a12",
+      "chunks_audio_s": 3.7535827664399095,
+      "rss_before_finish": 788377600,
+      "total_s": 1.8112249720143154,
+      "audio_s": 3.7535827664399095,
+      "sample_rate": 44100,
+      "pcm_bytes": 662132,
+      "sha256": "14400658b34d9170650bd3f54eb6c592b97d414b45da8c76a10efdf5b5945a12"
+    },
+    {
+      "mode": "streaming",
+      "case": "long",
+      "text_bytes": 1208,
+      "rss_before": 788389888,
+      "chunks": [
+        {
+          "available_s": 6.8451622819993645,
+          "audio_s": 14.325963718820862,
+          "bytes": 2527100,
+          "rss": 819961856
+        },
+        {
+          "available_s": 14.308129219978582,
+          "audio_s": 16.421179138321996,
+          "bytes": 2896696,
+          "rss": 886218752
+        },
+        {
+          "available_s": 21.970630206982605,
+          "audio_s": 15.861020408163265,
+          "bytes": 2797884,
+          "rss": 921755648
+        },
+        {
+          "available_s": 28.946912142971996,
+          "audio_s": 14.325963718820862,
+          "bytes": 2527100,
+          "rss": 901287936
+        },
+        {
+          "available_s": 35.64007271901937,
+          "audio_s": 13.773197278911564,
+          "bytes": 2429592,
+          "rss": 910020608
+        }
+      ],
+      "first_audio_s": 6.8451622819993645,
+      "chunks_sha256": "c27df9b2d7bc7fd847313bd996b6d1e5af906e49b5eb901b375ddb27d19fb5c7",
+      "chunks_audio_s": 74.70732426303856,
+      "rss_before_finish": 910020608,
+      "total_s": 35.64179261296522,
+      "audio_s": 74.70732426303854,
+      "sample_rate": 44100,
+      "pcm_bytes": 13178372,
+      "sha256": "c27df9b2d7bc7fd847313bd996b6d1e5af906e49b5eb901b375ddb27d19fb5c7"
+    }
+  ],
+  "policy": {
+    "input": 0,
+    "output": 1
+  },
+  "offline_streaming_exact_match": true
+}

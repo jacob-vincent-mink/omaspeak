@@ -8,6 +8,8 @@ use std::collections::BTreeMap;
 use std::ffi::{CStr, CString, c_char, c_int, c_void};
 use std::io::{self, Read, Write};
 use std::os::fd::AsRawFd;
+#[cfg(target_os = "linux")]
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command, ExitStatus, Stdio};
 use std::sync::{Arc, Mutex};
@@ -27,6 +29,8 @@ const AUDIOCPP_ABI_MAJOR: u32 = 0;
 const AUDIOCPP_ABI_MIN_MINOR: u32 = 1;
 const SUPERTONIC_SAMPLE_RATE: i32 = 44_100;
 const SUPERTONIC_VOICES: i32 = 10;
+const KOKORO_SAMPLE_RATE: i32 = 24_000;
+const KOKORO_VOICES: i32 = 54;
 const MAX_CONTROL_FRAME: usize = 1024 * 1024;
 const MAX_PCM_SAMPLES: usize = 64 * 1024 * 1024;
 const MAX_WORKER_STDERR: usize = 16 * 1024;
@@ -262,21 +266,64 @@ struct NativeEngine {
     registry: Handle,
     model: Handle,
     session: Handle,
+    family: String,
     steps: i32,
-    language: CString,
+    language: String,
     request_options: Vec<(CString, CString)>,
+}
+
+/// The audio.cpp registry family name for a configured model family.
+fn provider_family(family: &str) -> Result<&'static str> {
+    match family {
+        "supertonic" => Ok("supertonic"),
+        "kokoro" => Ok("kokoro_tts"),
+        other => bail!("unsupported audio.cpp model family {other:?} (supertonic, kokoro)"),
+    }
+}
+
+/// Resolve a catalog voice index to the engine voice ID for a model family.
+fn engine_voice_id(family: &str, voice: i32) -> Result<&'static str> {
+    match family {
+        "supertonic" => voice_name(voice),
+        "kokoro" => usize::try_from(voice)
+            .ok()
+            .and_then(|index| crate::catalog::KOKORO_VOICE_IDS.get(index).copied())
+            .with_context(|| {
+                format!(
+                    "voice {voice} is outside the Kokoro voice range 0..{}",
+                    crate::catalog::KOKORO_VOICE_IDS.len() - 1
+                )
+            }),
+        _ => bail!("unsupported audio.cpp model family {family:?}"),
+    }
+}
+
+/// Kokoro request language for a voice prefix (voice packs are language-scoped).
+fn kokoro_voice_language(voice_id: &str) -> Option<&'static str> {
+    match voice_id.as_bytes().first() {
+        Some(b'a') => Some("en-us"),
+        Some(b'b') => Some("en-gb"),
+        Some(b'e') => Some("es"),
+        Some(b'f') => Some("fr"),
+        Some(b'h') => Some("hi"),
+        Some(b'i') => Some("it"),
+        Some(b'j') => Some("ja"),
+        Some(b'p') => Some("pt-br"),
+        Some(b'z') => Some("zh"),
+        _ => None,
+    }
 }
 
 impl NativeEngine {
     fn load(spec: &WorkerSpec) -> Result<Self> {
         let api = Api::load(&spec.library)?;
-        let family = CString::new("supertonic").expect("static string has no NUL");
+        let family = CString::new(provider_family(&spec.family)?)
+            .context("provider family contains a NUL byte")?;
         let model_path = path_to_c_string(&spec.model, "model.file")?;
         let task = CString::new("tts").expect("static string has no NUL");
         let mode = CString::new("offline").expect("static string has no NUL");
         let backend = CString::new(spec.backend.as_str()).context("backend contains a NUL byte")?;
-        let language =
-            CString::new(spec.language.as_str()).context("language contains a NUL byte")?;
+        let language = spec.language.clone();
 
         let request_options = spec
             .request_options
@@ -387,6 +434,7 @@ impl NativeEngine {
             registry,
             model,
             session,
+            family: spec.family.clone(),
             steps: spec.steps,
             language,
             request_options,
@@ -395,9 +443,21 @@ impl NativeEngine {
 
     fn generate(&mut self, text: &str, speed: f32, voice: i32) -> Result<Audio> {
         let text = CString::new(text).context("synthesis text contains a NUL byte")?;
-        let voice = CString::new(voice_name(voice)?).expect("voice name has no NUL");
-        let steps = CString::new(self.steps.to_string()).expect("integer has no NUL");
-        let steps_key = CString::new("num_inference_steps").expect("static string has no NUL");
+        let voice_id = engine_voice_id(&self.family, voice)?;
+        let voice = CString::new(voice_id).context("engine voice ID contains a NUL byte")?;
+        // Kokoro voice packs are language-scoped; the request language must
+        // match the voice prefix. Supertonic uses the configured language.
+        let request_language: std::borrow::Cow<'_, str> = if self.family == "kokoro" {
+            std::borrow::Cow::Owned(
+                kokoro_voice_language(voice_id)
+                    .context("Kokoro voice ID has no known language prefix")?
+                    .to_owned(),
+            )
+        } else {
+            std::borrow::Cow::Borrowed(self.language.as_str())
+        };
+        let request_language = CString::new(request_language.as_ref())
+            .context("request language contains a NUL byte")?;
         let request = unsafe { (self.api.request_create)() };
         if request.is_null() {
             bail!("audio.cpp request creation returned a null handle");
@@ -407,7 +467,7 @@ impl NativeEngine {
         let operation = (|| {
             self.api.check(
                 unsafe {
-                    (self.api.request_set_text)(request, text.as_ptr(), self.language.as_ptr())
+                    (self.api.request_set_text)(request, text.as_ptr(), request_language.as_ptr())
                 },
                 "text configuration",
             )?;
@@ -419,12 +479,17 @@ impl NativeEngine {
                 unsafe { (self.api.request_set_speaking_rate)(request, speed) },
                 "speaking-rate configuration",
             )?;
-            self.api.check(
-                unsafe {
-                    (self.api.request_set_option)(request, steps_key.as_ptr(), steps.as_ptr())
-                },
-                "generation-step configuration",
-            )?;
+            if self.family == "supertonic" {
+                let steps = CString::new(self.steps.to_string()).expect("integer has no NUL");
+                let steps_key =
+                    CString::new("num_inference_steps").expect("static string has no NUL");
+                self.api.check(
+                    unsafe {
+                        (self.api.request_set_option)(request, steps_key.as_ptr(), steps.as_ptr())
+                    },
+                    "generation-step configuration",
+                )?;
+            }
             for (key, value) in &self.request_options {
                 self.api.check(
                     unsafe { (self.api.request_set_option)(request, key.as_ptr(), value.as_ptr()) },
@@ -455,7 +520,8 @@ impl NativeEngine {
                 },
                 "audio result",
             )?;
-            let sample_count = validate_audio_shape(samples, frames, sample_rate, channels)?;
+            let sample_count =
+                validate_audio_shape(&self.family, samples, frames, sample_rate, channels)?;
             let pcm = unsafe { std::slice::from_raw_parts(samples, sample_count) }.to_vec();
             if pcm.iter().any(|sample| !sample.is_finite()) {
                 bail!("audio.cpp returned non-finite PCM");
@@ -482,15 +548,19 @@ impl Drop for NativeEngine {
 }
 
 fn validate_audio_shape(
+    family: &str,
     samples: *const f32,
     frames: usize,
     sample_rate: i32,
     channels: i32,
 ) -> Result<usize> {
-    if sample_rate != SUPERTONIC_SAMPLE_RATE {
-        bail!(
-            "audio.cpp returned sample rate {sample_rate}; expected {SUPERTONIC_SAMPLE_RATE} for Supertonic"
-        );
+    let expected = match family {
+        "supertonic" => SUPERTONIC_SAMPLE_RATE,
+        "kokoro" => KOKORO_SAMPLE_RATE,
+        _ => bail!("unsupported audio.cpp model family {family:?}"),
+    };
+    if sample_rate != expected {
+        bail!("audio.cpp returned sample rate {sample_rate}; expected {expected} for {family}");
     }
     if channels != 1 {
         bail!("audio.cpp returned {channels} channels; Omaspeak requires mono PCM");
@@ -516,6 +586,7 @@ pub struct WorkerSpec {
     library_dirs: Vec<PathBuf>,
     model: PathBuf,
     backend: String,
+    family: String,
     device: c_int,
     threads: c_int,
     language: String,
@@ -529,6 +600,7 @@ pub struct WorkerSpec {
 struct ProviderProbeSpec {
     library: PathBuf,
     library_dirs: Vec<PathBuf>,
+    family: String,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -561,6 +633,7 @@ struct WorkerClient {
     output: Option<TimedReader>,
     diagnostics: WorkerDiagnostics,
     stopped: bool,
+    expected_rate: i32,
 }
 
 #[derive(Default)]
@@ -730,8 +803,18 @@ fn wait_for_io(fd: c_int, events: libc::c_short, timeout: Duration) -> io::Resul
     }
 }
 
+/// Expected sample rate and voice count advertised by a family.
+fn spec_rate_voices(family: &str) -> Result<(i32, i32)> {
+    match family {
+        "supertonic" => Ok((SUPERTONIC_SAMPLE_RATE, SUPERTONIC_VOICES)),
+        "kokoro" => Ok((KOKORO_SAMPLE_RATE, KOKORO_VOICES)),
+        other => bail!("unsupported audio.cpp model family {other:?}"),
+    }
+}
+
 impl WorkerClient {
     fn launch(spec: &WorkerSpec) -> Result<Self> {
+        let (expected_rate, expected_voices) = spec_rate_voices(&spec.family)?;
         let executable = std::env::current_exe().context("locate Omaspeak executable")?;
         let encoded =
             serde_json::to_string(spec).context("encode audio.cpp worker configuration")?;
@@ -746,6 +829,24 @@ impl WorkerClient {
         let loader_path = std::env::join_paths(&spec.library_dirs)
             .context("encode audio.cpp worker native library path")?;
         command.env("LD_LIBRARY_PATH", loader_path);
+        #[cfg(target_os = "linux")]
+        {
+            let parent = std::process::id() as libc::pid_t;
+            unsafe {
+                command.pre_exec(move || {
+                    if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL) == -1 {
+                        return Err(io::Error::last_os_error());
+                    }
+                    if libc::getppid() != parent {
+                        return Err(io::Error::new(
+                            io::ErrorKind::Interrupted,
+                            "audio.cpp parent exited during spawn",
+                        ));
+                    }
+                    Ok(())
+                });
+            }
+        }
         let mut child = command
             .spawn()
             .context("start supervised audio.cpp worker")?;
@@ -773,6 +874,7 @@ impl WorkerClient {
             }),
             diagnostics: WorkerDiagnostics::capture(stderr),
             stopped: false,
+            expected_rate,
         };
         let ready: WorkerResponse = match client.read_response() {
             Ok(ready) => ready,
@@ -784,9 +886,9 @@ impl WorkerClient {
         };
         match ready {
             WorkerResponse::Ready {
-                sample_rate: SUPERTONIC_SAMPLE_RATE,
-                voices: SUPERTONIC_VOICES,
-            } => Ok(client),
+                sample_rate,
+                voices,
+            } if sample_rate == expected_rate && voices == expected_voices => Ok(client),
             WorkerResponse::Error { message } => {
                 let _ = client.stop();
                 bail!(
@@ -830,7 +932,7 @@ impl WorkerClient {
                     sample_rate,
                     samples,
                 } => {
-                    if sample_rate != SUPERTONIC_SAMPLE_RATE {
+                    if sample_rate != self.expected_rate {
                         bail!("audio.cpp worker returned unexpected sample rate {sample_rate}");
                     }
                     Ok(Ok(Audio {
@@ -953,11 +1055,11 @@ pub struct AudioCppBackend {
 
 impl AudioCppBackend {
     pub fn create(config: &Config, paths: &AppPaths, runtime: Runtime) -> Result<Self> {
-        if config.model.family != "supertonic" {
-            bail!(
-                "the audio.cpp backend requires model.family=\"supertonic\"; got {:?}",
-                config.model.family
-            );
+        match config.model.family.as_str() {
+            "supertonic" | "kokoro" => {}
+            other => bail!(
+                "the audio.cpp backend requires model.family=\"supertonic\" or \"kokoro\"; got {other:?}"
+            ),
         }
         let backend = match runtime {
             Runtime::Default => "cpu",
@@ -968,8 +1070,8 @@ impl AudioCppBackend {
                 bail!("runtime=openvino uses Omaspeak's direct OpenVINO provider")
             }
         };
-        if config.model.steps <= 0 {
-            bail!("model.steps must be positive");
+        if config.model.family == "supertonic" && config.model.steps <= 0 {
+            bail!("model.steps must be positive for Supertonic");
         }
         let options = scoped_options(&config.backend.options)?;
         let library = resolve_provider_library(config, &paths.config_file)?;
@@ -978,6 +1080,7 @@ impl AudioCppBackend {
             library,
             model: resolve_model_file(config, paths)?,
             backend: backend.into(),
+            family: config.model.family.clone(),
             device: config
                 .backend
                 .device_id
@@ -1004,11 +1107,17 @@ impl TtsBackend for AudioCppBackend {
     }
 
     fn sample_rate(&self) -> i32 {
-        SUPERTONIC_SAMPLE_RATE
+        match self.spec.family.as_str() {
+            "kokoro" => KOKORO_SAMPLE_RATE,
+            _ => SUPERTONIC_SAMPLE_RATE,
+        }
     }
 
     fn num_voices(&self) -> i32 {
-        SUPERTONIC_VOICES
+        match self.spec.family.as_str() {
+            "kokoro" => KOKORO_VOICES,
+            _ => SUPERTONIC_VOICES,
+        }
     }
 
     fn generate(&self, text: &str, speed: f32, voice: i32) -> Result<Vec<f32>> {
@@ -1016,6 +1125,10 @@ impl TtsBackend for AudioCppBackend {
             .worker
             .lock()
             .map_err(|_| anyhow!("audio.cpp worker lock is poisoned"))?;
+        if worker.stopped {
+            *worker = WorkerClient::launch(&self.spec)
+                .context("restart audio.cpp worker for a new request")?;
+        }
         let request = WorkerRequest::Generate {
             text: text.into(),
             speed,
@@ -1024,20 +1137,11 @@ impl TtsBackend for AudioCppBackend {
         match worker.request(&request) {
             Ok(Ok(audio)) => Ok(audio.pcm),
             Ok(Err(message)) => bail!("audio.cpp synthesis failed: {message}"),
-            Err(first_error) => {
-                worker.stop().with_context(|| {
-                    format!("stop failed audio.cpp worker before restart: {first_error:#}")
-                })?;
-                let replacement = WorkerClient::launch(&self.spec).with_context(|| {
-                    format!("restart audio.cpp worker after IPC failure: {first_error:#}")
-                })?;
-                *worker = replacement;
-                match worker.request(&request)? {
-                    Ok(audio) => Ok(audio.pcm),
-                    Err(message) => {
-                        bail!("audio.cpp synthesis failed after worker restart: {message}")
-                    }
-                }
+            Err(error) => {
+                worker.stop().context("stop failed audio.cpp worker")?;
+                // A failed request may already have executed native work. Report
+                // it once; only a subsequent request may start a replacement.
+                Err(error).context("audio.cpp worker failed; request was not replayed")
             }
         }
     }
@@ -1059,6 +1163,7 @@ pub fn run_worker(spec_json: &str) -> Result<()> {
     }
     let spec: WorkerSpec =
         serde_json::from_str(spec_json).context("decode audio.cpp worker spec")?;
+    let (expected_rate, expected_voices) = spec_rate_voices(&spec.family)?;
     let mut engine = match NativeEngine::load(&spec) {
         Ok(engine) => engine,
         Err(error) => {
@@ -1074,8 +1179,8 @@ pub fn run_worker(spec_json: &str) -> Result<()> {
     write_json_frame(
         &mut output,
         &WorkerResponse::Ready {
-            sample_rate: SUPERTONIC_SAMPLE_RATE,
-            voices: SUPERTONIC_VOICES,
+            sample_rate: expected_rate,
+            voices: expected_voices,
         },
     )?;
     loop {
@@ -1117,6 +1222,7 @@ pub fn probe_provider(config: &Config, config_file: &Path) -> Result<PathBuf> {
     let spec = ProviderProbeSpec {
         library_dirs: resolve_library_dirs(config, config_file, &library)?,
         library: library.clone(),
+        family: config.model.family.clone(),
     };
     let executable = std::env::current_exe().context("locate Omaspeak executable")?;
     let encoded = serde_json::to_string(&spec).context("encode audio.cpp provider probe")?;
@@ -1174,7 +1280,8 @@ pub fn run_provider_probe(spec_json: &str) -> Result<()> {
     let spec: ProviderProbeSpec =
         serde_json::from_str(spec_json).context("decode audio.cpp provider probe spec")?;
     let api = Api::load(&spec.library)?;
-    crate::provider_families::require(&api._library, &["supertonic"])?;
+    let required = provider_family(&spec.family)?;
+    crate::provider_families::require(&api._library, &[required])?;
     Ok(())
 }
 

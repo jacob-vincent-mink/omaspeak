@@ -67,7 +67,7 @@ pub struct ModelConfig {
     pub voice_style: String,
     pub language: String,
     pub steps: i32,
-    pub voice: i32,
+    pub voice: crate::voices::VoiceSelection,
     pub options: BTreeMap<String, String>,
 }
 
@@ -87,7 +87,7 @@ impl Default for ModelConfig {
             voice_style: String::new(),
             language: "en".into(),
             steps: 8,
-            voice: 0,
+            voice: 0.into(),
             options: BTreeMap::new(),
         }
     }

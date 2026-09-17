@@ -1,5 +1,8 @@
 #![recursion_limit = "256"]
 
+mod request_service;
+mod wake_pause;
+
 mod voice_preview;
 
 use std::fs;
@@ -52,6 +55,14 @@ enum TopCommand {
         #[arg(long)]
         detailed: bool,
     },
+    #[command(name = "__request-worker", hide = true)]
+    RequestWorker {
+        spec: String,
+    },
+    #[command(name = "__voice-playback", hide = true)]
+    VoicePlayback {
+        output: PathBuf,
+    },
     #[command(name = "__voice-preview", hide = true)]
     VoicePreview {
         request: String,
@@ -83,6 +94,10 @@ enum TopCommand {
     /// Benchmark one loaded TTS engine, write WAVs, and print JSON.
     Benchmark(BenchmarkArgs),
     Stop,
+    /// Cancel the active speech request, or a specific queued/active request ID.
+    Cancel {
+        request_id: Option<String>,
+    },
     Voices {
         #[arg(long)]
         json: bool,
@@ -463,7 +478,12 @@ fn prove_setup_synthesis(config: &Config, paths: &AppPaths) -> Result<()> {
     let result = (|| {
         let engine = Engine::load(config, paths).context("initialize selected setup provider")?;
         let synthesis = engine
-            .synthesize("Omaspeak setup test.", 1.0, config.model.voice, &output)
+            .synthesize(
+                "Omaspeak setup test.",
+                1.0,
+                resolve_voice(config, None)?,
+                &output,
+            )
             .context("run file-only setup synthesis")?;
         if synthesis.sample_rate <= 0 || synthesis.samples == 0 {
             bail!("file-only setup synthesis returned invalid audio");
@@ -500,7 +520,10 @@ fn run_with_paths_and_prepare(
     let config_path = select_config_path(cli.config, paths);
     prepare(&cli.command, &config_path)?;
     match cli.command {
+        TopCommand::RequestWorker { spec } => request_service::worker(&spec),
+        TopCommand::Cancel { request_id } => cancel_request(paths, request_id),
         TopCommand::VoicePreview { request } => voice_preview::worker(&request),
+        TopCommand::VoicePlayback { output } => play(&output, || false),
         TopCommand::AudioCppProbe { spec } => omaspeak::audio_cpp::run_provider_probe(&spec),
         TopCommand::AudioCppWorker { spec } => omaspeak::audio_cpp::run_worker(&spec),
         TopCommand::InventoryProbe { candidate } => {
@@ -551,10 +574,7 @@ fn run_with_paths_and_prepare(
 }
 
 fn command_loads_engine(command: &TopCommand) -> bool {
-    matches!(
-        command,
-        TopCommand::Daemon | TopCommand::Say(_) | TopCommand::Benchmark(_)
-    )
+    matches!(command, TopCommand::Say(_) | TopCommand::Benchmark(_))
 }
 
 #[cfg(target_os = "linux")]
@@ -606,67 +626,23 @@ fn say(config_path: &Path, paths: &AppPaths, args: SayArgs) -> Result<()> {
 }
 
 fn resolve_voice(config: &Config, requested: Option<&str>) -> Result<i32> {
-    let Some(requested) = requested.map(str::trim).filter(|value| !value.is_empty()) else {
-        return Ok(config.model.voice);
+    let selection = match requested {
+        Some(value) => value.parse::<omaspeak::voices::VoiceSelection>()?,
+        None => config.model.voice.clone(),
     };
-    let spec = omaspeak::catalog::model(&config.model.name);
-    let voice = requested.parse::<i32>().ok().or_else(|| {
-        spec.and_then(|model| {
-            model
-                .voices
-                .iter()
-                .find(|voice| voice.name.eq_ignore_ascii_case(requested))
-                .map(|voice| voice.id)
-        })
-        .or_else(|| {
-            (config.model.family == "supertonic")
-                .then_some(omaspeak::voices::SUPERTONIC_PRESET_NAMES)
-                .and_then(|names| {
-                    names
-                        .iter()
-                        .position(|name| name.eq_ignore_ascii_case(requested))
-                        .map(|id| id as i32)
-                })
-        })
-    });
-    let Some(voice) = voice else {
-        let choices = spec.map_or_else(
-            || {
-                if config.model.family == "supertonic" {
-                    omaspeak::voices::SUPERTONIC_PRESET_NAMES.join(", ")
-                } else {
-                    "a numeric ID".to_owned()
-                }
-            },
-            |model| {
-                model
-                    .voices
-                    .iter()
-                    .map(|voice| format!("{} ({})", voice.name, voice.id))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            },
-        );
-        bail!(
-            "unknown voice {requested:?} for model {}; choose {choices}",
-            config.model.name
-        );
+    resolve_selection(config, &selection)
+}
+
+fn resolve_selection(config: &Config, selection: &omaspeak::voices::VoiceSelection) -> Result<i32> {
+    let voices = if config.model.family == "supertonic" {
+        omaspeak::voices::supertonic_presets()
+    } else {
+        omaspeak::catalog::model(&config.model.name)
+            .filter(|spec| spec.family == config.model.family)
+            .map(omaspeak::voices::from_catalog)
+            .with_context(|| format!("no voice inventory for family {}", config.model.family))?
     };
-    if let Some(model) = spec
-        && !model.voices.iter().any(|candidate| candidate.id == voice)
-    {
-        bail!(
-            "voice {voice} is unavailable for model {}; choose {}",
-            model.id,
-            model
-                .voices
-                .iter()
-                .map(|candidate| format!("{} ({})", candidate.name, candidate.id))
-                .collect::<Vec<_>>()
-                .join(", ")
-        );
-    }
-    Ok(voice)
+    selection.resolve(&voices)
 }
 
 fn build_say_request_with_terminal(
@@ -694,7 +670,13 @@ fn build_say_request_with_terminal(
         bail!("text exceeds {} bytes", config.daemon.max_text_bytes);
     }
     let output = args.out.unwrap_or_else(|| paths.state_dir.join("last.wav"));
-    let voice = resolve_voice(config, args.voice.as_deref())?;
+    let voice = args
+        .voice
+        .as_deref()
+        .map(str::parse)
+        .transpose()?
+        .unwrap_or_else(|| config.model.voice.clone());
+    resolve_selection(config, &voice)?;
     Ok(Request {
         protocol: 1,
         id: request_id(),
@@ -899,18 +881,17 @@ fn milliseconds(duration: Duration) -> f64 {
 }
 
 fn run_daemon(config_path: &Path, paths: &AppPaths) -> Result<()> {
-    run_daemon_with(config_path, paths, Engine::load, |interrupted| {
-        for signal in [
-            signal_hook::consts::signal::SIGINT,
-            signal_hook::consts::signal::SIGTERM,
-        ] {
-            signal_hook::flag::register(signal, interrupted.clone())
-                .context("install daemon shutdown handler")?;
-        }
-        Ok(())
-    })
+    let interrupted = Arc::new(AtomicBool::new(false));
+    for signal in [
+        signal_hook::consts::signal::SIGINT,
+        signal_hook::consts::signal::SIGTERM,
+    ] {
+        signal_hook::flag::register(signal, interrupted.clone())?;
+    }
+    request_service::serve(config_path, paths, interrupted)
 }
 
+#[cfg(test)]
 fn run_daemon_with<E: SpeechEngine>(
     config_path: &Path,
     paths: &AppPaths,
@@ -924,6 +905,7 @@ fn run_daemon_with<E: SpeechEngine>(
     serve_daemon(&engine, &config, paths, interrupted)
 }
 
+#[cfg(test)]
 fn serve_daemon(
     engine: &impl SpeechEngine,
     config: &Config,
@@ -967,17 +949,21 @@ fn serve_daemon(
     finish_daemon(&socket, &socket_metadata, serve_result)
 }
 
+#[cfg(test)]
 #[derive(Debug)]
 struct DaemonInterrupted;
 
+#[cfg(test)]
 impl std::fmt::Display for DaemonInterrupted {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str("daemon interrupted")
     }
 }
 
+#[cfg(test)]
 impl std::error::Error for DaemonInterrupted {}
 
+#[cfg(test)]
 fn accept_daemon_connection(
     listener: &UnixListener,
     interrupted: &AtomicBool,
@@ -989,6 +975,7 @@ fn accept_daemon_connection(
     )
 }
 
+#[cfg(test)]
 fn accept_daemon_connection_with<T>(
     interrupted: &AtomicBool,
     mut accept: impl FnMut() -> std::io::Result<T>,
@@ -1071,6 +1058,7 @@ fn serve_requests<S: Read + Write>(
     serve_requests_with_cancellation(engine, config, paths, &mut accept, |_| || false)
 }
 
+#[cfg(test)]
 fn serve_requests_with_cancellation<S: Read + Write, C: FnMut() -> bool>(
     engine: &impl SpeechEngine,
     config: &Config,
@@ -1242,8 +1230,8 @@ fn handle_request_with_cancellation(
                 if cancelled() {
                     Err(PlaybackCancelled.into())
                 } else {
-                    engine
-                        .synthesize(&text, speed, voice, &output)
+                    resolve_selection(config, &voice)
+                        .and_then(|voice| engine.synthesize(&text, speed, voice, &output))
                         .and_then(|synthesis| {
                             if cancelled() {
                                 return Err(PlaybackCancelled.into());
@@ -1263,6 +1251,10 @@ fn handle_request_with_cancellation(
                 }
             }
         }
+        Command::Cancel { request_id } => Ok(ResultPayload::Cancelled {
+            request_id,
+            count: 0,
+        }),
         Command::Status => Ok(status_payload(engine, config)),
         Command::Shutdown => Ok(ResultPayload::Shutdown),
     };
@@ -1473,6 +1465,19 @@ fn print_status(config_path: &Path, paths: &AppPaths, as_json: bool) -> Result<(
     Ok(())
 }
 
+fn cancel_request(paths: &AppPaths, request_id: Option<String>) -> Result<()> {
+    let response = try_send_request(
+        &paths.socket(),
+        &Request {
+            protocol: 1,
+            id: self::request_id(),
+            command: Command::Cancel { request_id },
+        },
+    )?
+    .ok_or_else(|| anyhow!("daemon is not running"))?;
+    print_response(response)
+}
+
 fn stop(paths: &AppPaths) -> Result<()> {
     let response = try_send_request(
         &paths.socket(),
@@ -1496,7 +1501,7 @@ fn voices(config_path: &Path, paths: &AppPaths, as_json: bool) -> Result<()> {
                 json!({
                     "id": voice.id,
                     "name": voice.name,
-                    "active": voice.id == config.model.voice,
+                    "active": config.model.voice.matches(voice),
                 })
             })
             .collect::<Vec<_>>();
@@ -1505,7 +1510,7 @@ fn voices(config_path: &Path, paths: &AppPaths, as_json: bool) -> Result<()> {
         for voice in voices {
             println!(
                 "{}\t{}\t{}",
-                if voice.id == config.model.voice {
+                if config.model.voice.matches(&voice) {
                     "*"
                 } else {
                     " "
@@ -1570,6 +1575,9 @@ fn save_config_mutation(
         clear_runtime_provider_configuration(&mut config.backend);
     }
     config.backend.validate_shape()?;
+    if key == "model.voice" {
+        resolve_voice(&config, None)?;
+    }
     save_and_reload_active(config, path, paths).map(|_| ())
 }
 
@@ -1737,14 +1745,34 @@ fn schema(path: &Path, paths: &AppPaths) -> Result<Value> {
         external_audio,
         locations.runtime_loadable.get("openvino") == Some(&true),
     );
-    let voice_choices = omaspeak::voices::available(&config, paths)
-        .unwrap_or_else(|_| {
-            omaspeak::catalog::model(&config.model.name)
-                .map(omaspeak::voices::from_catalog)
-                .unwrap_or_default()
-        })
-        .into_iter()
-        .map(|voice| json!({"value":voice.id,"label":voice.name}))
+    let voice_inventory = omaspeak::voices::available(&config, paths).unwrap_or_else(|_| {
+        omaspeak::catalog::model(&config.model.name)
+            .map(omaspeak::voices::from_catalog)
+            .unwrap_or_default()
+    });
+    let named = matches!(
+        config.model.voice,
+        omaspeak::voices::VoiceSelection::Name(_)
+    );
+    let voice_value = voice_inventory
+        .iter()
+        .find(|v| config.model.voice.matches(v))
+        .filter(|_| named)
+        .map(|v| json!(v.name))
+        .unwrap_or_else(|| json!(config.model.voice));
+    // Kokoro ignores generation steps; allow 0 for that family.
+    let steps_min = if config.model.family == "kokoro" {
+        0
+    } else {
+        1
+    };
+    let steps_description = if config.model.family == "kokoro" {
+        "Supertonic denoising steps; unused by Kokoro (0)"
+    } else {
+        "Supertonic denoising steps"
+    };
+    let voice_choices = voice_inventory.into_iter()
+        .map(|voice| json!({"value":if named {json!(voice.name)} else {json!(voice.id)},"label":voice.name}))
         .collect::<Vec<_>>();
     Ok(
         json!({"schema_version":1,"app":"omaspeak","app_version":env!("CARGO_PKG_VERSION"),"daemon_version":env!("CARGO_PKG_VERSION"),"config_path":path,
@@ -1759,7 +1787,7 @@ fn schema(path: &Path, paths: &AppPaths) -> Result<Value> {
             {"key":"backend.openvino_library","type":"path","section":"Backend","label":"OpenVINO library","description":"Exact OpenVINO C API library","value":config.backend.openvino_library,"file_value":null,"compiled":true,"restart_required":true},
             {"key":"backend.openvino_plugins","type":"path","section":"Backend","label":"OpenVINO plugins","description":"Exact OpenVINO plugins.xml","value":config.backend.openvino_plugins,"file_value":null,"compiled":true,"restart_required":true},
             {"key":"backend.threads","type":"integer","section":"Backend","label":"Threads","description":"Inference threads","value":config.backend.threads,"file_value":null,"compiled":true,"restart_required":true,"min":1,"max":64},
-            {"key":"model.family","type":"enum","section":"Model","label":"Family","description":"TTS model family","value":config.model.family,"file_value":null,"compiled":true,"restart_required":true,"choices":["supertonic"]},
+            {"key":"model.family","type":"enum","section":"Model","label":"Family","description":"TTS model family","value":config.model.family,"file_value":null,"compiled":true,"restart_required":true,"choices":["supertonic","kokoro"]},
             {"key":"model.name","type":"string","section":"Model","label":"Model","description":"Active catalog or custom model name","value":config.model.name,"file_value":null,"compiled":true,"restart_required":true},
             {"key":"model.directory","type":"path","section":"Model","label":"Directory","description":"Model asset directory","value":config.model_directory(paths),"file_value":config.model.directory,"compiled":true,"restart_required":true},
             {"key":"model.file","type":"string","section":"Model","label":"Model file","description":"Single-file native model inside the model directory","value":config.model.file,"file_value":null,"compiled":true,"restart_required":true},
@@ -1771,8 +1799,8 @@ fn schema(path: &Path, paths: &AppPaths) -> Result<Value> {
             {"key":"model.unicode_indexer","type":"string","section":"Model","label":"Unicode indexer","description":"Supertonic unicode indexer filename","value":config.model.unicode_indexer,"file_value":null,"compiled":true,"restart_required":true},
             {"key":"model.voice_style","type":"string","section":"Model","label":"Voice styles","description":"Supertonic voice style filename","value":config.model.voice_style,"file_value":null,"compiled":true,"restart_required":true},
             {"key":"model.language","type":"enum","section":"Model","label":"Language","description":"Supertonic generation language","value":config.model.language,"file_value":null,"compiled":true,"restart_required":true,"choices":["en","ko","ja","ar","bg","cs","da","de","el","es","et","fi","fr","hi","hr","hu","id","it","lt","lv","nl","pl","pt","ro","ru","sk","sl","sv","tr","uk","vi"]},
-            {"key":"model.steps","type":"integer","section":"Model","label":"Generation steps","description":"Supertonic denoising steps","value":config.model.steps,"file_value":null,"compiled":true,"restart_required":true,"min":1},
-            {"key":"model.voice","type":"enum","section":"Model","label":"Voice","description":"Default TTS speaker","value":config.model.voice,"file_value":null,"compiled":true,"restart_required":true,"choices":voice_choices},
+            {"key":"model.steps","type":"integer","section":"Model","label":"Generation steps","description":steps_description,"value":config.model.steps,"file_value":null,"compiled":true,"restart_required":true,"min":steps_min},
+            {"key":"model.voice","type":"enum","section":"Model","label":"Voice","description":"Default TTS speaker; preset name or legacy numeric ID","value":voice_value,"file_value":null,"compiled":true,"restart_required":true,"choices":voice_choices},
             {"key":"audio.device","type":"enum","choices":audio_choices,"discovery_error":audio_inventory["error"],"section":"Audio","label":"Output device","description":"System default or pipewire:<node.name>","value":config.audio.device,"file_value":null,"compiled":true,"restart_required":true,"choices_command":["audio-devices","--detailed","--json"]},
             {"key":"daemon.max_text_bytes","type":"integer","section":"Daemon","label":"Maximum text bytes","description":"Largest accepted UTF-8 request payload","value":config.daemon.max_text_bytes,"file_value":null,"compiled":true,"restart_required":true,"min":1}],
         "collections":[
@@ -3077,7 +3105,7 @@ fn guided_model(
     };
     let mut config = app_setup::ensure_config(config_path)?;
     spec.activate(&mut config);
-    config.model.voice = voice.id;
+    config.model.voice = omaspeak::voices::VoiceSelection::Name(voice.name.clone());
     prepare_npu_for_setup(&mut config, paths, ProgressFormat::Human)?;
     operations.prove(&mut config, paths)?;
     save_and_reload_active(config, config_path, paths)?;
@@ -3149,7 +3177,7 @@ fn choose_voice_for_config(
         bail!("model {} does not expose any voices", spec.id);
     }
     let preferred_id = if current.model.name == spec.name {
-        current.model.voice
+        resolve_voice(current, None)?
     } else {
         voices[0].id
     };
@@ -3416,7 +3444,7 @@ fn setup_all_with_config_and_preparer(
             operations.install(paths, spec, source, progress_format, accepted_license)?;
         activate_model_for_setup(spec, &mut config)?;
         if let Some(voice) = voice {
-            config.model.voice = voice;
+            config.model.voice = voice.into();
         }
         prepare_npu(&mut config, paths, progress_format)?;
         operations.prove(&mut config, paths)?;
@@ -3830,16 +3858,25 @@ impl std::fmt::Display for PlaybackCancelled {
 
 impl std::error::Error for PlaybackCancelled {}
 
-fn play(path: &Path, cancelled: impl FnMut() -> bool) -> Result<()> {
+fn play(path: &Path, mut cancelled: impl FnMut() -> bool) -> Result<()> {
+    let pause = wake_pause::WakePause::acquire(&mut cancelled)?;
     play_with(
         path,
         |program, path| {
             let mut command = ProcessCommand::new(program);
             command.arg(path).stdin(Stdio::null());
             configure_child_parent_death(&mut command);
+            if let Some(pause) = &pause {
+                pause.retain_in_player(&mut command);
+            }
             command.spawn()
         },
-        cancelled,
+        || {
+            cancelled()
+                || pause
+                    .as_ref()
+                    .is_some_and(wake_pause::WakePause::disconnected)
+        },
     )
 }
 

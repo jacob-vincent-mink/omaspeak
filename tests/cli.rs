@@ -1259,7 +1259,7 @@ fn voices_enumerates_installed_supertonic_speakers_and_marks_the_active_one() {
     config.model.family = "supertonic".into();
     config.model.name = "custom-supertonic".into();
     config.model.voice_style = "voice_styles".into();
-    config.model.voice = 1;
+    config.model.voice = omaspeak::voices::VoiceSelection::Legacy(1);
     config.save(&config_path).unwrap();
 
     let output = run(&root, &["voices", "--json"]);
@@ -1451,7 +1451,7 @@ fn voice_preview_worker_uses_candidate_voice_without_contacting_the_daemon() {
     let root = sandbox();
     let library = build_audio_cpp_stub(&root);
     let mut config = audio_cpp_stub_config(&root, library, "supertonic.gguf");
-    config.model.voice = 5;
+    config.model.voice = omaspeak::voices::VoiceSelection::Legacy(5);
     let paths = omaspeak::paths::AppPaths {
         config_file: root.join("untouched.toml"),
         data_dir: root.join("data"),
@@ -1485,8 +1485,8 @@ fn provider_probe_rejects_a_valid_abi_without_the_required_tts_family() {
     fs::write(
         &source,
         stub.replace(
-            "static const char *names[] = {\"supertonic\"}",
-            "static const char *names[] = {\"unrelated\"}",
+            "static const char *const stub_family_names[] = {\"supertonic\", \"kokoro_tts\"};",
+            "static const char *const stub_family_names[] = {\"unrelated\"};",
         ),
     )
     .unwrap();
@@ -1501,7 +1501,9 @@ fn provider_probe_rejects_a_valid_abi_without_the_required_tts_family() {
             .unwrap()
             .success()
     );
-    let spec = serde_json::json!({"library": library, "library_dirs": [root]}).to_string();
+    let spec =
+        serde_json::json!({"library": library, "library_dirs": [root], "family": "supertonic"})
+            .to_string();
     let result = run(&root, &["__audiocpp-probe", "--spec", &spec]);
     assert!(!result.status.success());
     assert!(
@@ -1509,4 +1511,867 @@ fn provider_probe_rejects_a_valid_abi_without_the_required_tts_family() {
         "{}",
         stderr(&result)
     );
+}
+
+#[test]
+fn playback_worker_waits_for_owned_pause_and_rejects_an_old_wake_daemon() {
+    use std::io::Read;
+    for accepted in [true, false] {
+        let root = sandbox();
+        let runtime = root.join("run/omawake");
+        fs::create_dir_all(&runtime).unwrap();
+        let listener = UnixListener::bind(runtime.join("control.sock")).unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let output = root.join("sample.wav");
+        let marker = root.join("sample.wav.played");
+        // A silent fake player: no audio device or real daemon is touched.
+        let player = root.join("test-bin/pw-play");
+        fs::write(&player, "#!/bin/sh\n: > \"$1.played\"\n").unwrap();
+        fs::set_permissions(&player, fs::Permissions::from_mode(0o755)).unwrap();
+        let observed = marker.clone();
+        let server = thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            let mut stream = loop {
+                match listener.accept() {
+                    Ok((stream, _)) => break stream,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        assert!(Instant::now() < deadline, "playback worker did not connect");
+                        thread::sleep(Duration::from_millis(10));
+                    }
+                    Err(error) => panic!("accept pause request: {error}"),
+                }
+            };
+            stream
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            let mut request = String::new();
+            BufReader::new(&mut stream).read_line(&mut request).unwrap();
+            let request: serde_json::Value = serde_json::from_str(&request).unwrap();
+            assert_eq!(request["type"], "hold_pause");
+            thread::sleep(Duration::from_millis(100));
+            assert!(
+                !observed.exists(),
+                "player started before pause acknowledgement"
+            );
+            let response = if accepted {
+                serde_json::json!({"protocol":1,"id":request["id"],"type":"state","state":"paused"})
+            } else {
+                serde_json::json!({"protocol":1,"id":request["id"],"type":"error","code":"invalid_request","message":"unknown hold_pause"})
+            };
+            writeln!(stream, "{response}").unwrap();
+            assert_eq!(stream.read(&mut [0]).unwrap(), 0, "hold was not released");
+        });
+        let result = run(&root, &["__voice-playback", output.to_str().unwrap()]);
+        server.join().unwrap();
+        assert_eq!(
+            result.status.success(),
+            accepted,
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        assert_eq!(marker.exists(), accepted);
+        fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn daemon_bounds_queue_and_cancels_stalled_synthesis_without_publishing_output() {
+    use std::os::unix::net::UnixStream;
+    let root = sandbox();
+    let library = build_audio_cpp_stub(&root);
+    let mut config = audio_cpp_stub_config(&root, library, "supertonic.gguf");
+    config.daemon.max_text_bytes = 512;
+    config
+        .save(&root.join("config/omaspeak/config.toml"))
+        .unwrap();
+    let mut daemon = ProcessGuard::new(
+        Command::new(env!("CARGO_BIN_EXE_omaspeak"))
+            .arg("daemon")
+            .env("OMASPEAK_STUB_STARTED", root.join("native-started"))
+            .env("OMASPEAK_STUB_CRASHES", root.join("native-crashes"))
+            .env("XDG_CONFIG_HOME", root.join("config"))
+            .env("XDG_DATA_HOME", root.join("data"))
+            .env("XDG_CACHE_HOME", root.join("cache"))
+            .env("XDG_STATE_HOME", root.join("state"))
+            .env("XDG_RUNTIME_DIR", root.join("run"))
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap(),
+    );
+    let socket = root.join("run/omaspeak/control.sock");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !socket.exists() {
+        assert!(Instant::now() < deadline);
+        assert!(daemon.try_wait().unwrap().is_none());
+        thread::sleep(Duration::from_millis(10));
+    }
+    let send = |id: &str, command: omaspeak::protocol::Command| {
+        let mut stream = UnixStream::connect(&socket).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(3)))
+            .unwrap();
+        let request = Request {
+            protocol: 1,
+            id: id.into(),
+            command,
+        };
+        serde_json::to_writer(&mut stream, &request).unwrap();
+        stream.write_all(b"\n").unwrap();
+        stream
+    };
+    let receive = |stream: &mut UnixStream| {
+        let mut line = String::new();
+        BufReader::new(stream).read_line(&mut line).unwrap();
+        serde_json::from_str::<Response>(&line).unwrap()
+    };
+    let destination = root.join("preserved.wav");
+    fs::write(&destination, b"previous output").unwrap();
+    let say = |text: &str, output: &Path| omaspeak::protocol::Command::Say {
+        text: text.into(),
+        voice: omaspeak::voices::VoiceSelection::Legacy(0),
+        speed: 1.0,
+        output: Some(output.to_string_lossy().into_owned()),
+        no_play: true,
+    };
+    let mut bad_json = UnixStream::connect(&socket).unwrap();
+    bad_json
+        .set_read_timeout(Some(Duration::from_secs(3)))
+        .unwrap();
+    bad_json.write_all(b"not-json\n").unwrap();
+    assert!(
+        matches!(receive(&mut bad_json).result, ResultPayload::Error { code, .. } if code == "invalid_request")
+    );
+    let mut slow = UnixStream::connect(&socket).unwrap();
+    slow.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+    slow.write_all(b"{\"protocol\":1").unwrap();
+    let responsiveness = Instant::now();
+    let mut status = send("responsive", omaspeak::protocol::Command::Status);
+    assert!(matches!(
+        receive(&mut status).result,
+        ResultPayload::Status { .. }
+    ));
+    assert!(
+        responsiveness.elapsed() < Duration::from_secs(1),
+        "partial client blocked status"
+    );
+    assert!(
+        matches!(receive(&mut slow).result, ResultPayload::Error { code, .. } if code == "invalid_request")
+    );
+    let mut oversized = send("too-long", say(&"x".repeat(513), &destination));
+    assert!(
+        matches!(receive(&mut oversized).result, ResultPayload::Error {code, ..} if code == "invalid_request")
+    );
+    let mut partials = Vec::new();
+    for _ in 0..16 {
+        let mut stream = UnixStream::connect(&socket).unwrap();
+        stream.write_all(b"{").unwrap();
+        partials.push(stream);
+    }
+    let mut busy = send("admission-full", omaspeak::protocol::Command::Status);
+    assert!(matches!(receive(&mut busy).result, ResultPayload::Error {code, ..} if code == "busy"));
+    drop(partials);
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        let mut status = send("admission-recovered", omaspeak::protocol::Command::Status);
+        if matches!(receive(&mut status).result, ResultPayload::Status { .. }) {
+            break;
+        }
+        assert!(Instant::now() < deadline);
+        thread::sleep(Duration::from_millis(10));
+    }
+    let mut stalled = send("stalled", say("stall-run", &destination));
+    let deadline = Instant::now() + Duration::from_secs(3);
+    loop {
+        let mut status = send("status", omaspeak::protocol::Command::Status);
+        let response = receive(&mut status);
+        if matches!(response.result, ResultPayload::Status { ref backend, .. } if backend["requests"]["active"] == "stalled")
+        {
+            break;
+        }
+        assert!(Instant::now() < deadline);
+        thread::sleep(Duration::from_millis(10));
+    }
+    let native_deadline = Instant::now() + Duration::from_secs(2);
+    while !root.join("native-started").exists() {
+        assert!(
+            Instant::now() < native_deadline,
+            "native synthesis never started"
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
+    let mut duplicate = send("stalled", say("other", &root.join("duplicate.wav")));
+    assert!(
+        matches!(receive(&mut duplicate).result, ResultPayload::Error { code, .. } if code == "duplicate_request")
+    );
+    let mut queued = Vec::new();
+    for n in 0..8 {
+        queued.push(send(
+            &format!("q{n}"),
+            say("after cancellation", &root.join(format!("q{n}.wav"))),
+        ));
+        // Wait for admission, making the capacity assertion deterministic.
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            let mut stream = send("status", omaspeak::protocol::Command::Status);
+            let response = receive(&mut stream);
+            if matches!(response.result, ResultPayload::Status { ref backend, .. } if backend["requests"]["queued"].as_array().unwrap().len() == n + 1)
+            {
+                break;
+            }
+            assert!(Instant::now() < deadline);
+        }
+    }
+    let mut overflow = send("overflow", say("overflow", &root.join("overflow.wav")));
+    assert!(
+        matches!(receive(&mut overflow).result, ResultPayload::Error { code, .. } if code == "busy")
+    );
+    let cancel_queued = run(&root, &["cancel", "q0"]);
+    assert!(cancel_queued.status.success(), "{}", stderr(&cancel_queued));
+    let cancelled: serde_json::Value = serde_json::from_slice(&cancel_queued.stdout).unwrap();
+    assert_eq!(cancelled["count"], 1);
+    assert_eq!(cancelled["request_id"], "q0");
+    assert!(
+        matches!(receive(&mut queued[0]).result, ResultPayload::Error { code, .. } if code == "cancelled")
+    );
+    // An unrelated config edit must not silently change the worker after cancel.
+    fs::write(
+        root.join("config/omaspeak/config.toml"),
+        "[backend]\nkind = \"unsupported\"\n",
+    )
+    .unwrap();
+    let began = Instant::now();
+    let cancel_active = run(&root, &["cancel"]);
+    assert!(cancel_active.status.success(), "{}", stderr(&cancel_active));
+    let cancelled: serde_json::Value = serde_json::from_slice(&cancel_active.stdout).unwrap();
+    assert_eq!(cancelled["count"], 1);
+    assert!(cancelled["request_id"].is_null());
+    assert!(
+        began.elapsed() < Duration::from_secs(1),
+        "cancellation waited for native synthesis"
+    );
+    assert!(
+        matches!(receive(&mut stalled).result, ResultPayload::Error { code, .. } if code == "cancelled")
+    );
+    assert_eq!(fs::read(&destination).unwrap(), b"previous output");
+    for (n, stream) in queued.iter_mut().enumerate().skip(1) {
+        let response = receive(stream);
+        assert_eq!(response.id, format!("q{n}"));
+        assert!(
+            matches!(response.result, ResultPayload::Synthesis { .. }),
+            "{response:?}"
+        );
+        assert!(root.join(format!("q{n}.wav")).exists());
+    }
+    assert!(!root.join("q0.wav").exists());
+    assert!(!root.join("overflow.wav").exists());
+    assert!(!fs::read_dir(&root).unwrap().any(|entry| {
+        entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with(".omaspeak-")
+    }));
+    let mut malformed = send("", omaspeak::protocol::Command::Status);
+    assert!(
+        matches!(receive(&mut malformed).result, ResultPayload::Error { code, .. } if code == "invalid_request")
+    );
+    let mut no_match = send(
+        "cancel-absent",
+        omaspeak::protocol::Command::Cancel {
+            request_id: Some("absent".into()),
+        },
+    );
+    assert!(matches!(
+        receive(&mut no_match).result,
+        ResultPayload::Cancelled { count: 0, .. }
+    ));
+    let mut crash = send("crash", say("crash-run", &destination));
+    assert!(
+        matches!(receive(&mut crash).result, ResultPayload::Error { code, .. } if code == "runtime")
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("native-crashes")).unwrap(),
+        "crash\n",
+        "failed request was replayed"
+    );
+    assert_eq!(fs::read(&destination).unwrap(), b"previous output");
+    let mut recovered = send("recovered", say("after crash", &root.join("recovered.wav")));
+    assert!(matches!(
+        receive(&mut recovered).result,
+        ResultPayload::Synthesis { .. }
+    ));
+    // Publishing over a directory must fail without leaving a staged file or
+    // poisoning the warm worker for later requests.
+    let blocked_output = root.join("output-directory");
+    fs::create_dir(&blocked_output).unwrap();
+    let mut blocked = send("blocked-output", say("cannot publish", &blocked_output));
+    assert!(
+        matches!(receive(&mut blocked).result, ResultPayload::Error { code, .. } if code == "runtime")
+    );
+    assert!(blocked_output.is_dir());
+
+    // A vanished client must release active synthesis and its queued successor
+    // must still finish, without publishing the cancelled request's output.
+    fs::remove_file(root.join("native-started")).unwrap();
+    let disconnected = send("disconnected", say("stall-run", &destination));
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while !root.join("native-started").exists() {
+        assert!(Instant::now() < deadline);
+        thread::sleep(Duration::from_millis(10));
+    }
+    let mut successor = send(
+        "successor",
+        say("client went away", &root.join("successor.wav")),
+    );
+    drop(disconnected);
+    assert!(matches!(
+        receive(&mut successor).result,
+        ResultPayload::Synthesis { .. }
+    ));
+    assert_eq!(fs::read(&destination).unwrap(), b"previous output");
+
+    // Losing the supervisor process fails its current batch without replay,
+    // and a later independent request can create a replacement.
+    fs::remove_file(root.join("native-started")).unwrap();
+    let mut lost_worker = send("lost-worker", say("stall-run", &destination));
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while !root.join("native-started").exists() {
+        assert!(Instant::now() < deadline);
+        thread::sleep(Duration::from_millis(10));
+    }
+    let mut lost_queued = send(
+        "lost-queued",
+        say("must not replay", &root.join("lost.wav")),
+    );
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        let mut status = send("status", omaspeak::protocol::Command::Status);
+        if matches!(receive(&mut status).result, ResultPayload::Status {ref backend, ..} if backend["requests"]["queued"] == serde_json::json!(["lost-queued"]))
+        {
+            break;
+        }
+        assert!(Instant::now() < deadline);
+    }
+    let children = fs::read_to_string(format!("/proc/{0}/task/{0}/children", daemon.id())).unwrap();
+    let children: Vec<i32> = children
+        .split_whitespace()
+        .map(|pid| pid.parse().unwrap())
+        .collect();
+    assert_eq!(children.len(), 1);
+    assert_eq!(unsafe { libc::kill(children[0], libc::SIGKILL) }, 0);
+    for stream in [&mut lost_worker, &mut lost_queued] {
+        assert!(
+            matches!(receive(stream).result, ResultPayload::Error {code, ..} if code == "runtime")
+        );
+    }
+    assert!(!root.join("lost.wav").exists());
+    assert_eq!(fs::read(&destination).unwrap(), b"previous output");
+    let mut replacement = send(
+        "replacement",
+        say("new independent request", &root.join("replacement.wav")),
+    );
+    assert!(matches!(
+        receive(&mut replacement).result,
+        ResultPayload::Synthesis { .. }
+    ));
+
+    // Shutdown during native work cancels both active and queued requests.
+    fs::remove_file(root.join("native-started")).unwrap();
+    let mut shutdown_active = send("shutdown-active", say("stall-run", &destination));
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while !root.join("native-started").exists() {
+        assert!(Instant::now() < deadline);
+        thread::sleep(Duration::from_millis(10));
+    }
+    let mut shutdown_queued = send("shutdown-queued", say("never run", &root.join("never.wav")));
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        let mut status = send("status", omaspeak::protocol::Command::Status);
+        if matches!(receive(&mut status).result, ResultPayload::Status { ref backend, .. } if backend["requests"]["queued"] == serde_json::json!(["shutdown-queued"]))
+        {
+            break;
+        }
+        assert!(Instant::now() < deadline);
+    }
+    let stopped = run(&root, &["stop"]);
+    assert!(stopped.status.success(), "{}", stderr(&stopped));
+    for stream in [&mut shutdown_active, &mut shutdown_queued] {
+        assert!(
+            matches!(receive(stream).result, ResultPayload::Error { code, .. } if code == "cancelled")
+        );
+    }
+    assert_eq!(fs::read(&destination).unwrap(), b"previous output");
+    assert!(!root.join("never.wav").exists());
+    assert!(!fs::read_dir(&root).unwrap().any(|entry| {
+        entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with(".omaspeak-")
+    }));
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while daemon.try_wait().unwrap().is_none() {
+        assert!(Instant::now() < deadline);
+        thread::sleep(Duration::from_millis(10));
+    }
+    assert!(daemon.collect_output().status.success());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn synthesis_worker_rejects_control_and_playback_requests_and_exits_cleanly() {
+    let root = sandbox();
+    let library = build_audio_cpp_stub(&root);
+    let config = audio_cpp_stub_config(&root, library, "supertonic.gguf");
+    let paths = omaspeak::paths::AppPaths {
+        config_file: root.join("config/omaspeak/config.toml"),
+        data_dir: root.join("data"),
+        cache_dir: root.join("cache"),
+        state_dir: root.join("state"),
+        runtime_dir: root.join("run"),
+    };
+    let spec = serde_json::json!({"config": config, "paths": paths}).to_string();
+    let mut process = ProcessGuard::new(
+        Command::new(env!("CARGO_BIN_EXE_omaspeak"))
+            .args(["__request-worker", &spec])
+            .env("XDG_RUNTIME_DIR", root.join("run"))
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap(),
+    );
+    let mut input = process.stdin.take().unwrap();
+    let mut output = BufReader::new(process.stdout.take().unwrap());
+    let mut read = || {
+        let mut line = String::new();
+        output.read_line(&mut line).unwrap();
+        serde_json::from_str::<Response>(&line).unwrap()
+    };
+    let ready = read();
+    assert_eq!(ready.id, "ready");
+    assert!(matches!(ready.result, ResultPayload::Status { .. }));
+    for (id, command) in [
+        ("control", omaspeak::protocol::Command::Status),
+        (
+            "playback",
+            omaspeak::protocol::Command::Say {
+                text: "should not play".into(),
+                voice: omaspeak::voices::VoiceSelection::Legacy(0),
+                speed: 1.0,
+                output: None,
+                no_play: false,
+            },
+        ),
+        (
+            "file",
+            omaspeak::protocol::Command::Say {
+                text: "file output".into(),
+                voice: omaspeak::voices::VoiceSelection::Legacy(0),
+                speed: 1.0,
+                output: Some(root.join("file.wav").to_string_lossy().into_owned()),
+                no_play: true,
+            },
+        ),
+    ] {
+        serde_json::to_writer(
+            &mut input,
+            &Request {
+                protocol: 1,
+                id: id.into(),
+                command,
+            },
+        )
+        .unwrap();
+        input.write_all(b"\n").unwrap();
+        let response = read();
+        assert_eq!(response.id, id);
+        if id == "file" {
+            assert!(matches!(response.result, ResultPayload::Synthesis { .. }));
+            assert!(
+                hound::WavReader::open(root.join("file.wav"))
+                    .unwrap()
+                    .duration()
+                    > 0
+            );
+        } else {
+            assert!(
+                matches!(response.result, ResultPayload::Error {code, ..} if code == "invalid_request")
+            );
+        }
+    }
+    serde_json::to_writer(
+        &mut input,
+        &Request {
+            protocol: 1,
+            id: "stop".into(),
+            command: omaspeak::protocol::Command::Shutdown,
+        },
+    )
+    .unwrap();
+    input.write_all(b"\n").unwrap();
+    drop(input);
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while process.try_wait().unwrap().is_none() {
+        assert!(Instant::now() < deadline);
+        thread::sleep(Duration::from_millis(10));
+    }
+    assert!(process.collect_output().status.success());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn playback_worker_stops_when_wake_ownership_is_lost() {
+    let root = sandbox();
+    let runtime = root.join("run/omawake");
+    fs::create_dir_all(&runtime).unwrap();
+    let listener = UnixListener::bind(runtime.join("control.sock")).unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let output = root.join("sample.wav");
+    let marker = root.join("sample.wav.pid");
+    let player = root.join("test-bin/pw-play");
+    fs::write(&player, "#!/bin/sh\necho $$ > \"$1.pid\"\nexec sleep 30\n").unwrap();
+    fs::set_permissions(&player, fs::Permissions::from_mode(0o755)).unwrap();
+    let observed = marker.clone();
+    let server = thread::spawn(move || {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut stream = loop {
+            match listener.accept() {
+                Ok((stream, _)) => break stream,
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    assert!(Instant::now() < deadline);
+                    thread::sleep(Duration::from_millis(10));
+                }
+                Err(error) => panic!("{error}"),
+            }
+        };
+        stream
+            .set_read_timeout(Some(Duration::from_secs(3)))
+            .unwrap();
+        let mut request = String::new();
+        BufReader::new(&mut stream).read_line(&mut request).unwrap();
+        let request: serde_json::Value = serde_json::from_str(&request).unwrap();
+        writeln!(
+            stream,
+            "{}",
+            serde_json::json!({"protocol":1,"id":request["id"],"type":"state","state":"paused"})
+        )
+        .unwrap();
+        while !observed.exists() {
+            assert!(Instant::now() < deadline, "player did not start");
+            thread::sleep(Duration::from_millis(10));
+        }
+        // Closing the owned connection models a wake daemon crash/restart.
+    });
+    let started = Instant::now();
+    let result = run(&root, &["__voice-playback", output.to_str().unwrap()]);
+    server.join().unwrap();
+    assert!(!result.status.success());
+    assert!(stderr(&result).contains("cancelled"), "{}", stderr(&result));
+    assert!(started.elapsed() < Duration::from_secs(5));
+    let pid: i32 = fs::read_to_string(marker).unwrap().trim().parse().unwrap();
+    assert_eq!(
+        unsafe { libc::kill(pid, 0) },
+        -1,
+        "player survived ownership loss"
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn playback_worker_never_starts_audio_after_a_failed_pause_handshake() {
+    use std::io::Read;
+    for payload in [
+        Some(Vec::new()),
+        Some(b"not-json\n".to_vec()),
+        Some(vec![b'x'; 65_537]),
+        None,
+    ] {
+        let root = sandbox();
+        let runtime = root.join("run/omawake");
+        fs::create_dir_all(&runtime).unwrap();
+        let listener = UnixListener::bind(runtime.join("control.sock")).unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let output = root.join("sample.wav");
+        let marker = root.join("sample.wav.played");
+        let player = root.join("test-bin/pw-play");
+        fs::write(&player, "#!/bin/sh\n: > \"$1.played\"\n").unwrap();
+        fs::set_permissions(&player, fs::Permissions::from_mode(0o755)).unwrap();
+        let server = thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            let mut stream = loop {
+                match listener.accept() {
+                    Ok((stream, _)) => break stream,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        assert!(Instant::now() < deadline);
+                        thread::sleep(Duration::from_millis(10));
+                    }
+                    Err(error) => panic!("{error}"),
+                }
+            };
+            stream
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            let mut request = String::new();
+            BufReader::new(&mut stream).read_line(&mut request).unwrap();
+            if let Some(payload) = payload {
+                let _ = stream.write_all(&payload);
+            } else {
+                assert_eq!(
+                    stream.read(&mut [0]).unwrap(),
+                    0,
+                    "timed-out client retained hold"
+                );
+            }
+        });
+        let result = run(&root, &["__voice-playback", output.to_str().unwrap()]);
+        server.join().unwrap();
+        assert!(!result.status.success());
+        assert!(!marker.exists(), "played without acknowledged ownership");
+        fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[test]
+fn playback_without_a_runtime_directory_uses_the_user_fallback() {
+    let root = sandbox();
+    let user = format!(
+        "omaspeak-test-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    );
+    let runtime = std::env::temp_dir().join(format!("omavoice-{user}"));
+    assert!(!runtime.exists());
+    // No wake daemon is present; the normal player is allowed. Its failure
+    // should fall through to the second player without requiring system audio.
+    fs::write(root.join("test-bin/pw-play"), "#!/bin/sh\nexit 1\n").unwrap();
+    fs::write(
+        root.join("test-bin/aplay"),
+        "#!/bin/sh\n: > \"$1.played\"\n",
+    )
+    .unwrap();
+    for name in ["pw-play", "aplay"] {
+        fs::set_permissions(
+            root.join("test-bin").join(name),
+            fs::Permissions::from_mode(0o755),
+        )
+        .unwrap();
+    }
+    let output = root.join("fallback.wav");
+    let result = Command::new(env!("CARGO_BIN_EXE_omaspeak"))
+        .args(["__voice-playback", output.to_str().unwrap()])
+        .env_remove("XDG_RUNTIME_DIR")
+        .env("USER", &user)
+        .env("PATH", test_path(&root))
+        .output()
+        .unwrap();
+    assert!(result.status.success(), "{}", stderr(&result));
+    assert!(root.join("fallback.wav.played").exists());
+    assert!(!runtime.exists());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn named_config_and_ipc_voices_reach_the_native_preset_without_changing_legacy_ids() {
+    let root = sandbox();
+    let library = build_audio_cpp_stub(&root);
+    let mut config = audio_cpp_stub_config(&root, library, "require-F1.gguf");
+    config.model.voice = omaspeak::voices::VoiceSelection::Name("F1".into());
+    config
+        .save(&root.join("config/omaspeak/config.toml"))
+        .unwrap();
+    let before = fs::read(root.join("config/omaspeak/config.toml")).unwrap();
+    let rejected = run(&root, &["config", "set", "model.voice", "not-a-preset"]);
+    assert!(!rejected.status.success());
+    assert_eq!(
+        fs::read(root.join("config/omaspeak/config.toml")).unwrap(),
+        before
+    );
+    let output = root.join("named.wav");
+    for extra in [vec![], vec!["--voice", "5"], vec!["--voice", "f1"]] {
+        let mut args = vec![
+            "say",
+            "named voice",
+            "--no-play",
+            "--out",
+            output.to_str().unwrap(),
+        ];
+        args.extend(extra);
+        let result = run(&root, &args);
+        assert!(result.status.success(), "{}", stderr(&result));
+        assert!(hound::WavReader::open(&output).unwrap().duration() > 0);
+    }
+    let wrong = run(&root, &["say", "wrong voice", "--no-play", "--voice", "0"]);
+    assert!(!wrong.status.success(), "legacy 0 must remain M1, not F1");
+    let voices = run(&root, &["voices", "--json"]);
+    assert!(voices.status.success(), "{}", stderr(&voices));
+    let schema = run(&root, &["config", "schema", "--json"]);
+    assert!(schema.status.success(), "{}", stderr(&schema));
+    let schema: serde_json::Value = serde_json::from_slice(&schema.stdout).unwrap();
+    let voice = schema["keys"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|v| v["key"] == "model.voice")
+        .unwrap();
+    assert_eq!(voice["value"], "F1");
+    assert!(
+        voice["choices"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|v| v["value"] == "F1")
+    );
+    let mut daemon = ProcessGuard::new(
+        Command::new(env!("CARGO_BIN_EXE_omaspeak"))
+            .arg("daemon")
+            .env("XDG_CONFIG_HOME", root.join("config"))
+            .env("XDG_DATA_HOME", root.join("data"))
+            .env("XDG_CACHE_HOME", root.join("cache"))
+            .env("XDG_STATE_HOME", root.join("state"))
+            .env("XDG_RUNTIME_DIR", root.join("run"))
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap(),
+    );
+    let socket = root.join("run/omaspeak/control.sock");
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while !socket.exists() {
+        assert!(Instant::now() < deadline);
+        assert!(daemon.try_wait().unwrap().is_none());
+        thread::sleep(Duration::from_millis(10));
+    }
+    let spoken = run(
+        &root,
+        &[
+            "say",
+            "daemon named voice",
+            "--no-play",
+            "--out",
+            output.to_str().unwrap(),
+        ],
+    );
+    assert!(spoken.status.success(), "{}", stderr(&spoken));
+    let invalid = run(
+        &root,
+        &["say", "unknown", "--no-play", "--voice", "not-a-voice"],
+    );
+    assert!(!invalid.status.success());
+    assert!(stderr(&invalid).contains("unavailable"));
+    assert!(run(&root, &["stop"]).status.success());
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while daemon.try_wait().unwrap().is_none() {
+        assert!(Instant::now() < deadline);
+        thread::sleep(Duration::from_millis(10));
+    }
+    assert!(daemon.collect_output().status.success());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn kokoro_voice_selects_engine_id_language_and_24khz_output() {
+    let root = sandbox();
+    let library = build_audio_cpp_stub(&root);
+    let mut config = audio_cpp_stub_config(&root, library, "require-af_heart.gguf");
+    config.model.family = "kokoro".into();
+    config.model.name = "kokoro-82m-gguf".into();
+    config.model.file = "require-af_heart.gguf".into();
+    config.model.voice = omaspeak::voices::VoiceSelection::Name("af_heart".into());
+    config
+        .save(&root.join("config/omaspeak/config.toml"))
+        .unwrap();
+
+    // Default voice (af_heart) synthesizes to a 24 kHz WAV.
+    let output = root.join("kokoro.wav");
+    let result = run(
+        &root,
+        &[
+            "say",
+            "Hello from Kokoro.",
+            "--no-play",
+            "--out",
+            output.to_str().unwrap(),
+        ],
+    );
+    assert!(result.status.success(), "{}", stderr(&result));
+    let spec = hound::WavReader::open(&output).unwrap().spec();
+    assert_eq!(spec.sample_rate, 24_000);
+    assert_eq!(spec.channels, 1u16);
+    let frames: Vec<i16> = hound::WavReader::open(&output)
+        .unwrap()
+        .into_samples()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert!(
+        !frames.is_empty() && frames.iter().any(|&s| s != 0),
+        "expected non-silent audio"
+    );
+
+    // Legacy numeric IDs resolve to the same engine voice IDs (0 = af_alloy).
+    let wrong = run(&root, &["say", "x", "--no-play", "--voice", "0"]);
+    assert!(
+        !wrong.status.success(),
+        "legacy 0 is af_alloy; the stub only accepts af_heart"
+    );
+    let by_name = run(&root, &["say", "x", "--no-play", "--voice", "af_heart"]);
+    assert!(by_name.status.success(), "{}", stderr(&by_name));
+
+    // Another named voice resolves to its engine ID and is rejected by the
+    // stub (proving the engine saw \"am_michael\", not a number).
+    let other = run(&root, &["say", "x", "--no-play", "--voice", "am_michael"]);
+    assert!(!other.status.success(), "the stub accepts only af_heart");
+
+    // Voices list and schema reflect the Kokoro inventory.
+    let voices = run(&root, &["voices", "--json"]);
+    assert!(voices.status.success(), "{}", stderr(&voices));
+    let voices: serde_json::Value = serde_json::from_slice(&voices.stdout).unwrap();
+    let list = voices["voices"]
+        .as_array()
+        .or_else(|| voices.as_array())
+        .unwrap();
+    assert_eq!(list.len(), 54);
+    assert!(
+        list.iter()
+            .any(|v| v["name"] == "af_heart" && v["active"] == true)
+    );
+    let schema = run(&root, &["config", "schema", "--json"]);
+    let schema: serde_json::Value = serde_json::from_slice(&schema.stdout).unwrap();
+    let family = schema["keys"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|v| v["key"] == "model.family")
+        .unwrap();
+    assert!(
+        family["choices"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|c| c == "kokoro")
+    );
+    let steps = schema["keys"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|v| v["key"] == "model.steps")
+        .unwrap();
+    assert_eq!(steps["min"], 0, "Kokoro leaves steps unused");
+
+    // Config round-trips a named Kokoro voice and keeps it through set/get.
+    let set = run(&root, &["config", "set", "model.voice", "bf_emma"]);
+    assert!(set.status.success(), "{}", stderr(&set));
+    let get = run(&root, &["config", "get", "model.voice"]);
+    assert!(get.status.success());
+    assert!(String::from_utf8(get.stdout).unwrap().contains("bf_emma"));
+    let set_bad = run(&root, &["config", "set", "model.voice", "zz_not_a_voice"]);
+    assert!(!set_bad.status.success());
+    fs::remove_dir_all(root).unwrap();
 }

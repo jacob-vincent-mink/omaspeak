@@ -14,9 +14,12 @@ pub enum Command {
     Say {
         text: String,
         speed: f32,
-        voice: i32,
+        voice: crate::voices::VoiceSelection,
         output: Option<String>,
         no_play: bool,
+    },
+    Cancel {
+        request_id: Option<String>,
     },
     Status,
     Shutdown,
@@ -49,6 +52,10 @@ pub enum ResultPayload {
         backend: serde_json::Value,
         #[serde(default)]
         audio: serde_json::Value,
+    },
+    Cancelled {
+        request_id: Option<String>,
+        count: usize,
     },
     Shutdown,
     Error {

@@ -147,8 +147,11 @@ Supertonic provides ten stable speaker presets: `M1`–`M5` and `F1`–`F5`.
 ```bash
 omaspeak voices
 omaspeak say --voice F3 "A different speaker"
-omaspeak config set model.voice 7
+omaspeak config set model.voice F3
 ```
+
+Preset names also work in `model.voice` and IPC. Existing numeric IDs retain
+their identity; see [named voices](docs/NAMED-VOICES.md).
 
 Daemon installation is explicit:
 

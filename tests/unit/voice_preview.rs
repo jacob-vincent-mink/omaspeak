@@ -97,21 +97,14 @@ fn synthesis_completion_starts_one_player_then_cleans_up() {
     fs::create_dir_all(&directory).unwrap();
     preview.directory = Some(directory.clone());
     preview.child = Some(completed(true));
-    let mut attempts = Vec::new();
     let message = preview
-        .poll_with(|player, path| {
-            attempts.push(player.to_owned());
+        .poll_with(|path| {
             assert_eq!(path, directory.join("sample.wav"));
-            if player == "pw-play" {
-                Err(std::io::ErrorKind::NotFound.into())
-            } else {
-                Ok(completed(true))
-            }
+            Ok(completed(true))
         })
         .unwrap()
         .unwrap();
-    assert!(message.contains("Playing"));
-    assert_eq!(attempts, ["pw-play", "aplay"]);
+    assert!(message.contains("playback"));
     assert!(preview.poll().unwrap().unwrap().contains("finished"));
     assert!(!directory.exists());
 
@@ -119,10 +112,9 @@ fn synthesis_completion_starts_one_player_then_cleans_up() {
     preview.directory = Some(preview.paths.runtime_dir.join("missing"));
     assert!(
         preview
-            .poll_with(|_, _| Err(std::io::ErrorKind::NotFound.into()))
+            .poll_with(|_| Err(std::io::ErrorKind::NotFound.into()))
             .unwrap_err()
             .to_string()
-            .contains("No WAV player")
+            .contains("playback worker")
     );
-    assert!(spawn_player("/does/not/exist/player", Path::new("sample.wav")).is_err());
 }

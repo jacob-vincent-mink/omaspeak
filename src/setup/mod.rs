@@ -218,7 +218,7 @@ fn checks_with(
         Ok(voices) => {
             let selected = voices
                 .iter()
-                .find(|voice| voice.id == config.model.voice)
+                .find(|voice| config.model.voice.matches(voice))
                 .expect("validated voice must exist");
             result.push(ok(
                 "voice",
