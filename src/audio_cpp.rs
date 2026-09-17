@@ -8,6 +8,8 @@ use std::collections::BTreeMap;
 use std::ffi::{CStr, CString, c_char, c_int, c_void};
 use std::io::{self, Read, Write};
 use std::os::fd::AsRawFd;
+#[cfg(target_os = "linux")]
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command, ExitStatus, Stdio};
 use std::sync::{Arc, Mutex};
@@ -746,6 +748,24 @@ impl WorkerClient {
         let loader_path = std::env::join_paths(&spec.library_dirs)
             .context("encode audio.cpp worker native library path")?;
         command.env("LD_LIBRARY_PATH", loader_path);
+        #[cfg(target_os = "linux")]
+        {
+            let parent = std::process::id() as libc::pid_t;
+            unsafe {
+                command.pre_exec(move || {
+                    if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL) == -1 {
+                        return Err(io::Error::last_os_error());
+                    }
+                    if libc::getppid() != parent {
+                        return Err(io::Error::new(
+                            io::ErrorKind::Interrupted,
+                            "audio.cpp parent exited during spawn",
+                        ));
+                    }
+                    Ok(())
+                });
+            }
+        }
         let mut child = command
             .spawn()
             .context("start supervised audio.cpp worker")?;
@@ -1016,6 +1036,10 @@ impl TtsBackend for AudioCppBackend {
             .worker
             .lock()
             .map_err(|_| anyhow!("audio.cpp worker lock is poisoned"))?;
+        if worker.stopped {
+            *worker = WorkerClient::launch(&self.spec)
+                .context("restart audio.cpp worker for a new request")?;
+        }
         let request = WorkerRequest::Generate {
             text: text.into(),
             speed,
@@ -1024,20 +1048,11 @@ impl TtsBackend for AudioCppBackend {
         match worker.request(&request) {
             Ok(Ok(audio)) => Ok(audio.pcm),
             Ok(Err(message)) => bail!("audio.cpp synthesis failed: {message}"),
-            Err(first_error) => {
-                worker.stop().with_context(|| {
-                    format!("stop failed audio.cpp worker before restart: {first_error:#}")
-                })?;
-                let replacement = WorkerClient::launch(&self.spec).with_context(|| {
-                    format!("restart audio.cpp worker after IPC failure: {first_error:#}")
-                })?;
-                *worker = replacement;
-                match worker.request(&request)? {
-                    Ok(audio) => Ok(audio.pcm),
-                    Err(message) => {
-                        bail!("audio.cpp synthesis failed after worker restart: {message}")
-                    }
-                }
+            Err(error) => {
+                worker.stop().context("stop failed audio.cpp worker")?;
+                // A failed request may already have executed native work. Report
+                // it once; only a subsequent request may start a replacement.
+                Err(error).context("audio.cpp worker failed; request was not replayed")
             }
         }
     }

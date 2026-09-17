@@ -18,6 +18,9 @@ pub enum Command {
         output: Option<String>,
         no_play: bool,
     },
+    Cancel {
+        request_id: Option<String>,
+    },
     Status,
     Shutdown,
 }
@@ -49,6 +52,10 @@ pub enum ResultPayload {
         backend: serde_json::Value,
         #[serde(default)]
         audio: serde_json::Value,
+    },
+    Cancelled {
+        request_id: Option<String>,
+        count: usize,
     },
     Shutdown,
     Error {
