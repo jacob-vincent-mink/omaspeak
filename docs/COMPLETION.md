@@ -68,7 +68,7 @@ those inputs, without declaring the first release fully qualified.
 | S01 | Partial | Versioned English corpus, matched seed output, independent transcripts and listening packs; human ratings and controlled resource gates remain open |
 | S02/S03 | Implemented | Complete defaults, compatibility/family checks, stable CLI and scrolling; installed voices support cancellable Space-key preview |
 | S04 | Implemented; final audit closed (2026-09-16) | Locking, cancellation, disk preflight, license/hash handling and rollback tests; `setup check` maps an unready NPU cache to a remediation row (tested both states), `setup cache --prepare` guards wrong runtimes, compiler failures carry the retry guidance, and activation-proof failures map to complete-provider acceptance |
-| S05 | Partial | CPU/GPU/NPU/Vulkan/CUDA evidence at differing depths; GB10 produced 36 valid CUDA WAVs with verified placement; HIP pending |
+| S05 | Partial | CPU/GPU/NPU/Vulkan/CUDA evidence at differing depths; GB10 produced 36 valid CUDA WAVs with verified placement; maintainer live-verified speech synthesis on the v0.0.2-rc.2 install (2026-09-17); HIP pending |
 | S06 | Implemented | Bounded requests, cancellation, request identity and owned playback pauses (PRs #4/#5) |
 | S07 | Deferred at current pin (recorded) | Streaming evaluation retained the offline path; unbounded session retention failed the buffering gate (PR #6) |
 | S08 | Done | Named preset voice selection with legacy numeric identity preserved (PR #7) |
