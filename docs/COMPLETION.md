@@ -57,8 +57,9 @@ those inputs, without declaring the first release fully qualified.
   playback/TV/music recordings with labels and provenance.
 - A controlled measurement window and readable energy counters for attributed
   resource/power comparisons. Shared-host GPU telemetry is not application power.
-- A selected language and suitable independent evaluation/listening data before
-  promoting the first non-English profile. No blanket multilingual claim.
+- Spanish is selected by the maintainer for the first non-English profile in
+  both apps. Independent Spanish wake recordings and listening evaluation remain
+  required before promotion. No blanket multilingual claim.
 
 ## Omaspeak acceptance status
 
