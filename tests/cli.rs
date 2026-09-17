@@ -1318,6 +1318,7 @@ fn runtime_commands_use_the_daemon_protocol_when_socket_is_present() {
     let server = serve_once(
         &root,
         ResultPayload::Status {
+            audio: serde_json::Value::Null,
             running: true,
             pid: 42,
             language: String::new(),
@@ -1335,6 +1336,7 @@ fn runtime_commands_use_the_daemon_protocol_when_socket_is_present() {
     let server = serve_once(
         &root,
         ResultPayload::Status {
+            audio: serde_json::Value::Null,
             running: true,
             pid: 42,
             language: String::new(),

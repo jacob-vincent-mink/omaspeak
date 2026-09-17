@@ -53,6 +53,8 @@ pub enum ResultPayload {
         language: String,
         sample_rate: i32,
         backend: serde_json::Value,
+        #[serde(default)]
+        audio: serde_json::Value,
     },
     Cancelled {
         request_id: Option<String>,

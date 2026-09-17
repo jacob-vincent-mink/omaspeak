@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Add persistent audio-device selection, PipeWire discovery, Audio setup and
+  model-free device tests, dynamic schema choices, and routing diagnostics.
+- Prevent pinned audio routes from falling back to another device.
+
 ## 0.0.1 - 2026-09-15
 
 - Promoted the validated rc.3 native-provider architecture to the first stable

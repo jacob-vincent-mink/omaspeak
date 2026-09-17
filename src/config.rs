@@ -14,6 +14,7 @@ pub struct Config {
     pub backend: BackendConfig,
     pub model: ModelConfig,
     pub daemon: DaemonConfig,
+    pub audio: AudioConfig,
 }
 
 impl Config {
@@ -109,3 +110,16 @@ impl Default for DaemonConfig {
 #[cfg(test)]
 #[path = "../tests/unit/config.rs"]
 mod tests;
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct AudioConfig {
+    pub device: String,
+}
+impl Default for AudioConfig {
+    fn default() -> Self {
+        Self {
+            device: "default".into(),
+        }
+    }
+}

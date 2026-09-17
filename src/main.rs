@@ -48,6 +48,13 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum TopCommand {
+    /// List available output devices without loading a model.
+    AudioDevices {
+        #[arg(long)]
+        json: bool,
+        #[arg(long)]
+        detailed: bool,
+    },
     #[command(name = "__request-worker", hide = true)]
     RequestWorker {
         spec: String,
@@ -157,6 +164,17 @@ enum ConfigCommand {
 
 #[derive(Subcommand)]
 enum SetupCommand {
+    /// Select or test the audio device without loading an inference model.
+    Audio {
+        #[arg(long)]
+        device: Option<String>,
+        /// Save the choice and restart an already-active service.
+        #[arg(long)]
+        apply: bool,
+        /// Run a short microphone level check or speaker test sound.
+        #[arg(long)]
+        test: bool,
+    },
     /// Check the active model, runtime, audio, launcher, and optional service.
     Check {
         /// Print machine-readable check results.
@@ -278,6 +296,9 @@ enum SetupCommand {
 }
 
 trait SetupSelector {
+    fn audio_device(&mut self, current: &str) -> Result<Option<String>> {
+        Ok(Some(current.into()))
+    }
     fn probe_runtime(
         &mut self,
         config: &Config,
@@ -333,6 +354,9 @@ struct RuntimeSelection {
 struct TerminalSetupSelector;
 
 impl SetupSelector for TerminalSetupSelector {
+    fn audio_device(&mut self, current: &str) -> Result<Option<String>> {
+        choose_audio_device(current)
+    }
     fn probe_runtime(
         &mut self,
         config: &Config,
@@ -518,6 +542,25 @@ fn run_with_paths_and_prepare(
             omaspeak::audio_cpp::disable_core_dumps()?;
             let result = omaspeak::runtime_inventory::npu_child(serde_json::from_str(&request)?)?;
             omaspeak::runtime_inventory::write_npu_preparation_result(&result)
+        }
+        TopCommand::AudioDevices { json, detailed } => {
+            let config = Config::load(&config_path)?;
+            let inventory = omaspeak::audio_devices::inventory("output", &config.audio.device);
+            if json || detailed {
+                println!("{}", serde_json::to_string_pretty(&inventory)?);
+            } else {
+                for device in inventory["devices"].as_array().unwrap() {
+                    println!(
+                        "{}\t{}",
+                        device["selector"].as_str().unwrap(),
+                        device["label"].as_str().unwrap()
+                    );
+                }
+                if let Some(error) = inventory["error"].as_str() {
+                    eprintln!("{error}");
+                }
+            }
+            Ok(())
         }
         TopCommand::Daemon => run_daemon(&config_path, paths),
         TopCommand::Status { json } => print_status(&config_path, paths, json),
@@ -1194,7 +1237,14 @@ fn handle_request_with_cancellation(
                                 return Err(PlaybackCancelled.into());
                             }
                             if !no_play {
-                                play(&synthesis.output, &mut cancelled)?;
+                                play_on(&synthesis.output, &config.audio.device, &mut cancelled)
+                                    .map_err(|error| {
+                                        if error.downcast_ref::<PlaybackCancelled>().is_some() {
+                                            error
+                                        } else {
+                                            PlaybackFailure(format!("{error:#}")).into()
+                                        }
+                                    })?;
                             }
                             Ok(synthesis_payload(engine, synthesis))
                         })
@@ -1217,6 +1267,8 @@ fn handle_request_with_cancellation(
         Err(error) => {
             let code = if error.downcast_ref::<PlaybackCancelled>().is_some() {
                 "cancelled"
+            } else if error.downcast_ref::<PlaybackFailure>().is_some() {
+                "audio"
             } else {
                 "runtime"
             };
@@ -1261,6 +1313,7 @@ fn status_payload(engine: &impl SpeechEngine, config: &Config) -> ResultPayload 
         model: engine.model_name().into(),
         language: config.model.language.clone(),
         sample_rate: engine.sample_rate(),
+        audio: omaspeak::audio_devices::status(&config.audio.device, None, None),
         backend: json!({
             "kind": engine.backend_kind(),
             "requested": {"runtime": config.backend.runtime, "device": config.backend.canonical_device().unwrap_or_else(|_| config.backend.device.clone())},
@@ -1376,13 +1429,33 @@ fn print_status(config_path: &Path, paths: &AppPaths, as_json: bool) -> Result<(
             command: Command::Status,
         },
     )?;
-    let status = if let Some(response) = response {
+    let mut status = if let Some(response) = response {
         serde_json::to_value(response.result)?
     } else {
         let config = Config::load(config_path)?;
-        json!({"type":"status","running":false,"pid":null,"model":config.model.name,"language":config.model.language,"sample_rate":null,
+        json!({"type":"status","running":false,"pid":null,"model":config.model.name,"language":config.model.language,"sample_rate":null,"audio":omaspeak::audio_devices::status(&config.audio.device,None,None),
             "backend":{"kind":config.backend.kind,"requested":{"runtime":config.backend.runtime,"device":config.backend.device},"effective":null,"supported_capabilities":supported_capabilities(),"fallback_policy":config.backend.fallback,"fallback_used":false,"placement_verified":false,"evidence":[]}})
     };
+    let saved = Config::load(config_path)?.audio.device;
+    status["audio"]["saved"] = json!(&saved);
+    status["audio"]["restart_required"] = json!(
+        status["audio"]["requested"]
+            .as_str()
+            .is_some_and(|active| active != saved)
+    );
+    if let Some(active) = status["audio"]["requested"].as_str() {
+        let inventory = omaspeak::audio_devices::inventory("output", active);
+        status["audio"]["available"] = if omaspeak::audio_devices::is_default(active) {
+            Value::Null
+        } else {
+            json!(inventory["devices"].as_array().is_some_and(|devices| {
+                devices
+                    .iter()
+                    .any(|d| d["selector"] == active && d["available"] == true)
+            }))
+        };
+        status["audio"]["discovery_error"] = inventory["error"].clone();
+    }
     if as_json {
         println!("{}", serde_json::to_string_pretty(&status)?);
     } else if status.get("running") == Some(&Value::Bool(true)) {
@@ -1528,6 +1601,10 @@ fn set_config(config: &mut Config, key: &str, value: &str) -> Result<()> {
         return Ok(());
     }
     match key {
+        "audio.device" => {
+            omaspeak::audio_devices::validate(value, "output")?;
+            config.audio.device = value.into();
+        }
         "backend.kind" => config.backend.kind = value.into(),
         "backend.runtime" => config.backend.runtime = parse_runtime(value)?,
         "backend.device" => config.backend.device = value.into(),
@@ -1571,6 +1648,7 @@ fn unset_config(config: &mut Config, key: &str) -> Result<()> {
     }
     let defaults = Config::default();
     match key {
+        "audio.device" => config.audio.device = "default".into(),
         "backend.kind" => config.backend.kind = defaults.backend.kind,
         "backend.runtime" => config.backend.runtime = defaults.backend.runtime,
         "backend.device" => config.backend.device = defaults.backend.device,
@@ -1645,6 +1723,8 @@ fn parse_fallback(value: &str) -> Result<Fallback> {
 
 fn schema(path: &Path, paths: &AppPaths) -> Result<Value> {
     let config = Config::load(path)?;
+    let audio_inventory = omaspeak::audio_devices::inventory("output", &config.audio.device);
+    let audio_choices = omaspeak::audio_devices::schema_choices(&audio_inventory);
     let locations = omaspeak::runtime::discover(&config.backend, path);
     let packaged_cpu = omaspeak::runtime::find_versioned_library(
         &locations.package_library_dirs,
@@ -1722,6 +1802,7 @@ fn schema(path: &Path, paths: &AppPaths) -> Result<Value> {
             {"key":"model.language","type":"enum","section":"Model","label":"Language","description":"Supertonic generation language","value":config.model.language,"file_value":null,"compiled":true,"restart_required":true,"choices":["en","ko","ja","ar","bg","cs","da","de","el","es","et","fi","fr","hi","hr","hu","id","it","lt","lv","nl","pl","pt","ro","ru","sk","sl","sv","tr","uk","vi"]},
             {"key":"model.steps","type":"integer","section":"Model","label":"Generation steps","description":steps_description,"value":config.model.steps,"file_value":null,"compiled":true,"restart_required":true,"min":steps_min},
             {"key":"model.voice","type":"enum","section":"Model","label":"Voice","description":"Default TTS speaker; preset name or legacy numeric ID","value":voice_value,"file_value":null,"compiled":true,"restart_required":true,"choices":voice_choices},
+            {"key":"audio.device","type":"enum","choices":audio_choices,"discovery_error":audio_inventory["error"],"section":"Audio","label":"Output device","description":"System default or pipewire:<node.name>","value":config.audio.device,"file_value":null,"compiled":true,"restart_required":true,"choices_command":["audio-devices","--detailed","--json"]},
             {"key":"daemon.max_text_bytes","type":"integer","section":"Daemon","label":"Maximum text bytes","description":"Largest accepted UTF-8 request payload","value":config.daemon.max_text_bytes,"file_value":null,"compiled":true,"restart_required":true,"min":1}],
         "collections":[
             {"prefix":"backend.options.","type":"string-map","section":"Backend","label":"Provider options","description":"audio.cpp load/session/request options or direct OpenVINO device properties","restart_required":true},
@@ -1792,6 +1873,11 @@ fn setup(command: Option<SetupCommand>, config_path: &Path, paths: &AppPaths) ->
         return app_setup::print_checks(config_path, paths, false);
     };
     match command {
+        SetupCommand::Audio {
+            device,
+            apply,
+            test,
+        } => setup_audio(config_path, paths, device, apply, test),
         SetupCommand::Check { json } => app_setup::print_checks(config_path, paths, json),
         SetupCommand::Cache { prepare, json } => {
             let mut config = app_setup::load_config(config_path)?;
@@ -2212,6 +2298,10 @@ fn guided_setup(
             "Check",
             "Check the current model, runtime, audio, launcher, and optional service.",
         ),
+        MenuItem::available(
+            "Audio",
+            "Select or test the output device without loading a model.",
+        ),
     ];
     let Some(selected) = selector.select(
         "Omaspeak setup",
@@ -2228,6 +2318,7 @@ fn guided_setup(
         1 => guided_runtime(config_path, paths, selector).map(|_| ()),
         2 => guided_model(config_path, paths, operations, selector).map(|_| ()),
         3 => app_setup::print_checks(config_path, paths, false),
+        4 => setup_audio(config_path, paths, None, false, false),
         _ => bail!("interactive setup returned an invalid choice"),
     }
 }
@@ -2289,7 +2380,7 @@ fn guided_full_setup_with_validator(
         println!("Setup cancelled.");
         return Ok(());
     };
-    let candidate = runtime_configuration_candidate(
+    let mut candidate = runtime_configuration_candidate(
         config_path,
         selection.runtime,
         &selection.device,
@@ -2322,6 +2413,11 @@ fn guided_full_setup_with_validator(
         println!("Setup cancelled; the model license was not accepted.");
         return Ok(());
     }
+    let Some(audio_device) = selector.audio_device(&candidate.audio.device)? else {
+        println!("Setup cancelled.");
+        return Ok(());
+    };
+    candidate.audio.device = audio_device;
     let confirmation = [
         MenuItem::available(
             "Apply setup",
@@ -2330,12 +2426,13 @@ fn guided_full_setup_with_validator(
         MenuItem::available("Cancel", "Leave the current configuration unchanged."),
     ];
     let summary = format!(
-        "Runtime: {} · Device: {} · Model: {} · Voice: {} (ID {}) · Service unit: unchanged (`omaspeak setup systemd` installs it)",
+        "Runtime: {} · Device: {} · Model: {} · Voice: {} (ID {}) · Output: {} · Service unit: unchanged (`omaspeak setup systemd` installs it)",
         selection.runtime.name(),
         selection.device,
         model,
         voice.name,
         voice.id,
+        candidate.audio.device,
     );
     if selector.select("Apply Omaspeak setup", &summary, &confirmation, 0)? != Some(0) {
         println!("Setup cancelled; no changes were made.");
@@ -3867,3 +3964,153 @@ fn request_id() -> String {
 #[cfg(test)]
 #[path = "../tests/unit/app_main.rs"]
 mod tests;
+
+fn choose_audio_device(current: &str) -> Result<Option<String>> {
+    app_setup::audio::choose(current, |selected| {
+        omaspeak::audio_devices::inventory("output", selected)
+    })
+}
+
+fn setup_audio(
+    config_path: &Path,
+    paths: &AppPaths,
+    device: Option<String>,
+    apply: bool,
+    test: bool,
+) -> Result<()> {
+    let mut config = Config::load(config_path)?;
+    let interactive = device.is_none() && !test && !apply;
+    let selected = if interactive {
+        let Some(selected) = choose_audio_device(&config.audio.device)? else {
+            println!("Setup cancelled.");
+            return Ok(());
+        };
+        selected
+    } else {
+        device.unwrap_or_else(|| config.audio.device.clone())
+    };
+    omaspeak::audio_devices::validate(&selected, "output")?;
+    if test {
+        test_audio_device(&selected)?;
+    }
+    let mut save = apply;
+    if interactive {
+        loop {
+            let items = [
+                MenuItem::available(
+                    "Apply",
+                    "Save this route and restart an already-active service.",
+                ),
+                MenuItem::available(
+                    "Test device",
+                    "Run a short audio check without loading a model.",
+                ),
+                MenuItem::available("Cancel", "Leave the current configuration unchanged."),
+            ];
+            match app_setup::wizard::select("Apply audio device", &selected, &items, 0)? {
+                Some(0) => {
+                    save = true;
+                    break;
+                }
+                Some(1) => {
+                    if let Err(error) = test_audio_device(&selected) {
+                        eprintln!("Audio test failed: {error:#}");
+                    }
+                }
+                _ => {
+                    println!("Setup cancelled.");
+                    return Ok(());
+                }
+            }
+        }
+    }
+    if save {
+        config.audio.device = selected;
+        let restarted = save_and_reload_active(config, config_path, paths)?;
+        println!(
+            "Audio device saved; {}.",
+            if restarted {
+                "active service restarted"
+            } else {
+                "restart any manually launched daemon to apply"
+            }
+        );
+    } else if !test {
+        println!("Audio device: {selected}; use --apply to save or --test to check it.");
+    }
+    Ok(())
+}
+
+fn test_audio_device(selected: &str) -> Result<()> {
+    let path = std::env::temp_dir().join(format!("omaspeak-audio-test-{}.wav", request_id()));
+    let file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)?;
+    let result = (|| {
+        let mut wav = hound::WavWriter::new(
+            file,
+            hound::WavSpec {
+                channels: 1,
+                sample_rate: 24000,
+                bits_per_sample: 16,
+                sample_format: hound::SampleFormat::Int,
+            },
+        )?;
+        for n in 0..12000 {
+            let envelope = ((n as f32 / 480.0).min(1.0)).min(((12000 - n) as f32 / 480.0).min(1.0));
+            wav.write_sample(
+                (2000.0 * envelope * (std::f32::consts::TAU * 440.0 * n as f32 / 24000.0).sin())
+                    as i16,
+            )?;
+        }
+        wav.finalize()?;
+        play_on(&path, selected, || false)
+    })();
+    let _ = fs::remove_file(&path);
+    result
+}
+
+fn play_on(path: &Path, selected: &str, mut cancelled: impl FnMut() -> bool) -> Result<()> {
+    omaspeak::audio_devices::validate(selected, "output")?;
+    if cancelled() {
+        return Err(PlaybackCancelled.into());
+    }
+    if omaspeak::audio_devices::is_default(selected) {
+        return play(path, cancelled);
+    }
+    omaspeak::audio_devices::resolve(selected, "output")?;
+    let target = selected
+        .strip_prefix("pipewire:")
+        .context("expected PipeWire output")?;
+    let mut command = ProcessCommand::new("pw-play");
+    command
+        .args([
+            "--target",
+            target,
+            "--properties",
+            omaspeak::audio_devices::PINNED_PROPERTIES,
+        ])
+        .arg(path)
+        .stdin(Stdio::null());
+    configure_child_parent_death(&mut command);
+    let mut child = command.spawn().context("start pinned PipeWire playback")?;
+    // Includes time to establish the route; prevents hanging forever if the
+    // target disappears between discovery and linking. Never replay or reroute.
+    let seconds = hound::WavReader::open(path)
+        .map(|r| r.duration() as f64 / f64::from(r.spec().sample_rate))
+        .unwrap_or(0.0);
+    let deadline = Instant::now() + Duration::from_secs_f64(seconds.max(0.0) + 5.0);
+    let result = wait_for_playback(&mut child, || cancelled() || Instant::now() >= deadline);
+    if Instant::now() >= deadline {
+        bail!("playback timed out on {selected}; the output may have disconnected");
+    }
+    if !result?.success() {
+        bail!("playback failed on {selected}; no alternate output was used");
+    }
+    Ok(())
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("{0}")]
+struct PlaybackFailure(String);

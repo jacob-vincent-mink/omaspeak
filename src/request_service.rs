@@ -392,6 +392,11 @@ fn serve_loop(
                                         language: config.model.language.clone(),
                                         sample_rate,
                                         backend,
+                                        audio: omaspeak::audio_devices::status(
+                                            &config.audio.device,
+                                            None,
+                                            None,
+                                        ),
                                     });
                                 }
                                 Command::Cancel { request_id } => {
