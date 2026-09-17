@@ -1444,3 +1444,69 @@ fn systemd_lifecycle_uses_user_manager_and_propagates_failures() {
             .success()
     );
 }
+
+#[cfg(target_os = "linux")]
+#[test]
+fn voice_preview_worker_uses_candidate_voice_without_contacting_the_daemon() {
+    let root = sandbox();
+    let library = build_audio_cpp_stub(&root);
+    let mut config = audio_cpp_stub_config(&root, library, "supertonic.gguf");
+    config.model.voice = 5;
+    let paths = omaspeak::paths::AppPaths {
+        config_file: root.join("untouched.toml"),
+        data_dir: root.join("data"),
+        cache_dir: root.join("cache"),
+        state_dir: root.join("state"),
+        runtime_dir: root.join("run"),
+    };
+    fs::create_dir_all(&paths.runtime_dir).unwrap();
+    let listener = UnixListener::bind(paths.socket()).unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let output = root.join("preview.wav");
+    let request =
+        serde_json::json!({"config": config, "paths": paths, "output": output}).to_string();
+    let result = run(&root, &["__voice-preview", &request]);
+    assert!(result.status.success(), "{}", stderr(&result));
+    assert!(hound::WavReader::open(&output).unwrap().duration() > 0);
+    assert!(listener.accept().is_err());
+    assert!(!paths.config_file.exists());
+    assert!(!paths.state_dir.join("last.wav").exists());
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn provider_probe_rejects_a_valid_abi_without_the_required_tts_family() {
+    let root = sandbox();
+    let source = root.join("wrong-family.c");
+    let stub = fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/audiocpp_stub.c"),
+    )
+    .unwrap();
+    fs::write(
+        &source,
+        stub.replace(
+            "static const char *names[] = {\"supertonic\"}",
+            "static const char *names[] = {\"unrelated\"}",
+        ),
+    )
+    .unwrap();
+    let library = root.join("wrong-family.so");
+    assert!(
+        Command::new("cc")
+            .args(["-shared", "-fPIC"])
+            .arg(source)
+            .arg("-o")
+            .arg(&library)
+            .status()
+            .unwrap()
+            .success()
+    );
+    let spec = serde_json::json!({"library": library, "library_dirs": [root]}).to_string();
+    let result = run(&root, &["__audiocpp-probe", "--spec", &spec]);
+    assert!(!result.status.success());
+    assert!(
+        stderr(&result).contains("missing required model family supertonic"),
+        "{}",
+        stderr(&result)
+    );
+}

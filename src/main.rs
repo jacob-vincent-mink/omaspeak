@@ -1,5 +1,7 @@
 #![recursion_limit = "256"]
 
+mod voice_preview;
+
 use std::fs;
 use std::io::{BufRead, BufReader, IsTerminal, Read, Write};
 use std::os::fd::{AsRawFd, RawFd};
@@ -49,6 +51,10 @@ enum TopCommand {
         json: bool,
         #[arg(long)]
         detailed: bool,
+    },
+    #[command(name = "__voice-preview", hide = true)]
+    VoicePreview {
+        request: String,
     },
     #[command(name = "__audiocpp-probe", hide = true)]
     AudioCppProbe {
@@ -174,8 +180,9 @@ enum SetupCommand {
     /// This leaves the systemd unit unchanged; use `omaspeak setup systemd`
     /// explicitly. An already-active daemon is safely restarted after setup.
     All {
-        #[arg(long, default_value = "supertonic-3-gguf")]
-        model: String,
+        /// Catalog model; defaults to the selected backend's compatible profile.
+        #[arg(long)]
+        model: Option<String>,
         /// Use a local pinned file or model directory instead of downloading.
         #[arg(long, value_name = "PATH")]
         source: Option<PathBuf>,
@@ -298,6 +305,24 @@ trait SetupSelector {
         preferred: usize,
     ) -> Result<Option<usize>>;
 
+    #[allow(clippy::too_many_arguments)]
+    fn select_voice(
+        &mut self,
+        items: &[MenuItem],
+        preferred: usize,
+        _candidate: &Config,
+        _paths: &AppPaths,
+        _voices: &[omaspeak::voices::Voice],
+        _installed: bool,
+    ) -> Result<Option<usize>> {
+        self.select(
+            "Omaspeak voice",
+            "Choose the default speaker.",
+            items,
+            preferred,
+        )
+    }
+
     fn input(&mut self, _title: &str, _help: &str) -> Result<Option<String>> {
         Ok(Some(String::new()))
     }
@@ -322,21 +347,6 @@ impl SetupSelector for TerminalSetupSelector {
         config: &Config,
         path: &Path,
     ) -> Result<omaspeak::runtime_inventory::Probe> {
-        if config.backend.kind == "audiocpp" {
-            let library = omaspeak::audio_cpp::discover_provider_library(config, path)?
-                .context("audio.cpp provider was not found")?;
-            return Ok(omaspeak::runtime_inventory::Probe {
-                ready: true,
-                loadable: true,
-                device_accessible: Some(true),
-                evidence: omaspeak::runtime_inventory::Evidence {
-                    versions: vec![format!("audio.cpp provider {}", library.display())],
-                    provider_path: Some(library),
-                    ..Default::default()
-                },
-                errors: Vec::new(),
-            });
-        }
         omaspeak::runtime_inventory::apply_with(
             config,
             path,
@@ -353,6 +363,35 @@ impl SetupSelector for TerminalSetupSelector {
         preferred: usize,
     ) -> Result<Option<usize>> {
         app_setup::wizard::select(title, help, items, preferred)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn select_voice(
+        &mut self,
+        items: &[MenuItem],
+        preferred: usize,
+        candidate: &Config,
+        paths: &AppPaths,
+        voices: &[omaspeak::voices::Voice],
+        installed: bool,
+    ) -> Result<Option<usize>> {
+        let mut preview = voice_preview::VoicePreview::new(
+            candidate.clone(),
+            paths.clone(),
+            voices.iter().map(|v| v.id).collect(),
+            installed,
+        );
+        app_setup::wizard::select_with_preview(
+            "Omaspeak voice",
+            if installed {
+                "Space play/stop sample · Enter choose voice"
+            } else {
+                "Install the model to preview · Enter choose voice"
+            },
+            items,
+            preferred,
+            &mut preview,
+        )
     }
 
     fn input(&mut self, title: &str, help: &str) -> Result<Option<String>> {
@@ -461,6 +500,7 @@ fn run_with_paths_and_prepare(
     let config_path = select_config_path(cli.config, paths);
     prepare(&cli.command, &config_path)?;
     match cli.command {
+        TopCommand::VoicePreview { request } => voice_preview::worker(&request),
         TopCommand::AudioCppProbe { spec } => omaspeak::audio_cpp::run_provider_probe(&spec),
         TopCommand::AudioCppWorker { spec } => omaspeak::audio_cpp::run_worker(&spec),
         TopCommand::InventoryProbe { candidate } => {
@@ -1974,7 +2014,7 @@ fn setup(command: Option<SetupCommand>, config_path: &Path, paths: &AppPaths) ->
             config_path,
             paths,
             &BuiltinModels,
-            &model,
+            setup_model_id(config_path, model.as_deref())?,
             None,
             source.as_deref(),
             accept_license.as_deref(),
@@ -2336,7 +2376,7 @@ fn guided_full_setup_with_validator(
     };
     let spec = operations.resolve(&model)?;
     let installed = operations.verify(paths, spec).is_ok();
-    let Some(voice) = choose_voice(config_path, paths, spec, installed, selector)? else {
+    let Some(voice) = choose_voice_for_config(&candidate, paths, spec, installed, selector)? else {
         println!("Setup cancelled.");
         return Ok(());
     };
@@ -2808,14 +2848,22 @@ fn runtime_configuration_candidate(
     library_dir: Option<&Path>,
 ) -> Result<Config> {
     let mut config = app_setup::load_config(config_path)?;
-    let runtime_changed = config.backend.runtime != runtime;
+    let backend_kind = if runtime == Runtime::Openvino {
+        "supertonic"
+    } else {
+        "audiocpp"
+    };
+    let default = omaspeak::catalog::default_model(backend_kind, runtime, device)?;
+    let runtime_changed = config.backend.runtime != runtime || config.backend.kind != backend_kind;
+    if config.backend.kind != backend_kind
+        || omaspeak::catalog::model(&config.model.name)
+            .is_some_and(|model| !model.compatible_with(backend_kind, runtime, device))
+    {
+        default.activate(&mut config);
+    }
     config.backend.runtime = runtime;
     config.backend.device = device.into();
-    config.backend.kind = if runtime == Runtime::Openvino {
-        "supertonic".into()
-    } else {
-        "audiocpp".into()
-    };
+    config.backend.kind = backend_kind.into();
     if runtime_changed {
         clear_runtime_provider_configuration(&mut config.backend);
     }
@@ -3080,6 +3128,16 @@ fn choose_voice(
     selector: &mut impl SetupSelector,
 ) -> Result<Option<omaspeak::voices::Voice>> {
     let current = app_setup::load_config(config_path)?;
+    choose_voice_for_config(&current, paths, spec, installed, selector)
+}
+
+fn choose_voice_for_config(
+    current: &Config,
+    paths: &AppPaths,
+    spec: &omaspeak::catalog::ModelSpec,
+    installed: bool,
+    selector: &mut impl SetupSelector,
+) -> Result<Option<omaspeak::voices::Voice>> {
     let mut candidate = current.clone();
     spec.activate(&mut candidate);
     let voices = if installed {
@@ -3108,12 +3166,8 @@ fn choose_voice(
             )
         })
         .collect::<Vec<_>>();
-    let selected = selector.select(
-        "Omaspeak voice",
-        "Choose the default speaker. `omaspeak say --voice ID` can override it per request.",
-        &items,
-        preferred,
-    )?;
+    let selected =
+        selector.select_voice(&items, preferred, &candidate, paths, &voices, installed)?;
     Ok(selected.map(|index| voices[index].clone()))
 }
 
@@ -3131,13 +3185,8 @@ fn choose_model(
         .map(|model| {
             let installed = operations.verify(paths, model).is_ok();
             let runtime_compatible = runtime.is_none_or(|(runtime, device)| {
-                if runtime == Runtime::Openvino {
-                    model.backend == "supertonic"
-                        && model.openvino_capable
-                        && (!device.eq_ignore_ascii_case("npu") || model.npu_capable)
-                } else {
-                    model.backend == "audiocpp"
-                }
+                let backend = if runtime == Runtime::Openvino { "supertonic" } else { "audiocpp" };
+                model.compatible_with(backend, runtime, device)
             });
             let selectable = installed || model.downloadable;
             let active = model.id == config.model.name;
@@ -3181,10 +3230,10 @@ fn choose_model(
                 npu
             );
             if runtime_compatible && selectable {
-                MenuItem::available(format!("{}  {status}", model.id), detail)
+                MenuItem::available(format!("{}  {status}", model.display_name), detail)
             } else {
                 MenuItem::unavailable(
-                    format!("{}  {status}", model.id),
+                    format!("{}  {status}", model.display_name),
                     if !selectable {
                         format!("Use `omaspeak setup model --download {} --source PATH` with a pinned model directory you are licensed to use · {detail}", model.id)
                     } else {
@@ -3197,6 +3246,8 @@ fn choose_model(
     let preferred = models
         .iter()
         .position(|model| model.id == config.model.name)
+        .filter(|&index| items[index].enabled)
+        .or_else(|| items.iter().position(|item| item.enabled))
         .unwrap_or_default();
     let Some(selected) = selector.select(
         "Omaspeak model",
@@ -3207,6 +3258,9 @@ fn choose_model(
     else {
         return Ok(None);
     };
+    if !items.get(selected).is_some_and(|item| item.enabled) {
+        bail!("selected model is unavailable for the configured backend/runtime");
+    }
     Ok(Some(models[selected].id.into()))
 }
 
@@ -3639,8 +3693,10 @@ fn setup_model(
         Some(id) => Some(id),
         None => {
             print_models_with(paths, operations);
+            let spec = omaspeak::catalog::setup_model(&app_setup::load_config(config_path)?)?;
             println!(
-                "Run `omaspeak setup model --download supertonic-3-gguf --accept-license OpenRAIL-M` to install the default model."
+                "Run `omaspeak setup model --download {} --accept-license {}` to install the compatible default model.",
+                spec.id, spec.license
             );
             None
         }
@@ -3701,6 +3757,13 @@ fn print_models_with(paths: &AppPaths, operations: &impl ModelSetupOperations) {
             "{}\t{}\t{}\t{}",
             model.id, model.backend, status, model.description
         );
+    }
+}
+
+fn setup_model_id<'a>(config_path: &Path, explicit: Option<&'a str>) -> Result<&'a str> {
+    match explicit {
+        Some(id) => Ok(id),
+        None => Ok(omaspeak::catalog::setup_model(&app_setup::load_config(config_path)?)?.id),
     }
 }
 

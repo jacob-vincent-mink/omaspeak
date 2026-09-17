@@ -158,7 +158,7 @@ fn menu_renders_metadata_and_processes_arrow_enter_and_cancel() {
     assert!(rendered.contains("CUDA"));
     assert!(rendered.contains("Unavailable in this build"));
     assert!(rendered.contains("Esc cancel"));
-    assert!(rendered.contains("\r\n      "));
+    assert!(plain_terminal_output(rendered.as_bytes()).contains("\r\n      "));
     assert_no_bare_line_feeds(rendered.as_bytes());
 
     let mut events = VecDeque::from([key(KeyCode::Char('q'))]);
@@ -169,4 +169,151 @@ fn menu_renders_metadata_and_processes_arrow_enter_and_cancel() {
         .unwrap(),
         None
     );
+}
+
+fn plain_terminal_output(output: &[u8]) -> String {
+    let mut text = String::new();
+    let mut escape = false;
+    for character in String::from_utf8_lossy(output).chars() {
+        if character == '\x1b' {
+            escape = true;
+        } else if escape {
+            if character.is_ascii_alphabetic() {
+                escape = false;
+            }
+        } else {
+            text.push(character);
+        }
+    }
+    text
+}
+
+#[test]
+fn viewport_keeps_selection_visible_without_overflow_on_resize() {
+    use unicode_width::UnicodeWidthStr;
+    let items = (0..100)
+        .map(|n| {
+            MenuItem::available(
+                format!("Choice {n}"),
+                "Long details with Unicode 运行时 and many words to wrap across a narrow terminal.",
+            )
+        })
+        .collect::<Vec<_>>();
+    for (width, height) in [(24, 8), (80, 24), (12, 4), (4, 2), (1, 1)] {
+        for selected in [0, 50, 99] {
+            let mut output = Vec::new();
+            render_at_size(
+                &mut output,
+                "Choose a model",
+                "Navigate the installed and downloadable catalog.",
+                &items,
+                selected,
+                width,
+                height,
+            )
+            .unwrap();
+            let text = plain_terminal_output(&output);
+            assert!(
+                text.split("\r\n").count() <= height,
+                "{width}x{height}: {text:?}"
+            );
+            assert!(text.split("\r\n").all(|line| line.width() < width));
+            if width >= 24 {
+                assert!(text.contains(&format!("› Choice {selected}")), "{text:?}");
+            }
+            assert_no_bare_line_feeds(&output);
+        }
+    }
+}
+
+#[derive(Default)]
+struct FakePreview {
+    toggles: Vec<usize>,
+    stops: usize,
+    fail: bool,
+    message: Option<String>,
+}
+impl Preview for FakePreview {
+    fn toggle(&mut self, index: usize) -> Result<String> {
+        self.toggles.push(index);
+        if self.fail {
+            bail!("Install this model first");
+        }
+        Ok("Playing sample".into())
+    }
+    fn poll(&mut self) -> Result<Option<String>> {
+        Ok(self.message.take())
+    }
+    fn stop(&mut self) {
+        self.stops += 1;
+    }
+}
+
+#[test]
+fn voice_preview_plays_highlighted_voice_and_stops_on_navigation_and_exit() {
+    let items = [
+        MenuItem::available("M1", "one"),
+        MenuItem::available("F1", "two"),
+    ];
+    let mut events = VecDeque::from([
+        Some(key(KeyCode::Char(' '))),
+        Some(Event::Key(KeyEvent::new_with_kind(
+            KeyCode::Char(' '),
+            KeyModifiers::NONE,
+            KeyEventKind::Repeat,
+        ))),
+        None,
+        Some(key(KeyCode::Down)),
+        Some(key(KeyCode::Char(' '))),
+        Some(key(KeyCode::Enter)),
+    ]);
+    let mut preview = FakePreview::default();
+    let mut output = Vec::new();
+    let result = run_preview_menu(
+        &mut output,
+        "Voices",
+        "Space play/stop",
+        &items,
+        0,
+        &mut preview,
+        || Ok(events.pop_front().unwrap()),
+    )
+    .unwrap();
+    assert_eq!(result, Some(1));
+    assert_eq!(preview.toggles, [0, 1]);
+    assert_eq!(preview.stops, 2);
+    assert!(
+        String::from_utf8(output)
+            .unwrap()
+            .contains("Playing sample")
+    );
+}
+
+#[test]
+fn preview_error_is_inline_and_does_not_select_or_exit() {
+    let items = [MenuItem::available("M1", "one")];
+    let mut events = VecDeque::from([Some(key(KeyCode::Char(' '))), Some(key(KeyCode::Esc))]);
+    let mut preview = FakePreview {
+        fail: true,
+        message: Some("Sample finished".into()),
+        ..Default::default()
+    };
+    let mut output = Vec::new();
+    assert_eq!(
+        run_preview_menu(
+            &mut output,
+            "Voices",
+            "Space play/stop",
+            &items,
+            0,
+            &mut preview,
+            || Ok(events.pop_front().unwrap())
+        )
+        .unwrap(),
+        None
+    );
+    assert_eq!(preview.stops, 1);
+    let text = String::from_utf8(output).unwrap();
+    assert!(text.contains("Install this model first"));
+    assert!(text.contains("Sample finished"));
 }

@@ -584,3 +584,27 @@ fn progress_threshold_and_emit_formats_cover_completion() {
     .unwrap();
     emit(ProgressFormat::Json, "installed", model, None, None, None).unwrap();
 }
+
+#[test]
+fn a_second_installer_cannot_replace_an_active_profile() {
+    let root = temp("locked-profile");
+    let app = paths(&root);
+    let definitions = [("model.bin", &b"new-model"[..], "https://unused.invalid")];
+    let spec = spec("locked", &definitions);
+    let source = root.join("source");
+    write_source(&source, spec, &definitions);
+    let target = model_directory(&app, spec);
+    fs::create_dir_all(&target).unwrap();
+    fs::write(target.join("keep"), b"active").unwrap();
+    let guard = InstallGuard::acquire(&app.data_dir, spec.id).unwrap();
+    assert!(
+        install(&app, spec, Some(&source), ProgressFormat::Human, None)
+            .unwrap_err()
+            .to_string()
+            .contains("busy")
+    );
+    assert_eq!(fs::read(target.join("keep")).unwrap(), b"active");
+    drop(guard);
+    install(&app, spec, Some(&source), ProgressFormat::Human, None).unwrap();
+    verify(&app, spec).unwrap();
+}

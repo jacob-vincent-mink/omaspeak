@@ -1,0 +1,14 @@
+{
+  "date": "2026-09-15",
+  "backend": "supertonic",
+  "runtime": "openvino",
+  "device": "cpu",
+  "voice": "F1",
+  "sample_rate": 44100,
+  "samples": 263397,
+  "sample_sha256": "ce22a1928fc8c634c353dbc10590c30f29b3fc732bf4f6055ef420df3cc193b0",
+  "playback": "fake pw-play captured WAV; no live audio",
+  "second_preview": "cancelled in TUI",
+  "config_unchanged": true,
+  "preview_files_cleaned": true
+}
