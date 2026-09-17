@@ -1,6 +1,8 @@
-# Omaspeak 0.0.1
+# Omaspeak 0.0.3
 
-This release introduces the greenfield native-provider architecture:
+This release delivers the model-support roadmap on the native-provider
+architecture (first packaged as 0.0.1, setup hardened in 0.0.2):
+
 
 - audio.cpp GGUF synthesis is the default and ships as a small CPU provider;
 - complete external audio.cpp builds support CPU, CUDA, Vulkan, and HIP/ROCm;
@@ -30,10 +32,30 @@ This release introduces the greenfield native-provider architecture:
 - NPU model-cache compilation and a fresh-process cache-hit proof happen during
   setup, using OpenVINO's standard cache for the fixed 256-frame plan;
 - ordinary setup does not install or start a systemd service;
-- the Rust executable has no load-time dependency on an inference runtime.
+- the Rust executable has no load-time dependency on an inference runtime;
+- a second speech family, Kokoro 82M: Kokoro-capable packaged provider
+  (supertonic;kokoro_tts with statically linked eSpeak-ng), 54 named voices
+  plus legacy numeric IDs, and 24 kHz output;
+- the eSpeak-ng data package is catalog-managed, not shipped in the core:
+  pinned release asset, downloaded/verified/installed into the model
+  directory, with the GPL-3.0 notice carried in MODEL-LICENSE;
+- `setup model --check-urls`: pinned-catalog URL health checks for both
+  speech families, plus offline-import diagnostics naming expected and
+  observed values;
+- a Spanish speech profile: `model.language` reaches the native worker and
+  daemon status (smoke-scale evidence; listening gates stay open);
+- `status --json` reports the same `backend.requests` shape with and without
+  a running daemon;
+- Supertonic streaming was evaluated and deferred at the current pin.
 
 The pinned official model was exercised with file-only synthesis on default
 CPU, OpenVINO CPU/iGPU/NPU, and CUDA on an NVIDIA GB10. Device placement,
+setup-time NPU caching, cold and warm timing, and a one-sentence intelligibility
+check are recorded in the
+[rc.3 hardware evidence](benchmarks/results/2026-09-15-rc3/RESULTS.md), with
+the follow-up Intel iGPU run in the
+[Vulkan qualification](benchmarks/results/2026-09-15-vulkan/RESULTS.md).
+ Device placement,
 setup-time NPU caching, cold and warm timing, and a one-sentence intelligibility
 check are recorded in the
 [rc.3 hardware evidence](benchmarks/results/2026-09-15-rc3/RESULTS.md), with
