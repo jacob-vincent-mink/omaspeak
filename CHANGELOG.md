@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.0.3-rc.1 - 2026-09-17
+## 0.0.3 - 2026-09-17
 
 - The eSpeak-ng phonemizer data package is catalog-managed with the Kokoro
   model: pinned release asset, downloaded/verified/installed into the model
