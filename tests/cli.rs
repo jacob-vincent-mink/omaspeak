@@ -1321,6 +1321,7 @@ fn runtime_commands_use_the_daemon_protocol_when_socket_is_present() {
             audio: serde_json::Value::Null,
             running: true,
             pid: 42,
+            language: String::new(),
             model: "test-model".into(),
             sample_rate: 16_000,
             backend: serde_json::json!({"kind":"test"}),
@@ -1338,6 +1339,7 @@ fn runtime_commands_use_the_daemon_protocol_when_socket_is_present() {
             audio: serde_json::Value::Null,
             running: true,
             pid: 42,
+            language: String::new(),
             model: "test-model".into(),
             sample_rate: 16_000,
             backend: serde_json::json!({}),
@@ -2373,5 +2375,50 @@ fn kokoro_voice_selects_engine_id_language_and_24khz_output() {
     assert!(String::from_utf8(get.stdout).unwrap().contains("bf_emma"));
     let set_bad = run(&root, &["config", "set", "model.voice", "zz_not_a_voice"]);
     assert!(!set_bad.status.success());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn configured_language_reaches_the_native_worker() {
+    let root = sandbox();
+    let library = build_audio_cpp_stub(&root);
+    let mut config = audio_cpp_stub_config(&root, library, "require-language-es.gguf");
+    config.model.family = "supertonic".into();
+    config.model.language = "es".into();
+    config
+        .save(&root.join("config/omaspeak/config.toml"))
+        .unwrap();
+    let output = root.join("es.wav");
+    let result = run(
+        &root,
+        &[
+            "say",
+            "Hola, esto es una prueba de idioma.",
+            "--no-play",
+            "--out",
+            output.to_str().unwrap(),
+        ],
+    );
+    assert!(result.status.success(), "{}", stderr(&result));
+
+    // The same request with another configured language is rejected by the
+    // native worker, proving the config value reaches inference.
+    let mut wrong = config.clone();
+    wrong.model.language = "en".into();
+    wrong
+        .save(&root.join("config/omaspeak/config.toml"))
+        .unwrap();
+    let rejected = run(
+        &root,
+        &[
+            "say",
+            "x",
+            "--no-play",
+            "--out",
+            root.join("en.wav").to_str().unwrap(),
+        ],
+    );
+    assert!(!rejected.status.success());
     fs::remove_dir_all(root).unwrap();
 }

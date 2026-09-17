@@ -389,6 +389,7 @@ fn serve_loop(
                                         running: true,
                                         pid: std::process::id(),
                                         model: config.model.name.clone(),
+                                        language: config.model.language.clone(),
                                         sample_rate,
                                         backend,
                                         audio: omaspeak::audio_devices::status(

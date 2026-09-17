@@ -1311,6 +1311,7 @@ fn status_payload(engine: &impl SpeechEngine, config: &Config) -> ResultPayload 
         running: true,
         pid: std::process::id(),
         model: engine.model_name().into(),
+        language: config.model.language.clone(),
         sample_rate: engine.sample_rate(),
         audio: omaspeak::audio_devices::status(&config.audio.device, None, None),
         backend: json!({
@@ -1432,7 +1433,7 @@ fn print_status(config_path: &Path, paths: &AppPaths, as_json: bool) -> Result<(
         serde_json::to_value(response.result)?
     } else {
         let config = Config::load(config_path)?;
-        json!({"type":"status","running":false,"pid":null,"model":config.model.name,"sample_rate":null,"audio":omaspeak::audio_devices::status(&config.audio.device,None,None),
+        json!({"type":"status","running":false,"pid":null,"model":config.model.name,"language":config.model.language,"sample_rate":null,"audio":omaspeak::audio_devices::status(&config.audio.device,None,None),
             "backend":{"kind":config.backend.kind,"requested":{"runtime":config.backend.runtime,"device":config.backend.device},"effective":null,"supported_capabilities":supported_capabilities(),"fallback_policy":config.backend.fallback,"fallback_used":false,"placement_verified":false,"evidence":[]}})
     };
     let saved = Config::load(config_path)?.audio.device;

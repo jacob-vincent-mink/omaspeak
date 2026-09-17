@@ -74,6 +74,7 @@ those inputs, without declaring the first release fully qualified.
 | S08 | Done | Named preset voice selection with legacy numeric identity preserved (PR #7) |
 | S09 | Done, evidence partially open | Kokoro 82M pinned with fresh-install/voice-routing proof and paired latency ([KOKORO.md](KOKORO.md), PR #8); listening pack and human ratings still open |
 | S10 | Done | Catalog URL health check + import diagnostics (PR #9) and the Spanish speech profile proven to reach inference and status ([2026-09-16-spanish](../benchmarks/results/2026-09-16-spanish/RESULTS.md), PR #10) |
+| S10 | Language profile done; tooling in review | [Spanish profile](../benchmarks/results/2026-09-16-spanish/RESULTS.md): `model.language = es` proven reaching inference (stub E2E) and status (daemon payloads); Spanish synthesis recorded on the NPU OpenVINO path |
 | S11 | Deferred — scale not warranted (recorded 2026-09-16) | Catalog remains 3 curated models (Supertonic GGUF/OpenVINO plus the Kokoro addition) and the largest single artifact is ~454 MB; search/filter controls and transfer-resume stay out until an actual catalog or download-scale need appears. Any future resume work must preserve immutable pins and complete-file hashing with interruption tests |
 
 Current evidence: [defaults and gates](MODEL-DEFAULTS.md),
