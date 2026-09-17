@@ -5,7 +5,7 @@ use std::os::unix::process::CommandExt;
 use std::process::{ChildStdin, ChildStdout};
 use std::thread;
 
-const QUEUE_CAPACITY: usize = 8;
+pub(crate) const QUEUE_CAPACITY: usize = 8;
 const READING_CAPACITY: usize = 16;
 const READ_TIMEOUT: Duration = Duration::from_secs(2);
 const WORK_TIMEOUT: Duration = Duration::from_secs(300);

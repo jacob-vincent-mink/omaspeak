@@ -1,6 +1,6 @@
 #![recursion_limit = "256"]
 
-mod request_service;
+pub(crate) mod request_service;
 mod wake_pause;
 
 mod voice_preview;
@@ -1444,7 +1444,7 @@ fn print_status(config_path: &Path, paths: &AppPaths, as_json: bool) -> Result<(
     } else {
         let config = Config::load(config_path)?;
         json!({"type":"status","running":false,"pid":null,"model":config.model.name,"language":config.model.language,"sample_rate":null,"audio":omaspeak::audio_devices::status(&config.audio.device,None,None),
-            "backend":{"kind":config.backend.kind,"requested":{"runtime":config.backend.runtime,"device":config.backend.device},"effective":null,"supported_capabilities":supported_capabilities(),"fallback_policy":config.backend.fallback,"fallback_used":false,"placement_verified":false,"evidence":[]}})
+            "backend":{"kind":config.backend.kind,"requested":{"runtime":config.backend.runtime,"device":config.backend.device},"effective":null,"supported_capabilities":supported_capabilities(),"fallback_policy":config.backend.fallback,"fallback_used":false,"placement_verified":false,"evidence":[],"requests":{"active":null,"queued":[],"capacity":request_service::QUEUE_CAPACITY,"loading":false,"worker_ready":false}}})
     };
     let saved = Config::load(config_path)?.audio.device;
     status["audio"]["saved"] = json!(&saved);
