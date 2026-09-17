@@ -1,6 +1,19 @@
 # Changelog
 
-## Unreleased
+## 0.0.1-rc.4 - 2026-09-17
+
+- Pin Kokoro 82M as a second speech family: 54 named voices plus legacy
+  numeric IDs, 24 kHz output, fresh-install proof with activation rollback,
+  and paired latency evidence against the NPU Supertonic path.
+- Added pinned catalog URL health checks (`setup model --check-urls`) and
+  sharper offline-import diagnostics with expected/observed values.
+- Proved the Spanish speech profile end to end: `model.language` reaches the
+  native worker and daemon status, with Spanish synthesis recorded on the
+  OpenVINO/NPU path.
+- Supertonic streaming stays deferred at the current pin (unbounded session
+  retention failed the buffering gate); the offline path is unchanged.
+- Prove wake ownership through speech: speech and previews cannot retrigger
+  wake actions, and playback cancellation releases ownership.
 
 ## 0.0.1 - 2026-09-15
 
