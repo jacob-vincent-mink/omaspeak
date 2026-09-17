@@ -70,7 +70,8 @@ those inputs, without declaring the first release fully qualified.
 | S04 | Implemented; acceptance mapped | [Installer audit](INSTALLER-PROTECTIONS.md) maps fresh setup, failed cache/probe, corruption, cancellation, lock and disk-budget checks; documented limits remain |
 | S05 | Partial | CPU/GPU/NPU/Vulkan/CUDA evidence at differing depths; GB10 produced 36 valid CUDA WAVs with verified placement; HIP pending |
 | S06 | Implemented; qualification limits recorded | [Bounded lifecycle](REQUEST-LIFECYCLE.md) adds admission, request cancellation, supervised synthesis and frozen config; [playback ownership](PLAYBACK-OWNERSHIP.md) covers speech/previews. CPU native evidence recorded; device timing and acoustic validation remain open |
-| S07–S10 | Queued | Gated streaming, minimal named voices, complete Kokoro, maintenance and qualified language in that order |
+| S07 | Evaluated; defer at current pin | [Native streaming probe](../benchmarks/results/2026-09-16-streaming/RESULTS.md) demonstrates early long-form PCM and exact export parity, but full-utterance retention fails the fixed buffering gate; keep offline output |
+| S08–S10 | Queued | Minimal named voices, complete Kokoro, maintenance and qualified language in that order |
 | S11 | Conditional | Search/filter and transfer resume only when catalog/download scale warrants them |
 
 Current evidence: [defaults and gates](MODEL-DEFAULTS.md),
