@@ -2422,3 +2422,147 @@ fn configured_language_reaches_the_native_worker() {
     assert!(!rejected.status.success());
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn catalog_url_checks_report_sizes_from_a_local_stub_without_touching_pins() {
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let expected = omaspeak::catalog::models()
+        .iter()
+        .map(|spec| spec.files.len())
+        .sum::<usize>();
+    let server = std::thread::spawn(move || {
+        for stream in listener.incoming().take(expected) {
+            let Ok(mut stream) = stream else { break };
+            // Read only the request head; ureq keeps the connection open after
+            // a HEAD request, so waiting for EOF would stall until timeouts.
+            let mut request = Vec::new();
+            let mut byte = [0_u8; 1];
+            while !request.ends_with(b"\r\n\r\n") {
+                if !matches!(stream.read(&mut byte), Ok(1)) {
+                    break;
+                }
+                request.push(byte[0]);
+            }
+            // Every stubbed asset advertises a wrong size, so every row must
+            // report a size mismatch and the command must exit nonzero.
+            let body = "HTTP/1.1 200 OK\r\nContent-Length: 3\r\nConnection: close\r\n\r\n";
+            let _ = stream.write_all(body.as_bytes());
+        }
+    });
+    let root = sandbox();
+    let output = run(
+        &root,
+        &[
+            "setup",
+            "model",
+            "--check-urls",
+            "--json",
+            "--url-prefix",
+            &format!("http://127.0.0.1:{port}"),
+        ],
+    );
+    assert!(!output.status.success());
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let rows = report.as_array().unwrap();
+    assert_eq!(rows.len(), expected);
+    assert!(rows.iter().all(|row| row["status"] == "size-mismatch"));
+    assert!(rows.iter().all(|row| {
+        row["url"]
+            .as_str()
+            .unwrap()
+            .starts_with(&format!("http://127.0.0.1:{port}/"))
+    }));
+    assert!(
+        rows.iter()
+            .all(|row| !row["url"].as_str().unwrap().contains("huggingface.co"))
+    );
+    // Nothing was written: no models or downloads directories were created.
+    assert!(!root.join("data/omaspeak/models").exists());
+    assert!(!root.join("data/omaspeak/downloads").exists());
+    server.join().unwrap();
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn catalog_url_checks_pass_when_the_stub_serves_pinned_sizes() {
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+
+    // Map each rewritten URL's path back to its pinned size from the catalog.
+    let sizes: std::collections::HashMap<String, u64> = omaspeak::catalog::models()
+        .iter()
+        .flat_map(|spec| {
+            spec.files.iter().map(|file| {
+                let origin_removed = file.url.split_once("://").unwrap_or(("", file.url)).1;
+                let path = origin_removed.split_once('/').map(|(_, p)| p).unwrap_or("");
+                (path.to_owned(), file.size)
+            })
+        })
+        .collect();
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let expected = sizes.len();
+    let server = std::thread::spawn(move || {
+        for stream in listener.incoming().take(expected) {
+            let Ok(mut stream) = stream else { break };
+            let mut request = Vec::new();
+            let mut byte = [0_u8; 1];
+            while !request.ends_with(b"\r\n\r\n") {
+                if !matches!(stream.read(&mut byte), Ok(1)) {
+                    break;
+                }
+                request.push(byte[0]);
+            }
+            let request = String::from_utf8_lossy(&request).to_string();
+            let path = request
+                .split_whitespace()
+                .nth(1)
+                .unwrap_or_default()
+                .trim_start_matches('/')
+                .to_owned();
+            let size = sizes.get(&path).copied().unwrap_or(1);
+            let body =
+                format!("HTTP/1.1 200 OK\r\nContent-Length: {size}\r\nConnection: close\r\n\r\n");
+            let _ = stream.write_all(body.as_bytes());
+        }
+    });
+    let root = sandbox();
+    let output = run(
+        &root,
+        &[
+            "setup",
+            "model",
+            "--check-urls",
+            "--url-prefix",
+            &format!("http://127.0.0.1:{port}"),
+        ],
+    );
+    assert!(output.status.success(), "{}", stderr(&output));
+    let human = String::from_utf8_lossy(&output.stdout).to_string();
+    assert!(human.contains("ok: "));
+    assert!(!root.join("data/omaspeak/models").exists());
+    server.join().unwrap();
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn status_and_cancel_without_a_running_daemon_fail_and_report_cleanly() {
+    let root = sandbox();
+    let status = run(&root, &["status", "--json"]);
+    assert!(status.status.success(), "{}", stderr(&status));
+    let status: serde_json::Value = serde_json::from_slice(&status.stdout).unwrap();
+    assert_eq!(status["running"], false);
+    assert_eq!(status["model"], "supertonic-3-gguf");
+    let stopped = run(&root, &["status"]);
+    assert!(stopped.status.success());
+    assert!(String::from_utf8_lossy(&stopped.stdout).contains("stopped"));
+    let cancel = run(&root, &["cancel", "missing"]);
+    assert!(!cancel.status.success());
+    assert!(stderr(&cancel).contains("daemon is not running"));
+    fs::remove_dir_all(root).unwrap();
+}
