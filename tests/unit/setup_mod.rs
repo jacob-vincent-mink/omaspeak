@@ -124,7 +124,7 @@ fn checks_report_malformed_missing_and_custom_states() {
     );
     fs::create_dir_all(&config.model.directory).unwrap();
     config.model.voice_style = "voice_styles".into();
-    config.model.voice = 0;
+    config.model.voice = crate::voices::VoiceSelection::Legacy(0);
     write_voice_directory(&std::path::Path::new(&config.model.directory).join("voice_styles"));
     config.save(&paths.config_file).unwrap();
     let present = checks(&paths.config_file, &paths);

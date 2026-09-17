@@ -147,8 +147,11 @@ Supertonic provides ten stable speaker presets: `M1`–`M5` and `F1`–`F5`.
 ```bash
 omaspeak voices
 omaspeak say --voice F3 "A different speaker"
-omaspeak config set model.voice 7
+omaspeak config set model.voice F3
 ```
+
+Preset names also work in `model.voice` and IPC. Existing numeric IDs retain
+their identity; see [named voices](docs/NAMED-VOICES.md).
 
 Daemon installation is explicit:
 
@@ -212,3 +215,11 @@ and the release includes notices for all code retained in it, including the
 BSD-3-Clause PocketFFT-derived FFT. Supertonic model weights are OpenRAIL-M and
 are not included in the source or release archive. See
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
+## Audio devices
+
+Run `omaspeak setup audio` to select and test the application’s audio device.
+Pinned routing requires PipeWire’s `pw-dump` and `pw-record` (Omawake) or
+`pw-play` (Omaspeak), supplied by `pipewire` and `pipewire-audio` on Arch.
+See [Audio device selection](docs/AUDIO-DEVICES.md) for configuration,
+service restart behavior, discovery JSON, and disconnect recovery.

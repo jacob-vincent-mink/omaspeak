@@ -1,0 +1,3902 @@
+{
+  "schema_version": 1,
+  "status": "measurement-only; listening and regression comparison required",
+  "binary_sha256": "2ea1dc76fabb0e62e1ed55eb451d9949354c7abf54a4973a883d127bfc2d9611",
+  "variants": {
+    "reference": "da1bb2baedcfc3cb9427b5e2bb294769503ea17fe8502e3acfdee3fb18e43d16",
+    "candidate": "2ea1dc76fabb0e62e1ed55eb451d9949354c7abf54a4973a883d127bfc2d9611"
+  },
+  "config_sha256": "b7b4b586e29254361a817522829d194e47debc356083dd7a03cad5b706cb8b88",
+  "corpus_sha256": "0b48abbb4896ba33df4602b85890652994d0ad1759faed5fb4c0a4031be15bb7",
+  "corpus_id": "model-defaults-english-v1",
+  "measurements": [
+    {
+      "variant": "reference",
+      "run": 0,
+      "case": "notification",
+      "voice": "M1",
+      "backend": {
+        "effective_runtime": "openvino",
+        "fallback_used": false,
+        "kind": "openvino",
+        "model": "supertonic-3-openvino",
+        "placement_evidence": "OpenVINO EXECUTION_DEVICES matched the requested device for every compiled graph",
+        "placement_verified": true,
+        "requested_device": "cpu",
+        "requested_runtime": "openvino"
+      },
+      "load_ms": 55,
+      "summary": {
+        "p50_elapsed_milliseconds": 374.826863,
+        "p50_real_time_factor": 0.11129927230032112,
+        "p50_synthesis_milliseconds": 374.366838,
+        "p95_elapsed_milliseconds": 375.703369,
+        "p95_real_time_factor": 0.11156137022327961,
+        "p95_synthesis_milliseconds": 375.24843200000004,
+        "samples": 5
+      },
+      "max_process_rss_kib": 1305892,
+      "audio": [
+        {
+          "sha256": "8bb6e44bd67ab78dc180a09dfffbdd5023d2f110e1563b0c6df849525b20edaf",
+          "samples": 148335,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "1079e94e0f38db0a0582b4fd3937d3f90547586b004bc50ed13152f624048277",
+          "samples": 148335,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "c66f414f4509797a3a6174b8d9cd824d2f6b90cb7dbee7fe729e16f6b4adb103",
+          "samples": 148335,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "b1b659e15ce789a7573dc6cb131115b6d4642be11fcf2c17f7129fac7213c033",
+          "samples": 148335,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "169d310befd44a3b2d705d35564b9de2c530f413ffdc6e2e5aab336d89ec9ad9",
+          "samples": 148335,
+          "sample_rate": 44100
+        }
+      ]
+    },
+    {
+      "variant": "candidate",
+      "run": 0,
+      "case": "notification",
+      "voice": "M1",
+      "backend": {
+        "effective_runtime": "openvino",
+        "fallback_used": false,
+        "kind": "openvino",
+        "model": "supertonic-3-openvino",
+        "placement_evidence": "OpenVINO EXECUTION_DEVICES matched the requested device for every compiled graph",
+        "placement_verified": true,
+        "requested_device": "cpu",
+        "requested_runtime": "openvino"
+      },
+      "load_ms": 49,
+      "summary": {
+        "p50_elapsed_milliseconds": 377.893868,
+        "p50_real_time_factor": 0.112209055582804,
+        "p50_synthesis_milliseconds": 377.42699000000005,
+        "p95_elapsed_milliseconds": 382.303852,
+        "p95_real_time_factor": 0.11352175740712218,
+        "p95_synthesis_milliseconds": 381.842401,
+        "samples": 5
+      },
+      "max_process_rss_kib": 1498260,
+      "audio": [
+        {
+          "sha256": "90eee245e5541c534ed75c168a2484d033b42657a4a3378871d3d7a248ddea7d",
+          "samples": 148335,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "6c65a4d8fc287e52a1b8adeb33414d2cf9b961d0874e3f31da251fa833a692e1",
+          "samples": 148335,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "13d8a9ff93907ff531e1feb91aa0f0e245b3fa5e4691c199d8b70c433f2e3d9d",
+          "samples": 148335,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "55fe2cdc5c1558f2639f4865d2ffcace2a98cfb5f708829a8e6196266a93d6d3",
+          "samples": 148335,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "549cde94fc8bca9bf921fb71100f3461b807013243af949bbcbf386d129ae6c7",
+          "samples": 148335,
+          "sample_rate": 44100
+        }
+      ]
+    },
+    {
+      "variant": "reference",
+      "run": 0,
+      "case": "notification",
+      "voice": "F1",
+      "backend": {
+        "effective_runtime": "openvino",
+        "fallback_used": false,
+        "kind": "openvino",
+        "model": "supertonic-3-openvino",
+        "placement_evidence": "OpenVINO EXECUTION_DEVICES matched the requested device for every compiled graph",
+        "placement_verified": true,
+        "requested_device": "cpu",
+        "requested_runtime": "openvino"
+      },
+      "load_ms": 47,
+      "summary": {
+        "p50_elapsed_milliseconds": 380.628313,
+        "p50_real_time_factor": 0.1129501740059898,
+        "p50_synthesis_milliseconds": 380.15545299999997,
+        "p95_elapsed_milliseconds": 382.775373,
+        "p95_real_time_factor": 0.11358522951542789,
+        "p95_synthesis_milliseconds": 382.29285400000003,
+        "samples": 5
+      },
+      "max_process_rss_kib": 1502096,
+      "audio": [
+        {
+          "sha256": "7b66ee7e68867449370185e99a77c423a089f731e07ac7dd37892a1557d5713b",
+          "samples": 148427,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "44a94d1abf3f9920134e72e5f499dbf5ee6ac3d7d7ceb72a6a26b4891e51818f",
+          "samples": 148427,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "0b1b9afd9cb4d3714eed6557a42a45659fc0b13e1efc3d6df22ceb8af364f113",
+          "samples": 148427,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "cc041e721a267a9f8b29e5ad19793d542c7cc094b8c9a7b0fe8bb79291dda459",
+          "samples": 148427,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "5a89849cfc15d25d0030165669bd4163c7cb4ab3c25427eeee30e58fbd426cca",
+          "samples": 148427,
+          "sample_rate": 44100
+        }
+      ]
+    },
+    {
+      "variant": "candidate",
+      "run": 0,
+      "case": "notification",
+      "voice": "F1",
+      "backend": {
+        "effective_runtime": "openvino",
+        "fallback_used": false,
+        "kind": "openvino",
+        "model": "supertonic-3-openvino",
+        "placement_evidence": "OpenVINO EXECUTION_DEVICES matched the requested device for every compiled graph",
+        "placement_verified": true,
+        "requested_device": "cpu",
+        "requested_runtime": "openvino"
+      },
+      "load_ms": 49,
+      "summary": {
+        "p50_elapsed_milliseconds": 384.152889,
+        "p50_real_time_factor": 0.1139996964843728,
+        "p50_synthesis_milliseconds": 383.68782200000004,
+        "p95_elapsed_milliseconds": 704.8675049999999,
+        "p95_real_time_factor": 0.209277687209138,
+        "p95_synthesis_milliseconds": 704.364156,
+        "samples": 5
+      },
+      "max_process_rss_kib": 1502416,
+      "audio": [
+        {
+          "sha256": "206ae02e3b23c4b16f8080b7498c9c27749dfbc1166fa4440dc2f6ff47f7d5e7",
+          "samples": 148427,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "a88f45f3f87766e7e7a965acdc486579e3ad8d555de5f47e8390f783709df2a0",
+          "samples": 148427,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "50488138e4600d1b08f3b75f7311c5701bdd46c7f2a5f5334e9617e48c593e62",
+          "samples": 148427,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "d0fabe4050d6fb09da83ee5c3d444f347a48c34deb0fb03ad71e9bd0fb394339",
+          "samples": 148427,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "4545f8aec398ee2324b6713c2d0d7b42f13d820d03941cf649fec249e36c90f4",
+          "samples": 148427,
+          "sample_rate": 44100
+        }
+      ]
+    },
+    {
+      "variant": "reference",
+      "run": 0,
+      "case": "reply",
+      "voice": "M1",
+      "backend": {
+        "effective_runtime": "openvino",
+        "fallback_used": false,
+        "kind": "openvino",
+        "model": "supertonic-3-openvino",
+        "placement_evidence": "OpenVINO EXECUTION_DEVICES matched the requested device for every compiled graph",
+        "placement_verified": true,
+        "requested_device": "cpu",
+        "requested_runtime": "openvino"
+      },
+      "load_ms": 51,
+      "summary": {
+        "p50_elapsed_milliseconds": 625.440505,
+        "p50_real_time_factor": 0.10831618696828868,
+        "p50_synthesis_milliseconds": 624.692117,
+        "p95_elapsed_milliseconds": 630.640765,
+        "p95_real_time_factor": 0.10921547963085565,
+        "p95_synthesis_milliseconds": 629.878609,
+        "samples": 5
+      },
+      "max_process_rss_kib": 1302488,
+      "audio": [
+        {
+          "sha256": "596cdb6b3269ae6f97c65f5958e85ff9f1c62674314865323d11a16dbf0b6973",
+          "samples": 254338,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "bce34ff3ed2f0ccef77ffeb373f5c1fcdb066a200d120e9b230409f44bde1b9a",
+          "samples": 254338,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "83849cc8741785b770ec0c49f2144fbc5c18748a9bff6fc9de3cd5eb6fc67cbc",
+          "samples": 254338,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "b5d02fb7230cfe343cc26cbb1062eaadf15c338139525ad8af4082ca68037a89",
+          "samples": 254338,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "5cca8d506ec63e01a2f163bdafa39babdc61286db70485b74707a7cb95e7443c",
+          "samples": 254338,
+          "sample_rate": 44100
+        }
+      ]
+    },
+    {
+      "variant": "candidate",
+      "run": 0,
+      "case": "reply",
+      "voice": "M1",
+      "backend": {
+        "effective_runtime": "openvino",
+        "fallback_used": false,
+        "kind": "openvino",
+        "model": "supertonic-3-openvino",
+        "placement_evidence": "OpenVINO EXECUTION_DEVICES matched the requested device for every compiled graph",
+        "placement_verified": true,
+        "requested_device": "cpu",
+        "requested_runtime": "openvino"
+      },
+      "load_ms": 51,
+      "summary": {
+        "p50_elapsed_milliseconds": 627.576256,
+        "p50_real_time_factor": 0.10867958793984948,
+        "p50_synthesis_milliseconds": 626.78796,
+        "p95_elapsed_milliseconds": 944.8890610000001,
+        "p95_real_time_factor": 0.16369969139954393,
+        "p95_synthesis_milliseconds": 944.10549,
+        "samples": 5
+      },
+      "max_process_rss_kib": 1500176,
+      "audio": [
+        {
+          "sha256": "a4cea72cbd688bb1871f096ed6869e481ef3e6d4a9bf89e94fba5033e12e81d3",
+          "samples": 254338,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "116b6e37d4c66f24213e271fbc1ee7ce0cd915bcf1db79c119ce4f4e405f98f3",
+          "samples": 254338,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "807e98b1c96ebcd5605e3ec57295de3476eceacceb8dca6e04366010e783d563",
+          "samples": 254338,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "c48afcd7f175df577a53b7e6c02f6725d9d83bfb1a00a540e7ef43a7b72e4455",
+          "samples": 254338,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "f4074876ae42d1779b9a2ff5afc9b7793cd10e6e0a3fa73366f27bb5f8fbc110",
+          "samples": 254338,
+          "sample_rate": 44100
+        }
+      ]
+    },
+    {
+      "variant": "reference",
+      "run": 0,
+      "case": "reply",
+      "voice": "F1",
+      "backend": {
+        "effective_runtime": "openvino",
+        "fallback_used": false,
+        "kind": "openvino",
+        "model": "supertonic-3-openvino",
+        "placement_evidence": "OpenVINO EXECUTION_DEVICES matched the requested device for every compiled graph",
+        "placement_verified": true,
+        "requested_device": "cpu",
+        "requested_runtime": "openvino"
+      },
+      "load_ms": 51,
+      "summary": {
+        "p50_elapsed_milliseconds": 645.359606,
+        "p50_real_time_factor": 0.11182848975151453,
+        "p50_synthesis_milliseconds": 644.586008,
+        "p95_elapsed_milliseconds": 913.098299,
+        "p95_real_time_factor": 0.15827745600902607,
+        "p95_synthesis_milliseconds": 912.320588,
+        "samples": 5
+      },
+      "max_process_rss_kib": 1502924,
+      "audio": [
+        {
+          "sha256": "f71b8b1a220e90aff94d95a45ba6cbd9bca1c50b742c3784d79145c11641a77a",
+          "samples": 254195,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "d98e80453bc4fbe5abae8a5dc85c016102d9c72dc1ef4bbe433d1c2bc69f8d2b",
+          "samples": 254195,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "cef95214bdceb38b0764779c9fb91460220e55732954f65c7e6d834d6e62915f",
+          "samples": 254195,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "77b351afbca81b5a7d6d138d788569ecd789ab0a35ad0d16c346f6db98c6bd79",
+          "samples": 254195,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "88831b41085f126b5ee82d305a8c975576324197e98fc6e114660578b0e4343e",
+          "samples": 254195,
+          "sample_rate": 44100
+        }
+      ]
+    },
+    {
+      "variant": "candidate",
+      "run": 0,
+      "case": "reply",
+      "voice": "F1",
+      "backend": {
+        "effective_runtime": "openvino",
+        "fallback_used": false,
+        "kind": "openvino",
+        "model": "supertonic-3-openvino",
+        "placement_evidence": "OpenVINO EXECUTION_DEVICES matched the requested device for every compiled graph",
+        "placement_verified": true,
+        "requested_device": "cpu",
+        "requested_runtime": "openvino"
+      },
+      "load_ms": 53,
+      "summary": {
+        "p50_elapsed_milliseconds": 638.8429580000001,
+        "p50_real_time_factor": 0.11069608114003197,
+        "p50_synthesis_milliseconds": 638.0587380000001,
+        "p95_elapsed_milliseconds": 936.98723,
+        "p95_real_time_factor": 0.1624198445893863,
+        "p95_synthesis_milliseconds": 936.19756,
+        "samples": 5
+      },
+      "max_process_rss_kib": 1500120,
+      "audio": [
+        {
+          "sha256": "f1452dccc36e756b5370ddce69e1b647c7b3889ce3a7be32226cf04227f0e1a9",
+          "samples": 254195,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "f9ae56103d02e7e91dd028e66d91a93fc399d3bc129fcfdd487e92487bc3a825",
+          "samples": 254195,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "620b0b20f70101114943ab4945194fba8e35bd28ddd82b3fa319c042618ce647",
+          "samples": 254195,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "1f5f2cd175239d40414a80a35fc5e4c36c7bfba4128186fd09c93cd57e4d7ba8",
+          "samples": 254195,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "cbd4d4267dd740b6cda318e83a8b97082161d471ad7c0b4d380774b0bd1e5d49",
+          "samples": 254195,
+          "sample_rate": 44100
+        }
+      ]
+    },
+    {
+      "variant": "reference",
+      "run": 0,
+      "case": "numbers",
+      "voice": "M1",
+      "backend": {
+        "effective_runtime": "openvino",
+        "fallback_used": false,
+        "kind": "openvino",
+        "model": "supertonic-3-openvino",
+        "placement_evidence": "OpenVINO EXECUTION_DEVICES matched the requested device for every compiled graph",
+        "placement_verified": true,
+        "requested_device": "cpu",
+        "requested_runtime": "openvino"
+      },
+      "load_ms": 50,
+      "summary": {
+        "p50_elapsed_milliseconds": 1070.982276,
+        "p50_real_time_factor": 0.11192504405541766,
+        "p50_synthesis_milliseconds": 1069.734395,
+        "p95_elapsed_milliseconds": 1207.324783,
+        "p95_real_time_factor": 0.12587136306827082,
+        "p95_synthesis_milliseconds": 1203.027683,
+        "samples": 5
+      },
+      "max_process_rss_kib": 1304276,
+      "audio": [
+        {
+          "sha256": "4986b98cd5521910474be9bfdd27b27bd278c08cdd3c3222897c9c85a6b47d3d",
+          "samples": 421490,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "044e05bceb5a20e8cedfd0eb7d394dc5e9554b5fd73b4f8d7530c94ebebb46a7",
+          "samples": 421490,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "45a8d368bc98b6bccd853611880ef8ea419b8b0a817f1cc13bb42529598eed80",
+          "samples": 421490,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "733eabb0f6c6ec71547ec99606d23c2dd941ebcd31623f169aa4afde6f713e4b",
+          "samples": 421490,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "64dbf520a8884424677603976f2b572e5aef68f62d079b47f0c4ab35947649a9",
+          "samples": 421490,
+          "sample_rate": 44100
+        }
+      ]
+    },
+    {
+      "variant": "candidate",
+      "run": 0,
+      "case": "numbers",
+      "voice": "M1",
+      "backend": {
+        "effective_runtime": "openvino",
+        "fallback_used": false,
+        "kind": "openvino",
+        "model": "supertonic-3-openvino",
+        "placement_evidence": "OpenVINO EXECUTION_DEVICES matched the requested device for every compiled graph",
+        "placement_verified": true,
+        "requested_device": "cpu",
+        "requested_runtime": "openvino"
+      },
+      "load_ms": 53,
+      "summary": {
+        "p50_elapsed_milliseconds": 1088.4727579999999,
+        "p50_real_time_factor": 0.11374879255049587,
+        "p50_synthesis_milliseconds": 1087.165047,
+        "p95_elapsed_milliseconds": 1293.206481,
+        "p95_real_time_factor": 0.13517835904694553,
+        "p95_synthesis_milliseconds": 1291.980194,
+        "samples": 5
+      },
+      "max_process_rss_kib": 1500956,
+      "audio": [
+        {
+          "sha256": "64b305c2253e6402940097f17bae7454b605b5b260179050df8fedb914998870",
+          "samples": 421490,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "3a6d88d35fb4b80c690924f14fdc183b3a9acd295cf1c9545a6272a82c7f543c",
+          "samples": 421490,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "a1788a8230ed8f7be524a19a29967f45bc77bf2933cccc785196d4ca21f9f891",
+          "samples": 421490,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "fbcc5bb901ffc7099e6aec3c3662ae91300a0e755907993fcf66a01fffa7988f",
+          "samples": 421490,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "8ee73ba1101acdb4efedb73375b1552bd204410499f46ce31c958fd74fb150cf",
+          "samples": 421490,
+          "sample_rate": 44100
+        }
+      ]
+    },
+    {
+      "variant": "reference",
+      "run": 0,
+      "case": "numbers",
+      "voice": "F1",
+      "backend": {
+        "effective_runtime": "openvino",
+        "fallback_used": false,
+        "kind": "openvino",
+        "model": "supertonic-3-openvino",
+        "placement_evidence": "OpenVINO EXECUTION_DEVICES matched the requested device for every compiled graph",
+        "placement_verified": true,
+        "requested_device": "cpu",
+        "requested_runtime": "openvino"
+      },
+      "load_ms": 53,
+      "summary": {
+        "p50_elapsed_milliseconds": 1105.175985,
+        "p50_real_time_factor": 0.11561765116125083,
+        "p50_synthesis_milliseconds": 1103.904749,
+        "p95_elapsed_milliseconds": 1403.5272889999999,
+        "p95_real_time_factor": 0.1468623758995017,
+        "p95_synthesis_milliseconds": 1402.22598,
+        "samples": 5
+      },
+      "max_process_rss_kib": 1491456,
+      "audio": [
+        {
+          "sha256": "57904e172c5606001aabbb8ee0fcc727e6b5cf08fa2f1f608e326cf25821c190",
+          "samples": 421062,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "0a218b5932b2fd0176633774d534f3837ebb4c2c10ae6512b2138359cc05f1f3",
+          "samples": 421062,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "e533101cefbe269899f76af631b2870b62c6ca670bd58fc7293d9a46ed450113",
+          "samples": 421062,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "7405f20347aa2788325c3c857f73daada61e41ccd914159faeee21987566e0f1",
+          "samples": 421062,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "faeac0fa2d0b732020bf193953e8a63ecef83f458c81f10a1027521497e72868",
+          "samples": 421062,
+          "sample_rate": 44100
+        }
+      ]
+    },
+    {
+      "variant": "candidate",
+      "run": 0,
+      "case": "numbers",
+      "voice": "F1",
+      "backend": {
+        "effective_runtime": "openvino",
+        "fallback_used": false,
+        "kind": "openvino",
+        "model": "supertonic-3-openvino",
+        "placement_evidence": "OpenVINO EXECUTION_DEVICES matched the requested device for every compiled graph",
+        "placement_verified": true,
+        "requested_device": "cpu",
+        "requested_runtime": "openvino"
+      },
+      "load_ms": 54,
+      "summary": {
+        "p50_elapsed_milliseconds": 1118.209292,
+        "p50_real_time_factor": 0.11697677631129459,
+        "p50_synthesis_milliseconds": 1116.881528,
+        "p95_elapsed_milliseconds": 1418.627373,
+        "p95_real_time_factor": 0.1484467416775399,
+        "p95_synthesis_milliseconds": 1417.353332,
+        "samples": 5
+      },
+      "max_process_rss_kib": 1503044,
+      "audio": [
+        {
+          "sha256": "69dbc6e0b8f825a74ee25654b1684b3d04da663bb078df23f6f279ab4f513428",
+          "samples": 421062,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "9bce0ddc7eda5a590bd729b059b0305273b8ea74218ca15c3fcdc956820e51ae",
+          "samples": 421062,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "7d714e7bf048865bdcf49e622f402d8f45e9e62bd1c1d4efe29eeb2163678b51",
+          "samples": 421062,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "0ec316183fc5520b643c9d3c75e3c0740c36a74f3e8be2911e23675a0daa8d59",
+          "samples": 421062,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "39c01adeeab6dfffbe21b3b38ad112ed8bee6dbd37accb92ac44634968744847",
+          "samples": 421062,
+          "sample_rate": 44100
+        }
+      ]
+    },
+    {
+      "variant": "reference",
+      "run": 0,
+      "case": "names-acronyms",
+      "voice": "M1",
+      "backend": {
+        "effective_runtime": "openvino",
+        "fallback_used": false,
+        "kind": "openvino",
+        "model": "supertonic-3-openvino",
+        "placement_evidence": "OpenVINO EXECUTION_DEVICES matched the requested device for every compiled graph",
+        "placement_verified": true,
+        "requested_device": "cpu",
+        "requested_runtime": "openvino"
+      },
+      "load_ms": 55,
+      "summary": {
+        "p50_elapsed_milliseconds": 670.041246,
+        "p50_real_time_factor": 0.11930728826566281,
+        "p50_synthesis_milliseconds": 669.205672,
+        "p95_elapsed_milliseconds": 1382.609224,
+        "p95_real_time_factor": 0.24633829536144447,
+        "p95_synthesis_milliseconds": 1381.7344010000002,
+        "samples": 5
+      },
+      "max_process_rss_kib": 1302388,
+      "audio": [
+        {
+          "sha256": "bddb8605cea338f88fc988f42b1745cff7d2bc8e7905bbc4fb0e5835ab9efe1f",
+          "samples": 247361,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "317d7c60840b6d027997859dede74d85076f91736204c5b13193b9fc41310f17",
+          "samples": 247361,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "7b4e8ccb405dbd421330d7b5746aae3aa55f318dddf9a3b95bcdc21adbf5c094",
+          "samples": 247361,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "871005139d23deee901ce75a66c29b8b0b0a4e113b32e07eeb0dfa5f5f8ca648",
+          "samples": 247361,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "80635300c4781d1c03203b35917b31c981fe37fbdeb5bf0800cd01e8cff5d9b8",
+          "samples": 247361,
+          "sample_rate": 44100
+        }
+      ]
+    },
+    {
+      "variant": "candidate",
+      "run": 0,
+      "case": "names-acronyms",
+      "voice": "M1",
+      "backend": {
+        "effective_runtime": "openvino",
+        "fallback_used": false,
+        "kind": "openvino",
+        "model": "supertonic-3-openvino",
+        "placement_evidence": "OpenVINO EXECUTION_DEVICES matched the requested device for every compiled graph",
+        "placement_verified": true,
+        "requested_device": "cpu",
+        "requested_runtime": "openvino"
+      },
+      "load_ms": 56,
+      "summary": {
+        "p50_elapsed_milliseconds": 643.381935,
+        "p50_real_time_factor": 0.11456287038248844,
+        "p50_synthesis_milliseconds": 642.593791,
+        "p95_elapsed_milliseconds": 650.925465,
+        "p95_real_time_factor": 0.11591059594865111,
+        "p95_synthesis_milliseconds": 650.153309,
+        "samples": 5
+      },
+      "max_process_rss_kib": 1499768,
+      "audio": [
+        {
+          "sha256": "407b9d8b79d3485c6027da11c20e84ca047cbc9b7f028425e63545e686e04ccb",
+          "samples": 247361,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "e14802aebee010243413337f3cc89e5fb5bbc3e109181bc0601910242c766594",
+          "samples": 247361,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "f0fb25aa61856bb71a890b5b9e43a240643d0608e6067d2db64de3c6317aef86",
+          "samples": 247361,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "985d9a5b33102e9c653afe150a6275d08a3df3be515121c07ddaef7cc9ef5cbe",
+          "samples": 247361,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "9c775b00c55b1ef6aa7a49fe8ea17014f08a91e4fb1bd28d64a5e0c9a995e524",
+          "samples": 247361,
+          "sample_rate": 44100
+        }
+      ]
+    },
+    {
+      "variant": "reference",
+      "run": 0,
+      "case": "names-acronyms",
+      "voice": "F1",
+      "backend": {
+        "effective_runtime": "openvino",
+        "fallback_used": false,
+        "kind": "openvino",
+        "model": "supertonic-3-openvino",
+        "placement_evidence": "OpenVINO EXECUTION_DEVICES matched the requested device for every compiled graph",
+        "placement_verified": true,
+        "requested_device": "cpu",
+        "requested_runtime": "openvino"
+      },
+      "load_ms": 49,
+      "summary": {
+        "p50_elapsed_milliseconds": 643.345103,
+        "p50_real_time_factor": 0.11463521587154792,
+        "p50_synthesis_milliseconds": 642.604469,
+        "p95_elapsed_milliseconds": 971.793904,
+        "p95_real_time_factor": 0.17322040156226703,
+        "p95_synthesis_milliseconds": 971.0122960000001,
+        "samples": 5
+      },
+      "max_process_rss_kib": 1502408,
+      "audio": [
+        {
+          "sha256": "7d9a1656fb2dc2148562393c118a2fb54dd910c7370cc8b592b60c267e301eb3",
+          "samples": 247209,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "bb8bb4bbcc8f84cc69dd91eb23cd9a47644800b9a05d6da9cf48b084d852e299",
+          "samples": 247209,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "ff34de5b8634a76eef9f70df2035f42e7f02edd27e8375abf921ed275af3810f",
+          "samples": 247209,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "a5c2728f87b0b4fe653b0d04a0bd0f0b0209668de01cf6d6998c5c09ac81ae45",
+          "samples": 247209,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "123286a9479b1d7d6ebfd5de22dd6b44619645b8b4b389a239161a4aeff05d4d",
+          "samples": 247209,
+          "sample_rate": 44100
+        }
+      ]
+    },
+    {
+      "variant": "candidate",
+      "run": 0,
+      "case": "names-acronyms",
+      "voice": "F1",
+      "backend": {
+        "effective_runtime": "openvino",
+        "fallback_used": false,
+        "kind": "openvino",
+        "model": "supertonic-3-openvino",
+        "placement_evidence": "OpenVINO EXECUTION_DEVICES matched the requested device for every compiled graph",
+        "placement_verified": true,
+        "requested_device": "cpu",
+        "requested_runtime": "openvino"
+      },
+      "load_ms": 44,
+      "summary": {
+        "p50_elapsed_milliseconds": 649.3216560000001,
+        "p50_real_time_factor": 0.11570036870569501,
+        "p50_synthesis_milliseconds": 648.575339,
+        "p95_elapsed_milliseconds": 1002.537763,
+        "p95_real_time_factor": 0.1787038091088366,
+        "p95_synthesis_milliseconds": 1001.7503389999999,
+        "samples": 5
+      },
+      "max_process_rss_kib": 1502268,
+      "audio": [
+        {
+          "sha256": "78137134907fb63d40614027b1d54923acf3ccd9fdc07e9deb5505eef0b708ed",
+          "samples": 247209,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "168a99bfea37f737190687313b9605b5e91b499bf4eb352bf37d4ec5f21976e4",
+          "samples": 247209,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "cd7570fb5614e37f170760ee80e0be0c5a31385e08eeefbceb48a4553c6b77d2",
+          "samples": 247209,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "e1eefc5fd27c346659de29d7ab0b481b451c0af1aa57dda7cd5bd4bfd432c8a2",
+          "samples": 247209,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "049d322c0c0e384b6778ceb60a01980a9892f48847f89a21b987165e1a22e5ac",
+          "samples": 247209,
+          "sample_rate": 44100
+        }
+      ]
+    },
+    {
+      "variant": "reference",
+      "run": 0,
+      "case": "punctuation",
+      "voice": "M1",
+      "backend": {
+        "effective_runtime": "openvino",
+        "fallback_used": false,
+        "kind": "openvino",
+        "model": "supertonic-3-openvino",
+        "placement_evidence": "OpenVINO EXECUTION_DEVICES matched the requested device for every compiled graph",
+        "placement_verified": true,
+        "requested_device": "cpu",
+        "requested_runtime": "openvino"
+      },
+      "load_ms": 50,
+      "summary": {
+        "p50_elapsed_milliseconds": 774.621555,
+        "p50_real_time_factor": 0.1206030034000056,
+        "p50_synthesis_milliseconds": 773.740738,
+        "p95_elapsed_milliseconds": 1125.7776370000001,
+        "p95_real_time_factor": 0.17533836086540724,
+        "p95_synthesis_milliseconds": 1124.900947,
+        "samples": 5
+      },
+      "max_process_rss_kib": 1311156,
+      "audio": [
+        {
+          "sha256": "ffef52719b2275689e67f4074af1a79e63fe9a103475485f967bdfc6f3932a68",
+          "samples": 282928,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "a971a48883b44361fbe7104c6f25c3c2a6104cdb7e1f18d5e66d2ae370f5863f",
+          "samples": 282928,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "0716a50157d549a4869a38c6c5248d23219399aae8cb8981f16f66116b51663d",
+          "samples": 282928,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "981862e720bc290b269861369ad3b4dceae783c1e20221cc0a85ac8d292f7282",
+          "samples": 282928,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "8a93d4f699a83361e252484fe85e7c61d80b1bd567b95b747c080b56c60e85ff",
+          "samples": 282928,
+          "sample_rate": 44100
+        }
+      ]
+    },
+    {
+      "variant": "candidate",
+      "run": 0,
+      "case": "punctuation",
+      "voice": "M1",
+      "backend": {
+        "effective_runtime": "openvino",
+        "fallback_used": false,
+        "kind": "openvino",
+        "model": "supertonic-3-openvino",
+        "placement_evidence": "OpenVINO EXECUTION_DEVICES matched the requested device for every compiled graph",
+        "placement_verified": true,
+        "requested_device": "cpu",
+        "requested_runtime": "openvino"
+      },
+      "load_ms": 49,
+      "summary": {
+        "p50_elapsed_milliseconds": 773.7425340000001,
+        "p50_real_time_factor": 0.1204670677312129,
+        "p50_synthesis_milliseconds": 772.8686289999999,
+        "p95_elapsed_milliseconds": 1113.4286749999999,
+        "p95_real_time_factor": 0.17341090618434882,
+        "p95_synthesis_milliseconds": 1112.535167,
+        "samples": 5
+      },
+      "max_process_rss_kib": 1502464,
+      "audio": [
+        {
+          "sha256": "036cbab03200a958a2f41702718262450046a1871307552ebb524e476c25c00a",
+          "samples": 282928,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "39ee9fd2090afc089482e67f810d87698ba3b5885138393a17ad6269eda36669",
+          "samples": 282928,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "3b532d6ecbe61fef2527db2e8c2b8f38755eda369a30620591196defdeb8e373",
+          "samples": 282928,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "2c00f5787508769166e3091cab97ce274210246e7b8280d819aee25606050ffc",
+          "samples": 282928,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "fe880ec132ebb6bdbb13c407f42b8f582d7abf4ea7c88a45fe76e9b82be085b1",
+          "samples": 282928,
+          "sample_rate": 44100
+        }
+      ]
+    },
+    {
+      "variant": "reference",
+      "run": 0,
+      "case": "punctuation",
+      "voice": "F1",
+      "backend": {
+        "effective_runtime": "openvino",
+        "fallback_used": false,
+        "kind": "openvino",
+        "model": "supertonic-3-openvino",
+        "placement_evidence": "OpenVINO EXECUTION_DEVICES matched the requested device for every compiled graph",
+        "placement_verified": true,
+        "requested_device": "cpu",
+        "requested_runtime": "openvino"
+      },
+      "load_ms": 57,
+      "summary": {
+        "p50_elapsed_milliseconds": 784.203435,
+        "p50_real_time_factor": 0.12215788678076375,
+        "p50_synthesis_milliseconds": 783.273046,
+        "p95_elapsed_milliseconds": 1128.880359,
+        "p95_real_time_factor": 0.17591819134589903,
+        "p95_synthesis_milliseconds": 1127.982656,
+        "samples": 5
+      },
+      "max_process_rss_kib": 1504436,
+      "audio": [
+        {
+          "sha256": "1a4539ac3931d65f0fc83ab68ebec4fd2e5d0b1caf8757ea9fc55de088c92472",
+          "samples": 282768,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "35385f9ad5b9f7d6ce02fbce96fb8c39db676918d3d579f78570d1b43297481e",
+          "samples": 282768,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "12a9b33c7e5e335ffec51631c6e0067d044099ee16f1bd3ea8de38b1a438d844",
+          "samples": 282768,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "bc48b9807541aeb96e8e22264ff688af21a79c3ea602e4c40e6e95c50367188c",
+          "samples": 282768,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "2109a40fc63621965a8f4a32f9e7113b37a123edf2183a827562eab9da6bf753",
+          "samples": 282768,
+          "sample_rate": 44100
+        }
+      ]
+    },
+    {
+      "variant": "candidate",
+      "run": 0,
+      "case": "punctuation",
+      "voice": "F1",
+      "backend": {
+        "effective_runtime": "openvino",
+        "fallback_used": false,
+        "kind": "openvino",
+        "model": "supertonic-3-openvino",
+        "placement_evidence": "OpenVINO EXECUTION_DEVICES matched the requested device for every compiled graph",
+        "placement_verified": true,
+        "requested_device": "cpu",
+        "requested_runtime": "openvino"
+      },
+      "load_ms": 53,
+      "summary": {
+        "p50_elapsed_milliseconds": 715.230552,
+        "p50_real_time_factor": 0.11141129236005558,
+        "p50_synthesis_milliseconds": 714.366175,
+        "p95_elapsed_milliseconds": 1100.166676,
+        "p95_real_time_factor": 0.17143447861877692,
+        "p95_synthesis_milliseconds": 1099.2332119999999,
+        "samples": 5
+      },
+      "max_process_rss_kib": 1502252,
+      "audio": [
+        {
+          "sha256": "33bcf4420177cfacdff76befc83ccdd2828f0e9b2b8344aee0697f17ccb99301",
+          "samples": 282768,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "2411df1186c72cfa3728603f5d7c1b7b02f12fe1a5dc044809e13d50b6f50d5e",
+          "samples": 282768,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "2e2f0aa12b5e1e7fc75b2ddb72076ce1329777a017e3b9b1e1f2b3be96d69b6b",
+          "samples": 282768,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "b6bb370e56f70713edd00d55b35beef46d273a4d379fd20cfd5d7f6305827aaf",
+          "samples": 282768,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "cbe7c71bba54a914c7248b9a20be169c90c70a089ddae0a1c4e6acab47a91145",
+          "samples": 282768,
+          "sample_rate": 44100
+        }
+      ]
+    },
+    {
+      "variant": "reference",
+      "run": 0,
+      "case": "long-reply",
+      "voice": "M1",
+      "backend": {
+        "effective_runtime": "openvino",
+        "fallback_used": false,
+        "kind": "openvino",
+        "model": "supertonic-3-openvino",
+        "placement_evidence": "OpenVINO EXECUTION_DEVICES matched the requested device for every compiled graph",
+        "placement_verified": true,
+        "requested_device": "cpu",
+        "requested_runtime": "openvino"
+      },
+      "load_ms": 52,
+      "summary": {
+        "p50_elapsed_milliseconds": 4041.588217,
+        "p50_real_time_factor": 0.10819531137696797,
+        "p50_synthesis_milliseconds": 4036.818589,
+        "p95_elapsed_milliseconds": 4090.167753,
+        "p95_real_time_factor": 0.10949391286769315,
+        "p95_synthesis_milliseconds": 4085.2700290000002,
+        "samples": 5
+      },
+      "max_process_rss_kib": 2248932,
+      "audio": [
+        {
+          "sha256": "d348923e868b39f4c50522dc672dff2a9960b68bde439dced1f0bfcfc4a468dd",
+          "samples": 1645392,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "3828e7f6919cef785fa6145bd7501e0a26fba5d3da76015b0e55f2d12ff9996b",
+          "samples": 1645392,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "d7ce60f27f557169897a1a579b06724d85e5a02b7ce68a7ee7cc736316b73131",
+          "samples": 1645392,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "23e809f5e1affdc484f908a859777cd1363351a7cc5a3c3389987d2be5c25bae",
+          "samples": 1645392,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "f4e568dc6462dee8f00738263f1077cc3da12424e2140ba1e6891a70cdac4c92",
+          "samples": 1645392,
+          "sample_rate": 44100
+        }
+      ]
+    },
+    {
+      "variant": "candidate",
+      "run": 0,
+      "case": "long-reply",
+      "voice": "M1",
+      "backend": {
+        "effective_runtime": "openvino",
+        "fallback_used": false,
+        "kind": "openvino",
+        "model": "supertonic-3-openvino",
+        "placement_evidence": "OpenVINO EXECUTION_DEVICES matched the requested device for every compiled graph",
+        "placement_verified": true,
+        "requested_device": "cpu",
+        "requested_runtime": "openvino"
+      },
+      "load_ms": 50,
+      "summary": {
+        "p50_elapsed_milliseconds": 4480.267742,
+        "p50_real_time_factor": 0.11994967411323194,
+        "p50_synthesis_milliseconds": 4475.37946,
+        "p95_elapsed_milliseconds": 4636.181729000001,
+        "p95_real_time_factor": 0.12412702570226831,
+        "p95_synthesis_milliseconds": 4631.238437,
+        "samples": 5
+      },
+      "max_process_rss_kib": 2633812,
+      "audio": [
+        {
+          "sha256": "941f6a96e36142ebf92677806874e44c17cb852e3c069f1675557d0147c789ae",
+          "samples": 1645392,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "52493426df9194f11a879db0f49df1ea701a19d4164b784c27e766efcc3dcfb3",
+          "samples": 1645392,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "22dcc7d91443aa61020baeefe85c6ccac5665a5cf56f1bc54009061697a3087d",
+          "samples": 1645392,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "c8fc983165abb457ca14b10b53d211bcd9e7a8dc42a9df4ce817dc0d076b5669",
+          "samples": 1645392,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "57a37c677ab98672d10b04a725f648f80edc10e75bab80e3c83d1e9b0375b90d",
+          "samples": 1645392,
+          "sample_rate": 44100
+        }
+      ]
+    },
+    {
+      "variant": "reference",
+      "run": 0,
+      "case": "long-reply",
+      "voice": "F1",
+      "backend": {
+        "effective_runtime": "openvino",
+        "fallback_used": false,
+        "kind": "openvino",
+        "model": "supertonic-3-openvino",
+        "placement_evidence": "OpenVINO EXECUTION_DEVICES matched the requested device for every compiled graph",
+        "placement_verified": true,
+        "requested_device": "cpu",
+        "requested_runtime": "openvino"
+      },
+      "load_ms": 57,
+      "summary": {
+        "p50_elapsed_milliseconds": 4097.212382000001,
+        "p50_real_time_factor": 0.10979487376049252,
+        "p50_synthesis_milliseconds": 4092.3661549999997,
+        "p95_elapsed_milliseconds": 5657.677714,
+        "p95_real_time_factor": 0.15166562062793923,
+        "p95_synthesis_milliseconds": 5653.0075719999995,
+        "samples": 5
+      },
+      "max_process_rss_kib": 2241644,
+      "audio": [
+        {
+          "sha256": "8ce9189be0c7350eb22c3a230b6e5c8a775c7a975cbc4a6167f219a4497edab2",
+          "samples": 1643732,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "2e70bdde8380692482e9be09e9f9c8fec93315f3d5c4fa7a2263806f1fe6c52d",
+          "samples": 1643732,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "76660b77f34e117e4ebf779e44f4f2e0bf9472356feec18221f8ecd50cd15ed7",
+          "samples": 1643732,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "e6558e9a70dd8071347f2e4a56299072eb48830cf4383512a929fa2dca137e58",
+          "samples": 1643732,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "26c63684b88995a95ec462a8f0f28e8c50334fc9a421357d87971dc5ec9e875c",
+          "samples": 1643732,
+          "sample_rate": 44100
+        }
+      ]
+    },
+    {
+      "variant": "candidate",
+      "run": 0,
+      "case": "long-reply",
+      "voice": "F1",
+      "backend": {
+        "effective_runtime": "openvino",
+        "fallback_used": false,
+        "kind": "openvino",
+        "model": "supertonic-3-openvino",
+        "placement_evidence": "OpenVINO EXECUTION_DEVICES matched the requested device for every compiled graph",
+        "placement_verified": true,
+        "requested_device": "cpu",
+        "requested_runtime": "openvino"
+      },
+      "load_ms": 52,
+      "summary": {
+        "p50_elapsed_milliseconds": 4190.751606,
+        "p50_real_time_factor": 0.11221683367555949,
+        "p50_synthesis_milliseconds": 4182.6394660000005,
+        "p95_elapsed_milliseconds": 8718.374007999999,
+        "p95_real_time_factor": 0.233640490870372,
+        "p95_synthesis_milliseconds": 8708.443341,
+        "samples": 5
+      },
+      "max_process_rss_kib": 2699636,
+      "audio": [
+        {
+          "sha256": "19e493489284783a6532a463064d5d3f70752b5cbd72e808ab842b693f9efaf3",
+          "samples": 1643732,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "8a7451fd8ab71d1bb11c74f1d58a16c29539b74dc8d682e56cda2ec97d641e9d",
+          "samples": 1643732,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "cf0131711a85c22f4244fac041a8efc5bb07b05d40375c703e32bd7163a17472",
+          "samples": 1643732,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "47a1d7742dcdfa37b1543439c5ef26aceb32198ae30a4ce3e98a0390bcb65b64",
+          "samples": 1643732,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "1d5be476368c95d31f055cc26085d7ac3a117681c2833eabc7184fde5358078b",
+          "samples": 1643732,
+          "sample_rate": 44100
+        }
+      ]
+    },
+    {
+      "variant": "candidate",
+      "run": 1,
+      "case": "notification",
+      "voice": "M1",
+      "backend": {
+        "effective_runtime": "openvino",
+        "fallback_used": false,
+        "kind": "openvino",
+        "model": "supertonic-3-openvino",
+        "placement_evidence": "OpenVINO EXECUTION_DEVICES matched the requested device for every compiled graph",
+        "placement_verified": true,
+        "requested_device": "cpu",
+        "requested_runtime": "openvino"
+      },
+      "load_ms": 90,
+      "summary": {
+        "p50_elapsed_milliseconds": 1210.9561529999999,
+        "p50_real_time_factor": 0.35987266190182365,
+        "p50_synthesis_milliseconds": 1210.469644,
+        "p95_elapsed_milliseconds": 1225.452762,
+        "p95_real_time_factor": 0.3636374471057834,
+        "p95_synthesis_milliseconds": 1223.132896,
+        "samples": 5
+      },
+      "max_process_rss_kib": 1500476,
+      "audio": [
+        {
+          "sha256": "b8091b6808403c30295b3bee84af10b79b7184e19374bc7146e34fc52fac0b4c",
+          "samples": 148335,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "bfcd5f15f4e53b8c8ab3a62888dad706e4dd5c73b70cca7bff9709695dec0d7d",
+          "samples": 148335,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "80f3f8e960f342550aca20c77543c1ca8d38958752be9334598b616bd93a2566",
+          "samples": 148335,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "a1507be5a49f7540d53e1cef047d7b41c3fbd56649fbc5593535a5a6044de902",
+          "samples": 148335,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "81c089e41cf32019fa2e62c21fb9ed9621ca43cd73bb9acbc678dafd2ad18f14",
+          "samples": 148335,
+          "sample_rate": 44100
+        }
+      ]
+    },
+    {
+      "variant": "reference",
+      "run": 1,
+      "case": "notification",
+      "voice": "M1",
+      "backend": {
+        "effective_runtime": "openvino",
+        "fallback_used": false,
+        "kind": "openvino",
+        "model": "supertonic-3-openvino",
+        "placement_evidence": "OpenVINO EXECUTION_DEVICES matched the requested device for every compiled graph",
+        "placement_verified": true,
+        "requested_device": "cpu",
+        "requested_runtime": "openvino"
+      },
+      "load_ms": 82,
+      "summary": {
+        "p50_elapsed_milliseconds": 400.47223399999996,
+        "p50_real_time_factor": 0.11891477252521343,
+        "p50_synthesis_milliseconds": 399.982376,
+        "p95_elapsed_milliseconds": 403.96369100000004,
+        "p95_real_time_factor": 0.11994828405322815,
+        "p95_synthesis_milliseconds": 403.45870099999996,
+        "samples": 5
+      },
+      "max_process_rss_kib": 1502224,
+      "audio": [
+        {
+          "sha256": "00458753e72cfe758cb986c2cc9950c9e5604e94f9f9bc524a33f897f69e1462",
+          "samples": 148335,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "810c9bdd9d78c9a7318d7572ffeb1d7780e32f88ca4f6ca8985325ae138be8be",
+          "samples": 148335,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "71707dbd9947f1b92b01c1792d22298686e102dece9427fa023e6aea55c29de2",
+          "samples": 148335,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "1e2634ec62ebe39bca96f8df8be689e95a62a36f2229c2ea3bc4652cdb4739e5",
+          "samples": 148335,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "edf68e59a79298324785d3be4f759b105c941a2b9b0f5575805d57c19d29f1d0",
+          "samples": 148335,
+          "sample_rate": 44100
+        }
+      ]
+    },
+    {
+      "variant": "candidate",
+      "run": 1,
+      "case": "notification",
+      "voice": "F1",
+      "backend": {
+        "effective_runtime": "openvino",
+        "fallback_used": false,
+        "kind": "openvino",
+        "model": "supertonic-3-openvino",
+        "placement_evidence": "OpenVINO EXECUTION_DEVICES matched the requested device for every compiled graph",
+        "placement_verified": true,
+        "requested_device": "cpu",
+        "requested_runtime": "openvino"
+      },
+      "load_ms": 53,
+      "summary": {
+        "p50_elapsed_milliseconds": 398.123895,
+        "p50_real_time_factor": 0.11814681945860156,
+        "p50_synthesis_milliseconds": 397.645759,
+        "p95_elapsed_milliseconds": 402.337094,
+        "p95_real_time_factor": 0.1193967783043557,
+        "p95_synthesis_milliseconds": 401.852735,
+        "samples": 5
+      },
+      "max_process_rss_kib": 1506772,
+      "audio": [
+        {
+          "sha256": "d855344b8d21998e03030df81094b70d743b04b66f41cf17f731bbf008b75fa9",
+          "samples": 148427,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "85be9fbbc00d0cd78f9b6e9875ed0d6c6b74cc054a42063bd2b5d5d8b0accf30",
+          "samples": 148427,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "b1dec6bc180499e6c0179584561b2d8fd01885486851399036314de4edee12d7",
+          "samples": 148427,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "ac99a8a16ba4d842440997e909b38314a940fe5957142bad180615e15ec54745",
+          "samples": 148427,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "1531126dc959e0482a20e45adfe082ed9ec8aa92dd8a4fcee9ba184379d8800f",
+          "samples": 148427,
+          "sample_rate": 44100
+        }
+      ]
+    },
+    {
+      "variant": "reference",
+      "run": 1,
+      "case": "notification",
+      "voice": "F1",
+      "backend": {
+        "effective_runtime": "openvino",
+        "fallback_used": false,
+        "kind": "openvino",
+        "model": "supertonic-3-openvino",
+        "placement_evidence": "OpenVINO EXECUTION_DEVICES matched the requested device for every compiled graph",
+        "placement_verified": true,
+        "requested_device": "cpu",
+        "requested_runtime": "openvino"
+      },
+      "load_ms": 49,
+      "summary": {
+        "p50_elapsed_milliseconds": 400.39011899999997,
+        "p50_real_time_factor": 0.11881719430616522,
+        "p50_synthesis_milliseconds": 399.902034,
+        "p95_elapsed_milliseconds": 408.103699,
+        "p95_real_time_factor": 0.1211111373926502,
+        "p95_synthesis_milliseconds": 407.622739,
+        "samples": 5
+      },
+      "max_process_rss_kib": 1501232,
+      "audio": [
+        {
+          "sha256": "07c174029f82bbbfd5413fc8c6d90faf23efc9e4779abe7b80bd4390feaa02ba",
+          "samples": 148427,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "41a0e83430853a6aa3eea7470ac5ad40c24a92a0c46d94c06faf7aab8afa3b94",
+          "samples": 148427,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "671b926dca2c69204e04347d64acf54134448ea346e8fdd3dd9793746edd4b1e",
+          "samples": 148427,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "4b0ae46005a62408467da15403e5d42863162bd067d9f12dced187b81c9ba8ce",
+          "samples": 148427,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "4e6b5cc4783b651d934a568476600aa67d9fe334ba1a7cd7994abd791e9c4315",
+          "samples": 148427,
+          "sample_rate": 44100
+        }
+      ]
+    },
+    {
+      "variant": "candidate",
+      "run": 1,
+      "case": "reply",
+      "voice": "M1",
+      "backend": {
+        "effective_runtime": "openvino",
+        "fallback_used": false,
+        "kind": "openvino",
+        "model": "supertonic-3-openvino",
+        "placement_evidence": "OpenVINO EXECUTION_DEVICES matched the requested device for every compiled graph",
+        "placement_verified": true,
+        "requested_device": "cpu",
+        "requested_runtime": "openvino"
+      },
+      "load_ms": 55,
+      "summary": {
+        "p50_elapsed_milliseconds": 644.110123,
+        "p50_real_time_factor": 0.11154543789596345,
+        "p50_synthesis_milliseconds": 643.316181,
+        "p95_elapsed_milliseconds": 649.81057,
+        "p95_real_time_factor": 0.11253236166163404,
+        "p95_synthesis_milliseconds": 649.008068,
+        "samples": 5
+      },
+      "max_process_rss_kib": 1502436,
+      "audio": [
+        {
+          "sha256": "b4bc6de8b32169e4a47c84419d0390e47e43966ee285ef40e1269fee9e569665",
+          "samples": 254338,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "1b85c3b6ac13f9e7dfeb0e0c98b28f454ba21e3e4eb1af46c11df6b3fe32289f",
+          "samples": 254338,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "899c0fa5129defb8ee912363fd336e7525a93e14ec5a071dd05d73e1fcb3ec7a",
+          "samples": 254338,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "5d7fac87be1f85a73b9a719079063bfda5dad44f8848960b533d65385a06a338",
+          "samples": 254338,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "100deefcf297af7ae61455de2140eb735b22b14fa4a740af4dfd639d1da3317c",
+          "samples": 254338,
+          "sample_rate": 44100
+        }
+      ]
+    },
+    {
+      "variant": "reference",
+      "run": 1,
+      "case": "reply",
+      "voice": "M1",
+      "backend": {
+        "effective_runtime": "openvino",
+        "fallback_used": false,
+        "kind": "openvino",
+        "model": "supertonic-3-openvino",
+        "placement_evidence": "OpenVINO EXECUTION_DEVICES matched the requested device for every compiled graph",
+        "placement_verified": true,
+        "requested_device": "cpu",
+        "requested_runtime": "openvino"
+      },
+      "load_ms": 55,
+      "summary": {
+        "p50_elapsed_milliseconds": 642.514136,
+        "p50_real_time_factor": 0.11127839619946686,
+        "p50_synthesis_milliseconds": 641.776071,
+        "p95_elapsed_milliseconds": 663.44268,
+        "p95_real_time_factor": 0.11490262231018644,
+        "p95_synthesis_milliseconds": 662.6780759999999,
+        "samples": 5
+      },
+      "max_process_rss_kib": 1501896,
+      "audio": [
+        {
+          "sha256": "bf7befe4052a400ef9ce269f3a4e929660e0f1ebc8ea6029d5712aa904ebcd76",
+          "samples": 254338,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "46784eb3852cd3198a94fe770f0aacda4d3642174aa9d4011407e114c03e539d",
+          "samples": 254338,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "9936617ccd4139e845ccfbe317a4814fb4acfc58cf31d3177e1dfe3ace9bc2f8",
+          "samples": 254338,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "2964e2d4e6aa3910c9815cd01d8726b4fc9e6886caa98ee7aa1d8381ff5ec7f3",
+          "samples": 254338,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "f650aeb3d063ccb49f5f1d5c2947105574e52ee536579bbbb4dd98c903bec657",
+          "samples": 254338,
+          "sample_rate": 44100
+        }
+      ]
+    },
+    {
+      "variant": "candidate",
+      "run": 1,
+      "case": "reply",
+      "voice": "F1",
+      "backend": {
+        "effective_runtime": "openvino",
+        "fallback_used": false,
+        "kind": "openvino",
+        "model": "supertonic-3-openvino",
+        "placement_evidence": "OpenVINO EXECUTION_DEVICES matched the requested device for every compiled graph",
+        "placement_verified": true,
+        "requested_device": "cpu",
+        "requested_runtime": "openvino"
+      },
+      "load_ms": 56,
+      "summary": {
+        "p50_elapsed_milliseconds": 639.53769,
+        "p50_real_time_factor": 0.1108194525360057,
+        "p50_synthesis_milliseconds": 638.769858,
+        "p95_elapsed_milliseconds": 935.105984,
+        "p95_real_time_factor": 0.162091904675152,
+        "p95_synthesis_milliseconds": 934.307295,
+        "samples": 5
+      },
+      "max_process_rss_kib": 1490600,
+      "audio": [
+        {
+          "sha256": "e9e04a998ffb368cfe160334612eaa04d29845311a380c378b68d8fea1484832",
+          "samples": 254195,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "200e53ff01bc7eabc06beabae9ac57f6178c6b8afe527e83a4eee4f77bf9293a",
+          "samples": 254195,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "bc64d326b19ce0ce05ebf819f7bec2a2b351ca9bb5ddf8500a1d90d7f3c6980b",
+          "samples": 254195,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "4ef7a6ff689601b24c26f7e704dc990140ac70e8a7c08d94d6f26c430c2aff44",
+          "samples": 254195,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "48ed1edda3d7fa9d746be94bc5d8e7f5cb1da807ab172655906dfc8e323af993",
+          "samples": 254195,
+          "sample_rate": 44100
+        }
+      ]
+    },
+    {
+      "variant": "reference",
+      "run": 1,
+      "case": "reply",
+      "voice": "F1",
+      "backend": {
+        "effective_runtime": "openvino",
+        "fallback_used": false,
+        "kind": "openvino",
+        "model": "supertonic-3-openvino",
+        "placement_evidence": "OpenVINO EXECUTION_DEVICES matched the requested device for every compiled graph",
+        "placement_verified": true,
+        "requested_device": "cpu",
+        "requested_runtime": "openvino"
+      },
+      "load_ms": 52,
+      "summary": {
+        "p50_elapsed_milliseconds": 663.089077,
+        "p50_real_time_factor": 0.11490268679429123,
+        "p50_synthesis_milliseconds": 662.305861,
+        "p95_elapsed_milliseconds": 977.4611960000001,
+        "p95_real_time_factor": 0.16944270682969007,
+        "p95_synthesis_milliseconds": 976.6777519999999,
+        "samples": 5
+      },
+      "max_process_rss_kib": 1500164,
+      "audio": [
+        {
+          "sha256": "9c1d6b80f48a6eeb7c67a9cd9a21ffb5cfe1026f9bcc55dfbe0fde3ac533a5d6",
+          "samples": 254195,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "bdb7cddb8b440eb9c69f38be5dad96d10aa1f22339a6de11e315a6effc7cdaa5",
+          "samples": 254195,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "87798949f6452958d94e670da005baf15c505fb43b3c22f7958b9fc7186578f5",
+          "samples": 254195,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "5cb0387c97fdb25e6181e2ef42c45b9a6835f28eacde0bcd55502b85966485c6",
+          "samples": 254195,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "54139da7a4238ccf461f2d06c7c2a73359b931cf2a0c54cbf21b513c204a62c6",
+          "samples": 254195,
+          "sample_rate": 44100
+        }
+      ]
+    },
+    {
+      "variant": "candidate",
+      "run": 1,
+      "case": "numbers",
+      "voice": "M1",
+      "backend": {
+        "effective_runtime": "openvino",
+        "fallback_used": false,
+        "kind": "openvino",
+        "model": "supertonic-3-openvino",
+        "placement_evidence": "OpenVINO EXECUTION_DEVICES matched the requested device for every compiled graph",
+        "placement_verified": true,
+        "requested_device": "cpu",
+        "requested_runtime": "openvino"
+      },
+      "load_ms": 54,
+      "summary": {
+        "p50_elapsed_milliseconds": 1183.675445,
+        "p50_real_time_factor": 0.12349135484082147,
+        "p50_synthesis_milliseconds": 1180.280525,
+        "p95_elapsed_milliseconds": 1348.1261820000002,
+        "p95_real_time_factor": 0.1409203770045961,
+        "p95_synthesis_milliseconds": 1346.860084,
+        "samples": 5
+      },
+      "max_process_rss_kib": 1497896,
+      "audio": [
+        {
+          "sha256": "9b5769dbe31ee579a27e5d4f5663005856686bb011145a436eb539c7eb0fd5be",
+          "samples": 421490,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "8a4eaa47cfac0fb7931ccb064248c1a8e34b28b98d512250c2160e82bff2f491",
+          "samples": 421490,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "7e8b543e5bd54cae8415c329dce08ef4dfd6e78a9e85208d0c5ead2c451f3ea9",
+          "samples": 421490,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "c4a442b38d4745600363837baaea1e24b57e42f8cef2634db3f9b4064801ef46",
+          "samples": 421490,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "879e384e8d00514fcfec24a07b7240ccee556b31ee3dbc4b5407915bb0dd8bf3",
+          "samples": 421490,
+          "sample_rate": 44100
+        }
+      ]
+    },
+    {
+      "variant": "reference",
+      "run": 1,
+      "case": "numbers",
+      "voice": "M1",
+      "backend": {
+        "effective_runtime": "openvino",
+        "fallback_used": false,
+        "kind": "openvino",
+        "model": "supertonic-3-openvino",
+        "placement_evidence": "OpenVINO EXECUTION_DEVICES matched the requested device for every compiled graph",
+        "placement_verified": true,
+        "requested_device": "cpu",
+        "requested_runtime": "openvino"
+      },
+      "load_ms": 56,
+      "summary": {
+        "p50_elapsed_milliseconds": 1071.944392,
+        "p50_real_time_factor": 0.11202714870202722,
+        "p50_synthesis_milliseconds": 1070.71027,
+        "p95_elapsed_milliseconds": 1389.750128,
+        "p95_real_time_factor": 0.14528036233752767,
+        "p95_synthesis_milliseconds": 1388.531064,
+        "samples": 5
+      },
+      "max_process_rss_kib": 1499740,
+      "audio": [
+        {
+          "sha256": "5a1a51c3b9e48ad6720b33a75149a6bdc4614dd57e40ce5a5d7724f55b7e2e3a",
+          "samples": 421490,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "8ca5f6a8b4f7a0c612ee6f0c1e689066160ba82003707e98003fe74f840ab4b5",
+          "samples": 421490,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "42916bddf96aff573c508ad41355a44a3fbd77e47584a4e7ddda4aee0d36f3c5",
+          "samples": 421490,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "addd8d6c35e8914bb606ab92f67fc1c7d6b88fb22f9a0fcc8e5c0656e136f903",
+          "samples": 421490,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "991e3a943aba5a2b4c02a5c5697dd11860fc674ca25fb9adc8fd05455e12fd5e",
+          "samples": 421490,
+          "sample_rate": 44100
+        }
+      ]
+    },
+    {
+      "variant": "candidate",
+      "run": 1,
+      "case": "numbers",
+      "voice": "F1",
+      "backend": {
+        "effective_runtime": "openvino",
+        "fallback_used": false,
+        "kind": "openvino",
+        "model": "supertonic-3-openvino",
+        "placement_evidence": "OpenVINO EXECUTION_DEVICES matched the requested device for every compiled graph",
+        "placement_verified": true,
+        "requested_device": "cpu",
+        "requested_runtime": "openvino"
+      },
+      "load_ms": 45,
+      "summary": {
+        "p50_elapsed_milliseconds": 1037.389924,
+        "p50_real_time_factor": 0.10852030925686433,
+        "p50_synthesis_milliseconds": 1036.140101,
+        "p95_elapsed_milliseconds": 1339.062617,
+        "p95_real_time_factor": 0.14012032072226527,
+        "p95_synthesis_milliseconds": 1337.853571,
+        "samples": 5
+      },
+      "max_process_rss_kib": 1500780,
+      "audio": [
+        {
+          "sha256": "fd3f9109145ad0219bd0237dc5b470ec7f9e4b5b62425eee046d8c3e997ad367",
+          "samples": 421062,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "7cd98b6150685d5e225310cb5802ecc90f182997069a4323b3e4946a6a037b24",
+          "samples": 421062,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "344c0c38f9dc3ef74f2d609cb24450b139471cbeeae10aa422c9f52edaae990e",
+          "samples": 421062,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "45f66ef556a77e3d890a345ff4e11948c076c41a4a629fe13157a56c72be520a",
+          "samples": 421062,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "f937af262c1a71571aeb314af5deaaeb9ee34b747e18438884b4adf3bad7142b",
+          "samples": 421062,
+          "sample_rate": 44100
+        }
+      ]
+    },
+    {
+      "variant": "reference",
+      "run": 1,
+      "case": "numbers",
+      "voice": "F1",
+      "backend": {
+        "effective_runtime": "openvino",
+        "fallback_used": false,
+        "kind": "openvino",
+        "model": "supertonic-3-openvino",
+        "placement_evidence": "OpenVINO EXECUTION_DEVICES matched the requested device for every compiled graph",
+        "placement_verified": true,
+        "requested_device": "cpu",
+        "requested_runtime": "openvino"
+      },
+      "load_ms": 45,
+      "summary": {
+        "p50_elapsed_milliseconds": 1066.307407,
+        "p50_real_time_factor": 0.11154737235674451,
+        "p50_synthesis_milliseconds": 1065.04217,
+        "p95_elapsed_milliseconds": 1395.657017,
+        "p95_real_time_factor": 0.14604335221435152,
+        "p95_synthesis_milliseconds": 1394.406031,
+        "samples": 5
+      },
+      "max_process_rss_kib": 1503744,
+      "audio": [
+        {
+          "sha256": "b8b2db638b10c27cb2dce62cab567cf994dc1a86a310a055cf1d3f6ab1496afe",
+          "samples": 421062,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "5cbca07a342934575c1d262a0655e1c60d2b2af9918e204c140fd443b23a2162",
+          "samples": 421062,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "c984662cd27e141d9afeeb6a37fbd43fb907b344202efba5d91b3e4cc942f705",
+          "samples": 421062,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "a9b39030d65691640f65d88cd99dbc8da5fe7b69076b768b5407322e5131c4b4",
+          "samples": 421062,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "190878a8083cf820c87cdcaab35f09f58727162a2b479b981b1613c92af18d79",
+          "samples": 421062,
+          "sample_rate": 44100
+        }
+      ]
+    },
+    {
+      "variant": "candidate",
+      "run": 1,
+      "case": "names-acronyms",
+      "voice": "M1",
+      "backend": {
+        "effective_runtime": "openvino",
+        "fallback_used": false,
+        "kind": "openvino",
+        "model": "supertonic-3-openvino",
+        "placement_evidence": "OpenVINO EXECUTION_DEVICES matched the requested device for every compiled graph",
+        "placement_verified": true,
+        "requested_device": "cpu",
+        "requested_runtime": "openvino"
+      },
+      "load_ms": 46,
+      "summary": {
+        "p50_elapsed_milliseconds": 630.724833,
+        "p50_real_time_factor": 0.11231024842287286,
+        "p50_synthesis_milliseconds": 629.958625,
+        "p95_elapsed_milliseconds": 645.541103,
+        "p95_real_time_factor": 0.11495364015780368,
+        "p95_synthesis_milliseconds": 644.7856549999999,
+        "samples": 5
+      },
+      "max_process_rss_kib": 1500196,
+      "audio": [
+        {
+          "sha256": "26c6dd9188aa2e53cd8a528f7658e6d74a8f78e96029daa7e167f83639e03664",
+          "samples": 247361,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "24359033d1752deba60d19235fa13df72e4f8989a5108c2d538550edfdc39084",
+          "samples": 247361,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "eebee18a4bc876b8581f1582ea500f5ce94691aefbef6fae4cf6e05c19ba463f",
+          "samples": 247361,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "1703660c5086b6c38a39cde1c23ca287f9b630a7e7b5f8f087108d1612b06313",
+          "samples": 247361,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "0b245e18e481babd30e484e74eef8446946d56f9302b3882abbb3a74173d6d34",
+          "samples": 247361,
+          "sample_rate": 44100
+        }
+      ]
+    },
+    {
+      "variant": "reference",
+      "run": 1,
+      "case": "names-acronyms",
+      "voice": "M1",
+      "backend": {
+        "effective_runtime": "openvino",
+        "fallback_used": false,
+        "kind": "openvino",
+        "model": "supertonic-3-openvino",
+        "placement_evidence": "OpenVINO EXECUTION_DEVICES matched the requested device for every compiled graph",
+        "placement_verified": true,
+        "requested_device": "cpu",
+        "requested_runtime": "openvino"
+      },
+      "load_ms": 52,
+      "summary": {
+        "p50_elapsed_milliseconds": 629.3107329999999,
+        "p50_real_time_factor": 0.11205520593964141,
+        "p50_synthesis_milliseconds": 628.5280680000001,
+        "p95_elapsed_milliseconds": 638.8368869999999,
+        "p95_real_time_factor": 0.11376272907208333,
+        "p95_synthesis_milliseconds": 638.105724,
+        "samples": 5
+      },
+      "max_process_rss_kib": 1501876,
+      "audio": [
+        {
+          "sha256": "ff226f8623f44671f6d89cead495859e5300ccf3a34f98bfea80d468bf754e2f",
+          "samples": 247361,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "5cb39eccafda013f93c6b8c4c1b0635cb42f71b7eec4a252b6fa9e22fb2c914c",
+          "samples": 247361,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "7c9026ed3224fab77516d9f81a3cfcf134b3bfffc711e13e41a48e6499303ed5",
+          "samples": 247361,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "7f674d418fe34df8d251cb77d14f0058255e0512f5263dbc6888c618116799ee",
+          "samples": 247361,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "f6723c5bcfd0a1a41cb345d7c2f33a435e90cc70487f7cdf60fb38e18c61c030",
+          "samples": 247361,
+          "sample_rate": 44100
+        }
+      ]
+    },
+    {
+      "variant": "candidate",
+      "run": 1,
+      "case": "names-acronyms",
+      "voice": "F1",
+      "backend": {
+        "effective_runtime": "openvino",
+        "fallback_used": false,
+        "kind": "openvino",
+        "model": "supertonic-3-openvino",
+        "placement_evidence": "OpenVINO EXECUTION_DEVICES matched the requested device for every compiled graph",
+        "placement_verified": true,
+        "requested_device": "cpu",
+        "requested_runtime": "openvino"
+      },
+      "load_ms": 52,
+      "summary": {
+        "p50_elapsed_milliseconds": 641.430394,
+        "p50_real_time_factor": 0.1142931605738342,
+        "p50_synthesis_milliseconds": 640.6870279999999,
+        "p95_elapsed_milliseconds": 655.752985,
+        "p95_real_time_factor": 0.1168436254693038,
+        "p95_synthesis_milliseconds": 654.984032,
+        "samples": 5
+      },
+      "max_process_rss_kib": 1500224,
+      "audio": [
+        {
+          "sha256": "44f458f21154d686db9de12a4c20e8cf217c0c0756821dd644304f676e7ca90a",
+          "samples": 247209,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "0322c4555d20b60566ceed609187d388ee063d5b39fc772ccc088eccab439ed3",
+          "samples": 247209,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "2c5a48c589016e78a3003ea10d9fcdfbd196f69cc194d435b2e05e0277b76268",
+          "samples": 247209,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "b41a58cb60f403be9c66052a9f8197af4c6ff07cec6de096b78774603443b386",
+          "samples": 247209,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "94a421267288bc6a7b08a3e42f8a216da743200abac79e80181fcc35ffafdcce",
+          "samples": 247209,
+          "sample_rate": 44100
+        }
+      ]
+    },
+    {
+      "variant": "reference",
+      "run": 1,
+      "case": "names-acronyms",
+      "voice": "F1",
+      "backend": {
+        "effective_runtime": "openvino",
+        "fallback_used": false,
+        "kind": "openvino",
+        "model": "supertonic-3-openvino",
+        "placement_evidence": "OpenVINO EXECUTION_DEVICES matched the requested device for every compiled graph",
+        "placement_verified": true,
+        "requested_device": "cpu",
+        "requested_runtime": "openvino"
+      },
+      "load_ms": 58,
+      "summary": {
+        "p50_elapsed_milliseconds": 625.056196,
+        "p50_real_time_factor": 0.11137166120635154,
+        "p50_synthesis_milliseconds": 624.3101359999999,
+        "p95_elapsed_milliseconds": 629.305856,
+        "p95_real_time_factor": 0.11213342671967556,
+        "p95_synthesis_milliseconds": 628.580324,
+        "samples": 5
+      },
+      "max_process_rss_kib": 1499860,
+      "audio": [
+        {
+          "sha256": "07239c1493cf5ae0cfbe28100815872bb32fea7c7e4ae3592780d2fc4a87542c",
+          "samples": 247209,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "27734ec144e69d4ea7e73fbcf78fd42c585ad94fab3da8203490f8a99ca73951",
+          "samples": 247209,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "9785fffae085a431b4dfa1c362d03059c1b213f9a2d3f772dd5d6838cdac7366",
+          "samples": 247209,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "ef799672d5562991b229a9e7c52c7e158a770616f855998054c7629ed6d98923",
+          "samples": 247209,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "b5104269433cba3b7e4193e1ae758c7b53ad910a83a18dfcd71b16c4cc5906d0",
+          "samples": 247209,
+          "sample_rate": 44100
+        }
+      ]
+    },
+    {
+      "variant": "candidate",
+      "run": 1,
+      "case": "punctuation",
+      "voice": "M1",
+      "backend": {
+        "effective_runtime": "openvino",
+        "fallback_used": false,
+        "kind": "openvino",
+        "model": "supertonic-3-openvino",
+        "placement_evidence": "OpenVINO EXECUTION_DEVICES matched the requested device for every compiled graph",
+        "placement_verified": true,
+        "requested_device": "cpu",
+        "requested_runtime": "openvino"
+      },
+      "load_ms": 54,
+      "summary": {
+        "p50_elapsed_milliseconds": 715.915415,
+        "p50_real_time_factor": 0.11145838454817089,
+        "p50_synthesis_milliseconds": 715.072513,
+        "p95_elapsed_milliseconds": 721.0359010000001,
+        "p95_real_time_factor": 0.11225202228745805,
+        "p95_synthesis_milliseconds": 720.164176,
+        "samples": 5
+      },
+      "max_process_rss_kib": 1504940,
+      "audio": [
+        {
+          "sha256": "93047a75a76b3dbc14359226129f79d83ea4a952a7e2085220a6023b0f9174eb",
+          "samples": 282928,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "fc3ad4cfa7b6e83851c3ced5cadab5e598e461b71e7717349e87218d37cae4a9",
+          "samples": 282928,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "37351931bd0fea809b9755ee1daa321112f092b688740806af6d7807a06e771d",
+          "samples": 282928,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "c5b94c6d8c669bb16d2974d85763a1866a864dfef392d31e34bdf7541d318ba2",
+          "samples": 282928,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "b049f019d7049fd522f95dff05bd8327239383e915184892532e78e1c31da373",
+          "samples": 282928,
+          "sample_rate": 44100
+        }
+      ]
+    },
+    {
+      "variant": "reference",
+      "run": 1,
+      "case": "punctuation",
+      "voice": "M1",
+      "backend": {
+        "effective_runtime": "openvino",
+        "fallback_used": false,
+        "kind": "openvino",
+        "model": "supertonic-3-openvino",
+        "placement_evidence": "OpenVINO EXECUTION_DEVICES matched the requested device for every compiled graph",
+        "placement_verified": true,
+        "requested_device": "cpu",
+        "requested_runtime": "openvino"
+      },
+      "load_ms": 54,
+      "summary": {
+        "p50_elapsed_milliseconds": 715.96987,
+        "p50_real_time_factor": 0.11146497161625893,
+        "p50_synthesis_milliseconds": 715.114773,
+        "p95_elapsed_milliseconds": 732.859438,
+        "p95_real_time_factor": 0.11409640883386701,
+        "p95_synthesis_milliseconds": 731.997024,
+        "samples": 5
+      },
+      "max_process_rss_kib": 1499780,
+      "audio": [
+        {
+          "sha256": "aa5f401fb072170eca75b71b47ceb60b62b45535b8f5f0c1ed7c9e6d19e1550f",
+          "samples": 282928,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "6625c7c7653868e84f79c76ac33d43c881b920985227a547aa221f3d9d57db5e",
+          "samples": 282928,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "d304b78d829e8bb129874fa63ad686c2bff0a44bec513967706eb587ea441ae6",
+          "samples": 282928,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "a7dce9466af7c1664b05433f3fdfe2d129facab583fdcecadc57170cc0d75b1c",
+          "samples": 282928,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "5b8f03fc8602e91ff4c2a22e6254cb9baac0dfa2187c5dd445676e5c31618ca1",
+          "samples": 282928,
+          "sample_rate": 44100
+        }
+      ]
+    },
+    {
+      "variant": "candidate",
+      "run": 1,
+      "case": "punctuation",
+      "voice": "F1",
+      "backend": {
+        "effective_runtime": "openvino",
+        "fallback_used": false,
+        "kind": "openvino",
+        "model": "supertonic-3-openvino",
+        "placement_evidence": "OpenVINO EXECUTION_DEVICES matched the requested device for every compiled graph",
+        "placement_verified": true,
+        "requested_device": "cpu",
+        "requested_runtime": "openvino"
+      },
+      "load_ms": 54,
+      "summary": {
+        "p50_elapsed_milliseconds": 763.030171,
+        "p50_real_time_factor": 0.1188685939696367,
+        "p50_synthesis_milliseconds": 762.18219,
+        "p95_elapsed_milliseconds": 788.703311,
+        "p95_real_time_factor": 0.1228647737481844,
+        "p95_synthesis_milliseconds": 787.805586,
+        "samples": 5
+      },
+      "max_process_rss_kib": 1502240,
+      "audio": [
+        {
+          "sha256": "ae743d22790986b5f539effcdcb58609888d0a75fad2d50d354dcf1d550f3c67",
+          "samples": 282768,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "b1c27b591b4c03c08489d05874fd20f9a8eae483580c7d9540c7bd907c64ecf3",
+          "samples": 282768,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "1ada6318d797bf2eeb96a53d3e106ac74a0ce83da11a653f5f5d5c35fc073758",
+          "samples": 282768,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "6f56bda31b4f8205903ab7e55bd6205fe9d0ae6710e332428666ed5cf15d3f3d",
+          "samples": 282768,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "32a5e1739e907c56ffa352f0a4a9ff814a57a477e1cfb0503338dcbbfdff1981",
+          "samples": 282768,
+          "sample_rate": 44100
+        }
+      ]
+    },
+    {
+      "variant": "reference",
+      "run": 1,
+      "case": "punctuation",
+      "voice": "F1",
+      "backend": {
+        "effective_runtime": "openvino",
+        "fallback_used": false,
+        "kind": "openvino",
+        "model": "supertonic-3-openvino",
+        "placement_evidence": "OpenVINO EXECUTION_DEVICES matched the requested device for every compiled graph",
+        "placement_verified": true,
+        "requested_device": "cpu",
+        "requested_runtime": "openvino"
+      },
+      "load_ms": 57,
+      "summary": {
+        "p50_elapsed_milliseconds": 838.540675,
+        "p50_real_time_factor": 0.13062389245270392,
+        "p50_synthesis_milliseconds": 837.556844,
+        "p95_elapsed_milliseconds": 839.653717,
+        "p95_real_time_factor": 0.13079849285055972,
+        "p95_synthesis_milliseconds": 838.676377,
+        "samples": 5
+      },
+      "max_process_rss_kib": 1498388,
+      "audio": [
+        {
+          "sha256": "29abecb5b3d49a3b4aaf8d172c43c337987d69cbf465bcba01283c7ce295008b",
+          "samples": 282768,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "c06ad796cf7209c3f7fac29910bf5af88c34b84056ab13bf676a3f91762e66f0",
+          "samples": 282768,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "84646c7cbceac4ac286727d3d212a6c50249cb54821f3c13b9d08fa968ec6d63",
+          "samples": 282768,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "4e8cb29b24dd12a27b5b2778d143b8d3e12d347c21de8d2eebbe020ee9ef8413",
+          "samples": 282768,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "14e217f58a239d6f30b3832e06946a1b9f237f668198a4cdb5851f40db7612bb",
+          "samples": 282768,
+          "sample_rate": 44100
+        }
+      ]
+    },
+    {
+      "variant": "candidate",
+      "run": 1,
+      "case": "long-reply",
+      "voice": "M1",
+      "backend": {
+        "effective_runtime": "openvino",
+        "fallback_used": false,
+        "kind": "openvino",
+        "model": "supertonic-3-openvino",
+        "placement_evidence": "OpenVINO EXECUTION_DEVICES matched the requested device for every compiled graph",
+        "placement_verified": true,
+        "requested_device": "cpu",
+        "requested_runtime": "openvino"
+      },
+      "load_ms": 59,
+      "summary": {
+        "p50_elapsed_milliseconds": 4396.725299,
+        "p50_real_time_factor": 0.117713586839107,
+        "p50_synthesis_milliseconds": 4391.949979,
+        "p95_elapsed_milliseconds": 4583.300597,
+        "p95_real_time_factor": 0.1227153152558035,
+        "p95_synthesis_milliseconds": 4578.566848,
+        "samples": 5
+      },
+      "max_process_rss_kib": 2630776,
+      "audio": [
+        {
+          "sha256": "294090b909240ba6d3a8e5462467e27e8ed08661db365c00f0dedef4fdd748ff",
+          "samples": 1645392,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "1e48bf469ae7a58354c7c8dc048a161d2e601f97b0c6aa4886778a659bf4ec19",
+          "samples": 1645392,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "e8959cd4fca63b78960d88bded127676f179d82b27be836ad21cd01b618851bd",
+          "samples": 1645392,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "44219a04d076debc72c97dd42c2e533489bf6aca36e96f52726003c99c574241",
+          "samples": 1645392,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "7ac60699e0c05594727d9c1e6f25107de648c386b0896e546cd649ae38f774ec",
+          "samples": 1645392,
+          "sample_rate": 44100
+        }
+      ]
+    },
+    {
+      "variant": "reference",
+      "run": 1,
+      "case": "long-reply",
+      "voice": "M1",
+      "backend": {
+        "effective_runtime": "openvino",
+        "fallback_used": false,
+        "kind": "openvino",
+        "model": "supertonic-3-openvino",
+        "placement_evidence": "OpenVINO EXECUTION_DEVICES matched the requested device for every compiled graph",
+        "placement_verified": true,
+        "requested_device": "cpu",
+        "requested_runtime": "openvino"
+      },
+      "load_ms": 50,
+      "summary": {
+        "p50_elapsed_milliseconds": 4131.476323,
+        "p50_real_time_factor": 0.11060217805812998,
+        "p50_synthesis_milliseconds": 4126.619930999999,
+        "p95_elapsed_milliseconds": 4165.3947450000005,
+        "p95_real_time_factor": 0.11151237040804972,
+        "p95_synthesis_milliseconds": 4160.579641,
+        "samples": 5
+      },
+      "max_process_rss_kib": 2643556,
+      "audio": [
+        {
+          "sha256": "804879178c808b7e580d51fef3b03aa5c01e0d505c12a46fdfdf2fcf8639e10b",
+          "samples": 1645392,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "3f4325d9d225910911e960c0c80528b43ce9b23310667be43449623d544f542c",
+          "samples": 1645392,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "d3a74956a12b1a9b3424a5c1ef6e58b45c3b380eabf084cde23cdd84ed4b0a30",
+          "samples": 1645392,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "6db76f65525da69d74cbb25adfb251b3b7ac728844a27a482933cc919aefd502",
+          "samples": 1645392,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "6734cd313c36466d9b1f33671cf984a887fd90398157464849f9762168230291",
+          "samples": 1645392,
+          "sample_rate": 44100
+        }
+      ]
+    },
+    {
+      "variant": "candidate",
+      "run": 1,
+      "case": "long-reply",
+      "voice": "F1",
+      "backend": {
+        "effective_runtime": "openvino",
+        "fallback_used": false,
+        "kind": "openvino",
+        "model": "supertonic-3-openvino",
+        "placement_evidence": "OpenVINO EXECUTION_DEVICES matched the requested device for every compiled graph",
+        "placement_verified": true,
+        "requested_device": "cpu",
+        "requested_runtime": "openvino"
+      },
+      "load_ms": 51,
+      "summary": {
+        "p50_elapsed_milliseconds": 4088.820265,
+        "p50_real_time_factor": 0.10957483382746137,
+        "p50_synthesis_milliseconds": 4084.164643,
+        "p95_elapsed_milliseconds": 4177.334126,
+        "p95_real_time_factor": 0.11195012916697691,
+        "p95_synthesis_milliseconds": 4172.698633,
+        "samples": 5
+      },
+      "max_process_rss_kib": 2636076,
+      "audio": [
+        {
+          "sha256": "a32c1338768c98881d36ac765cd219f2f6a52af528a6b05a3d225f52d8d6dcbc",
+          "samples": 1643732,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "476be574da7fbd29550b75addd6ffb9769450290fe7a9afb0c6ba8cebf8fc3eb",
+          "samples": 1643732,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "07f2d123dfdb46257201eeaae39693659db777679b5bcf1b3c7291ee4047cff7",
+          "samples": 1643732,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "8533665cfb053635a3d04e55456e56db0342635bec92af5e91e4dc5373a8140a",
+          "samples": 1643732,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "4d36ef1e748aa37b1cf4788fecfd807ee140f2e38ac10421d63a7f660429d46d",
+          "samples": 1643732,
+          "sample_rate": 44100
+        }
+      ]
+    },
+    {
+      "variant": "reference",
+      "run": 1,
+      "case": "long-reply",
+      "voice": "F1",
+      "backend": {
+        "effective_runtime": "openvino",
+        "fallback_used": false,
+        "kind": "openvino",
+        "model": "supertonic-3-openvino",
+        "placement_evidence": "OpenVINO EXECUTION_DEVICES matched the requested device for every compiled graph",
+        "placement_verified": true,
+        "requested_device": "cpu",
+        "requested_runtime": "openvino"
+      },
+      "load_ms": 53,
+      "summary": {
+        "p50_elapsed_milliseconds": 4235.942833,
+        "p50_real_time_factor": 0.11350879951847478,
+        "p50_synthesis_milliseconds": 4230.7946950000005,
+        "p95_elapsed_milliseconds": 4377.419911,
+        "p95_real_time_factor": 0.117317348936032,
+        "p95_synthesis_milliseconds": 4372.750126999999,
+        "samples": 5
+      },
+      "max_process_rss_kib": 2697716,
+      "audio": [
+        {
+          "sha256": "4eba5936d35e3900a3c780ff3b5bf615b6e1d3cf5da8f221ae5a4572a0192619",
+          "samples": 1643732,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "c334ad96737b7831dad6d88dc2a7b1681e88ec850079e541bec03e742f0e4d76",
+          "samples": 1643732,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "c7a8ce8b46284d88f577044adf3852731846e7f2b33401692f4017e424c56b11",
+          "samples": 1643732,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "7f2daa7cf0bb5725ebdbb54d282505c0766cce17e5f4c3690871851a2cf19584",
+          "samples": 1643732,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "84b20258601f80176c0ed1e0c249d57555fb4b4473218259b93523ee9775c7cc",
+          "samples": 1643732,
+          "sample_rate": 44100
+        }
+      ]
+    },
+    {
+      "variant": "reference",
+      "run": 2,
+      "case": "notification",
+      "voice": "M1",
+      "backend": {
+        "effective_runtime": "openvino",
+        "fallback_used": false,
+        "kind": "openvino",
+        "model": "supertonic-3-openvino",
+        "placement_evidence": "OpenVINO EXECUTION_DEVICES matched the requested device for every compiled graph",
+        "placement_verified": true,
+        "requested_device": "cpu",
+        "requested_runtime": "openvino"
+      },
+      "load_ms": 57,
+      "summary": {
+        "p50_elapsed_milliseconds": 430.26141,
+        "p50_real_time_factor": 0.1277747219199558,
+        "p50_synthesis_milliseconds": 429.78375,
+        "p95_elapsed_milliseconds": 431.892842,
+        "p95_real_time_factor": 0.12825019712879868,
+        "p95_synthesis_milliseconds": 431.383061,
+        "samples": 5
+      },
+      "max_process_rss_kib": 1498360,
+      "audio": [
+        {
+          "sha256": "dab56ae143817306914114511fe11e51786493b146ec9c1ea01259530119662f",
+          "samples": 148335,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "f4c63b8bf46c76d95c08e0addb8546d295a96f8724888a58bcd8f4afe4383f27",
+          "samples": 148335,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "588992a08029a77028adabe4a8ab9f4e5319485d9d4377a6803cb98729548dca",
+          "samples": 148335,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "f236d1b634ffaa2052ad6fd548f57649e8dd69c1a8d2ba4b5842a373f5c5f22f",
+          "samples": 148335,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "80d8ec327343b3113075677df5d937a9deb5efc5854e1ea615f3e053e3b93340",
+          "samples": 148335,
+          "sample_rate": 44100
+        }
+      ]
+    },
+    {
+      "variant": "candidate",
+      "run": 2,
+      "case": "notification",
+      "voice": "M1",
+      "backend": {
+        "effective_runtime": "openvino",
+        "fallback_used": false,
+        "kind": "openvino",
+        "model": "supertonic-3-openvino",
+        "placement_evidence": "OpenVINO EXECUTION_DEVICES matched the requested device for every compiled graph",
+        "placement_verified": true,
+        "requested_device": "cpu",
+        "requested_runtime": "openvino"
+      },
+      "load_ms": 56,
+      "summary": {
+        "p50_elapsed_milliseconds": 425.20478499999996,
+        "p50_real_time_factor": 0.1262534177455407,
+        "p50_synthesis_milliseconds": 424.666683,
+        "p95_elapsed_milliseconds": 430.893772,
+        "p95_real_time_factor": 0.12795861625913021,
+        "p95_synthesis_milliseconds": 430.40229800000003,
+        "samples": 5
+      },
+      "max_process_rss_kib": 1490736,
+      "audio": [
+        {
+          "sha256": "37c098190f84661dbdc014b15e167f8000bdb48e6185ea2d1ac262d33100240a",
+          "samples": 148335,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "0b896afde476f8f36f81f2eedfa8854ae8ff78945e2a9a8efedd47d50555c355",
+          "samples": 148335,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "268c9329a96c708c28581b1ec5159ca6da8b33384e4e76c5cb6447d254b1b9d9",
+          "samples": 148335,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "5d692b344bc6e51c2a9ddee7a6458771e70a7ecd3f7ffff03e0fb2f754ee204e",
+          "samples": 148335,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "9d8dc72674fc1165e2c27a835ec783df3f912fd3ebf8c17e7092449737d48f02",
+          "samples": 148335,
+          "sample_rate": 44100
+        }
+      ]
+    },
+    {
+      "variant": "reference",
+      "run": 2,
+      "case": "notification",
+      "voice": "F1",
+      "backend": {
+        "effective_runtime": "openvino",
+        "fallback_used": false,
+        "kind": "openvino",
+        "model": "supertonic-3-openvino",
+        "placement_evidence": "OpenVINO EXECUTION_DEVICES matched the requested device for every compiled graph",
+        "placement_verified": true,
+        "requested_device": "cpu",
+        "requested_runtime": "openvino"
+      },
+      "load_ms": 55,
+      "summary": {
+        "p50_elapsed_milliseconds": 406.956209,
+        "p50_real_time_factor": 0.12075600651956346,
+        "p50_synthesis_milliseconds": 406.427478,
+        "p95_elapsed_milliseconds": 410.72429,
+        "p95_real_time_factor": 0.12188476858104062,
+        "p95_synthesis_milliseconds": 410.226543,
+        "samples": 5
+      },
+      "max_process_rss_kib": 1502140,
+      "audio": [
+        {
+          "sha256": "8e70a165278c41f62846e17b789609b74e1d2de4de2ef1da27d407a1cc4e068b",
+          "samples": 148427,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "a1cb10d1012b10357354ab298895e26f4b8fe92cca4fae66f67a8b6cdc56e578",
+          "samples": 148427,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "356a2a074a9a9938da64948f80a1d1d99bea3d898b0f9f96a05ab1c3fb354105",
+          "samples": 148427,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "6059df875193dcd15ab042e4fe3518b4d594ca82faa2ebf21f2aca758653ce6e",
+          "samples": 148427,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "5d80da3102387104658d9d02b41ac38013db5904b63af0fd2413cfe64251f5ee",
+          "samples": 148427,
+          "sample_rate": 44100
+        }
+      ]
+    },
+    {
+      "variant": "candidate",
+      "run": 2,
+      "case": "notification",
+      "voice": "F1",
+      "backend": {
+        "effective_runtime": "openvino",
+        "fallback_used": false,
+        "kind": "openvino",
+        "model": "supertonic-3-openvino",
+        "placement_evidence": "OpenVINO EXECUTION_DEVICES matched the requested device for every compiled graph",
+        "placement_verified": true,
+        "requested_device": "cpu",
+        "requested_runtime": "openvino"
+      },
+      "load_ms": 53,
+      "summary": {
+        "p50_elapsed_milliseconds": 409.55044499999997,
+        "p50_real_time_factor": 0.1215368932746634,
+        "p50_synthesis_milliseconds": 409.055702,
+        "p95_elapsed_milliseconds": 415.373518,
+        "p95_real_time_factor": 0.12327126905129614,
+        "p95_synthesis_milliseconds": 414.893076,
+        "samples": 5
+      },
+      "max_process_rss_kib": 1500232,
+      "audio": [
+        {
+          "sha256": "4e950a129f1d9a1f851007d9301fa71002b3b45185448221d2222306519be26c",
+          "samples": 148427,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "59f93c0f5219d52bb39285c848bcf14e73acbe784062aa8604d3560989fbdcc3",
+          "samples": 148427,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "ec67ee649cc832e857ff23471f4dc4f3ca68002a4e5d09d881ca8f6f56a9f6eb",
+          "samples": 148427,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "31bd8f7c261d53b8d89ecc0e59f392976197bdedd9cce9c26888fb091c9ae87d",
+          "samples": 148427,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "38d9c7480dc2eb5f578e7e1b5be22af45b53abf2fd7d81790fccaff1b541e0b3",
+          "samples": 148427,
+          "sample_rate": 44100
+        }
+      ]
+    },
+    {
+      "variant": "reference",
+      "run": 2,
+      "case": "reply",
+      "voice": "M1",
+      "backend": {
+        "effective_runtime": "openvino",
+        "fallback_used": false,
+        "kind": "openvino",
+        "model": "supertonic-3-openvino",
+        "placement_evidence": "OpenVINO EXECUTION_DEVICES matched the requested device for every compiled graph",
+        "placement_verified": true,
+        "requested_device": "cpu",
+        "requested_runtime": "openvino"
+      },
+      "load_ms": 55,
+      "summary": {
+        "p50_elapsed_milliseconds": 662.743117,
+        "p50_real_time_factor": 0.11478247426702501,
+        "p50_synthesis_milliseconds": 661.985146,
+        "p95_elapsed_milliseconds": 669.086147,
+        "p95_real_time_factor": 0.11587623517146926,
+        "p95_synthesis_milliseconds": 668.293195,
+        "samples": 5
+      },
+      "max_process_rss_kib": 1497924,
+      "audio": [
+        {
+          "sha256": "726d8050bb2d7fe77d0af8e51441e9611618230124e4986b5747af7c5e222cdd",
+          "samples": 254338,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "d76e1aeb6d7067129315a490d32aa0749bd79ca41ecc570a7c876843690311e9",
+          "samples": 254338,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "7b2f15e6a8f865de1662d29c9deb4f3cb7f4f32d05e02fa5e69489750b9ca325",
+          "samples": 254338,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "5eb427ee557ae891d08a6ae2a296078ea34f46bf4ad0b0c84a11b479446c968f",
+          "samples": 254338,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "fc585206efdfb2df283cd1231bce0924893f7cd2ab9c72d7fdb8d94229f134f5",
+          "samples": 254338,
+          "sample_rate": 44100
+        }
+      ]
+    },
+    {
+      "variant": "candidate",
+      "run": 2,
+      "case": "reply",
+      "voice": "M1",
+      "backend": {
+        "effective_runtime": "openvino",
+        "fallback_used": false,
+        "kind": "openvino",
+        "model": "supertonic-3-openvino",
+        "placement_evidence": "OpenVINO EXECUTION_DEVICES matched the requested device for every compiled graph",
+        "placement_verified": true,
+        "requested_device": "cpu",
+        "requested_runtime": "openvino"
+      },
+      "load_ms": 53,
+      "summary": {
+        "p50_elapsed_milliseconds": 661.217962,
+        "p50_real_time_factor": 0.11451318906031747,
+        "p50_synthesis_milliseconds": 660.432097,
+        "p95_elapsed_milliseconds": 666.483753,
+        "p95_real_time_factor": 0.11542258055318168,
+        "p95_synthesis_milliseconds": 665.6768320000001,
+        "samples": 5
+      },
+      "max_process_rss_kib": 1501540,
+      "audio": [
+        {
+          "sha256": "0c9eaf5f7b2692b0021bcb0d3a32bf2dc5a62716e44030f7a1a45708ed932afc",
+          "samples": 254338,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "5746007e61e04e0fbbe69551b178061a2250885bc348bee978138fa417da6522",
+          "samples": 254338,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "7bdcc0c265985df7bfd73f218cd6194e57557b8114e6a0e78221edc2bda8769c",
+          "samples": 254338,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "1373ac364ff52fd8ed1a95444c7ecb68c06323dd7c76179d02c09a58a1ea455e",
+          "samples": 254338,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "e4ac59ad33d7edb8491f8b26098f5c26140ec3c617b950f3558a8b938de6bd3e",
+          "samples": 254338,
+          "sample_rate": 44100
+        }
+      ]
+    },
+    {
+      "variant": "reference",
+      "run": 2,
+      "case": "reply",
+      "voice": "F1",
+      "backend": {
+        "effective_runtime": "openvino",
+        "fallback_used": false,
+        "kind": "openvino",
+        "model": "supertonic-3-openvino",
+        "placement_evidence": "OpenVINO EXECUTION_DEVICES matched the requested device for every compiled graph",
+        "placement_verified": true,
+        "requested_device": "cpu",
+        "requested_runtime": "openvino"
+      },
+      "load_ms": 55,
+      "summary": {
+        "p50_elapsed_milliseconds": 663.797889,
+        "p50_real_time_factor": 0.11502107264098202,
+        "p50_synthesis_milliseconds": 662.988244,
+        "p95_elapsed_milliseconds": 669.009907,
+        "p95_real_time_factor": 0.11592876356486582,
+        "p95_synthesis_milliseconds": 668.220228,
+        "samples": 5
+      },
+      "max_process_rss_kib": 1500000,
+      "audio": [
+        {
+          "sha256": "f999384182bf203108667ccc02849617b36484a75159bbc254819ffee835ab7a",
+          "samples": 254195,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "fa46f528d3bbc93909da2e8204c39e6bc3fe3efeac43212cf755bd9b1f1e78eb",
+          "samples": 254195,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "f56699933826aaca72d4e43afe18727aaaaa7076be829265f04efa5dff072f92",
+          "samples": 254195,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "91fc083925b7fd4e80c546f0fd967c63cd4faec4817be46175c836353839d941",
+          "samples": 254195,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "962dda8afcaf6b67def9c8b601d8f6984ac3ab7630d5e78eda926221dde15610",
+          "samples": 254195,
+          "sample_rate": 44100
+        }
+      ]
+    },
+    {
+      "variant": "candidate",
+      "run": 2,
+      "case": "reply",
+      "voice": "F1",
+      "backend": {
+        "effective_runtime": "openvino",
+        "fallback_used": false,
+        "kind": "openvino",
+        "model": "supertonic-3-openvino",
+        "placement_evidence": "OpenVINO EXECUTION_DEVICES matched the requested device for every compiled graph",
+        "placement_verified": true,
+        "requested_device": "cpu",
+        "requested_runtime": "openvino"
+      },
+      "load_ms": 55,
+      "summary": {
+        "p50_elapsed_milliseconds": 661.688506,
+        "p50_real_time_factor": 0.11465026640601034,
+        "p50_synthesis_milliseconds": 660.850895,
+        "p95_elapsed_milliseconds": 669.3558800000001,
+        "p95_real_time_factor": 0.11599045498798496,
+        "p95_synthesis_milliseconds": 668.575821,
+        "samples": 5
+      },
+      "max_process_rss_kib": 1495964,
+      "audio": [
+        {
+          "sha256": "67bcc1e4cf0a0de663e2b38586d89c83ac9d499b767b451e6234961a0f5cd8dd",
+          "samples": 254195,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "2a9f8f596651a3997b05feb48f766749554db0531bbbb126e3a18e47ee2ccc29",
+          "samples": 254195,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "d993eb6d191275c1973967a8121c723e6db0ef1caf6f1432341ef122686d4da3",
+          "samples": 254195,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "152e158b37a2463dcb35dd8d5093802207f0f9866b17958c0d7968f721df9d24",
+          "samples": 254195,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "072c6be18a77edc023d67366d32d2a20bd12fc40c2e9ab82edbd081895796f4d",
+          "samples": 254195,
+          "sample_rate": 44100
+        }
+      ]
+    },
+    {
+      "variant": "reference",
+      "run": 2,
+      "case": "numbers",
+      "voice": "M1",
+      "backend": {
+        "effective_runtime": "openvino",
+        "fallback_used": false,
+        "kind": "openvino",
+        "model": "supertonic-3-openvino",
+        "placement_evidence": "OpenVINO EXECUTION_DEVICES matched the requested device for every compiled graph",
+        "placement_verified": true,
+        "requested_device": "cpu",
+        "requested_runtime": "openvino"
+      },
+      "load_ms": 53,
+      "summary": {
+        "p50_elapsed_milliseconds": 1068.157322,
+        "p50_real_time_factor": 0.11163350684338774,
+        "p50_synthesis_milliseconds": 1066.948,
+        "p95_elapsed_milliseconds": 1069.429967,
+        "p95_real_time_factor": 0.11175367042377962,
+        "p95_synthesis_milliseconds": 1068.0964749999998,
+        "samples": 5
+      },
+      "max_process_rss_kib": 1498444,
+      "audio": [
+        {
+          "sha256": "8bde9244d136c8d431c226a7b6e865065bf0fdcd6261c6c88d18e7828b3c3b9e",
+          "samples": 421490,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "1c2d77aceaa0e1b99568935e918669c8bf0967b5207c1673baff5051e61277c9",
+          "samples": 421490,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "3e236a939657a0a1bae21566b575d7c29428903258d698879763dee2018e8b54",
+          "samples": 421490,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "69bf3b6710cd1b701c47adcaf29b5ae93b02a2cba33c819a17f9473d9d45fa61",
+          "samples": 421490,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "de507aa191bf0fb1917e899a0f8d5eca28231095d403340dfef79f6ecd0e29fd",
+          "samples": 421490,
+          "sample_rate": 44100
+        }
+      ]
+    },
+    {
+      "variant": "candidate",
+      "run": 2,
+      "case": "numbers",
+      "voice": "M1",
+      "backend": {
+        "effective_runtime": "openvino",
+        "fallback_used": false,
+        "kind": "openvino",
+        "model": "supertonic-3-openvino",
+        "placement_evidence": "OpenVINO EXECUTION_DEVICES matched the requested device for every compiled graph",
+        "placement_verified": true,
+        "requested_device": "cpu",
+        "requested_runtime": "openvino"
+      },
+      "load_ms": 52,
+      "summary": {
+        "p50_elapsed_milliseconds": 1068.1867359999999,
+        "p50_real_time_factor": 0.11162985508842327,
+        "p50_synthesis_milliseconds": 1066.9130980000002,
+        "p95_elapsed_milliseconds": 1069.651759,
+        "p95_real_time_factor": 0.11178446739286513,
+        "p95_synthesis_milliseconds": 1068.39082,
+        "samples": 5
+      },
+      "max_process_rss_kib": 1499880,
+      "audio": [
+        {
+          "sha256": "0d453bbc1e2618a453e2147601e4d0630e59619984c713a7d403de9f919d54a9",
+          "samples": 421490,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "4843834ca7a8fc1d19cffa5c66c4d33789c0adea0253bfebecfe06148bd6dbd5",
+          "samples": 421490,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "22fbd1fd72b38ad07d6abdf1917b1c6a873612d26f1e2af76c17ad059df83df3",
+          "samples": 421490,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "9d5d48176383c1a961d2c048e37762d9381b5aee28b4c75ee6c941196ed793a8",
+          "samples": 421490,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "d38164ad3875ea6892b1cd725b390bfaa1b88c842b2f555c4b8bdd574fbbbfd1",
+          "samples": 421490,
+          "sample_rate": 44100
+        }
+      ]
+    },
+    {
+      "variant": "reference",
+      "run": 2,
+      "case": "numbers",
+      "voice": "F1",
+      "backend": {
+        "effective_runtime": "openvino",
+        "fallback_used": false,
+        "kind": "openvino",
+        "model": "supertonic-3-openvino",
+        "placement_evidence": "OpenVINO EXECUTION_DEVICES matched the requested device for every compiled graph",
+        "placement_verified": true,
+        "requested_device": "cpu",
+        "requested_runtime": "openvino"
+      },
+      "load_ms": 54,
+      "summary": {
+        "p50_elapsed_milliseconds": 1071.7548800000002,
+        "p50_real_time_factor": 0.11212154113500453,
+        "p50_synthesis_milliseconds": 1070.524271,
+        "p95_elapsed_milliseconds": 1101.2077920000002,
+        "p95_real_time_factor": 0.11520831019410502,
+        "p95_synthesis_milliseconds": 1099.996406,
+        "samples": 5
+      },
+      "max_process_rss_kib": 1499632,
+      "audio": [
+        {
+          "sha256": "490761320a80ca778e6d6422bd0f1c24a5c70ffa1b2f5f16ea0615f67893d09d",
+          "samples": 421062,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "f79c5e39834f4b746e355ca2cbe4fdd7051ea1a6ad4d7ffc13949e968062787c",
+          "samples": 421062,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "2f563cef9b714c9072bf49ebc01399ad30e49b29739cfb2c0b6718d3fd41a05f",
+          "samples": 421062,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "1a5a5a8afafb4181d76f16b17364243556d8289cd8eb9a2711947c8311d7af2d",
+          "samples": 421062,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "8823c0814736a8064e1d3734df2f987894283d74bb6eb69f48a1cb9cacbb6c3e",
+          "samples": 421062,
+          "sample_rate": 44100
+        }
+      ]
+    },
+    {
+      "variant": "candidate",
+      "run": 2,
+      "case": "numbers",
+      "voice": "F1",
+      "backend": {
+        "effective_runtime": "openvino",
+        "fallback_used": false,
+        "kind": "openvino",
+        "model": "supertonic-3-openvino",
+        "placement_evidence": "OpenVINO EXECUTION_DEVICES matched the requested device for every compiled graph",
+        "placement_verified": true,
+        "requested_device": "cpu",
+        "requested_runtime": "openvino"
+      },
+      "load_ms": 55,
+      "summary": {
+        "p50_elapsed_milliseconds": 1154.534972,
+        "p50_real_time_factor": 0.12078341794620265,
+        "p50_synthesis_milliseconds": 1153.226928,
+        "p95_elapsed_milliseconds": 1178.08671,
+        "p95_real_time_factor": 0.12325205469696705,
+        "p95_synthesis_milliseconds": 1176.797203,
+        "samples": 5
+      },
+      "max_process_rss_kib": 1499892,
+      "audio": [
+        {
+          "sha256": "e4f6833ccde40558541514db27052ae15a8cc4a9148ff829c447d9dc03c10ef9",
+          "samples": 421062,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "e4a76546db893eeda2f083d496dcca60029db67015e18da9c3b3683013c78a45",
+          "samples": 421062,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "48c8c3f9e2a99217cf7610c621dca2840fd54c9936a074ef50857906ca5c6926",
+          "samples": 421062,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "7e1eaddabacdb3f546ede27896c9583be628281ab79c96e6d8ef118bdf53fa7c",
+          "samples": 421062,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "014efdce0aac24b67004570d9c998de9c3e9f9a6e71bd0768b5a0a7dad13b893",
+          "samples": 421062,
+          "sample_rate": 44100
+        }
+      ]
+    },
+    {
+      "variant": "reference",
+      "run": 2,
+      "case": "names-acronyms",
+      "voice": "M1",
+      "backend": {
+        "effective_runtime": "openvino",
+        "fallback_used": false,
+        "kind": "openvino",
+        "model": "supertonic-3-openvino",
+        "placement_evidence": "OpenVINO EXECUTION_DEVICES matched the requested device for every compiled graph",
+        "placement_verified": true,
+        "requested_device": "cpu",
+        "requested_runtime": "openvino"
+      },
+      "load_ms": 57,
+      "summary": {
+        "p50_elapsed_milliseconds": 702.15099,
+        "p50_real_time_factor": 0.12503425823497552,
+        "p50_synthesis_milliseconds": 701.328779,
+        "p95_elapsed_milliseconds": 763.563572,
+        "p95_real_time_factor": 0.13596380287204193,
+        "p95_synthesis_milliseconds": 762.6336110000001,
+        "samples": 5
+      },
+      "max_process_rss_kib": 1501664,
+      "audio": [
+        {
+          "sha256": "b921754a2ff44d5becc68cde662caa169576c4fcc11e4477aa91372fe3dcc5c2",
+          "samples": 247361,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "3acd405ad1a646e31e8ac3eb672d52bdba16330d3fa2eae93500ad9392e458d1",
+          "samples": 247361,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "c9a08042eebc8b8acfa245c941b5d12cf9286269ddda14ee720bc9d0448dc7ce",
+          "samples": 247361,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "55d339b0914aaf4e43c6087fe8cf441ca37ab24f71786c0bf0551746b4234519",
+          "samples": 247361,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "609f7e8d81339658c905c14fb4e7d17de55923025867a792634b1fb25e76fee9",
+          "samples": 247361,
+          "sample_rate": 44100
+        }
+      ]
+    },
+    {
+      "variant": "candidate",
+      "run": 2,
+      "case": "names-acronyms",
+      "voice": "M1",
+      "backend": {
+        "effective_runtime": "openvino",
+        "fallback_used": false,
+        "kind": "openvino",
+        "model": "supertonic-3-openvino",
+        "placement_evidence": "OpenVINO EXECUTION_DEVICES matched the requested device for every compiled graph",
+        "placement_verified": true,
+        "requested_device": "cpu",
+        "requested_runtime": "openvino"
+      },
+      "load_ms": 57,
+      "summary": {
+        "p50_elapsed_milliseconds": 665.2230089999999,
+        "p50_real_time_factor": 0.1184631305694933,
+        "p50_synthesis_milliseconds": 664.470713,
+        "p95_elapsed_milliseconds": 666.1036700000001,
+        "p95_real_time_factor": 0.11860849560519791,
+        "p95_synthesis_milliseconds": 665.2860790000001,
+        "samples": 5
+      },
+      "max_process_rss_kib": 1501656,
+      "audio": [
+        {
+          "sha256": "21d942a396177be7025adeece482b20aca7f9b8e32d3488d148a6a461ae139ef",
+          "samples": 247361,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "bb34baad12b8890c760fe7cec68bdc94b7e582e3bacba7515db441c2892d75bd",
+          "samples": 247361,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "882aa646f6b7646c40c85e6212905fedc50054fc022895a88f92f6fba4f2b869",
+          "samples": 247361,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "1928643f9330adaeb9f2ee77b27ce8c6f41f62e969937761fc13bc0bb1db5ef6",
+          "samples": 247361,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "de7cd6d2c527f395c5dae01c9dff26e9b33ab530868b15c29ebc1da3d264e5ec",
+          "samples": 247361,
+          "sample_rate": 44100
+        }
+      ]
+    },
+    {
+      "variant": "reference",
+      "run": 2,
+      "case": "names-acronyms",
+      "voice": "F1",
+      "backend": {
+        "effective_runtime": "openvino",
+        "fallback_used": false,
+        "kind": "openvino",
+        "model": "supertonic-3-openvino",
+        "placement_evidence": "OpenVINO EXECUTION_DEVICES matched the requested device for every compiled graph",
+        "placement_verified": true,
+        "requested_device": "cpu",
+        "requested_runtime": "openvino"
+      },
+      "load_ms": 53,
+      "summary": {
+        "p50_elapsed_milliseconds": 678.575177,
+        "p50_real_time_factor": 0.12091908170475942,
+        "p50_synthesis_milliseconds": 677.829598,
+        "p95_elapsed_milliseconds": 687.325364,
+        "p95_real_time_factor": 0.12246557333114087,
+        "p95_synthesis_milliseconds": 686.498683,
+        "samples": 5
+      },
+      "max_process_rss_kib": 1502184,
+      "audio": [
+        {
+          "sha256": "f55d3d711664e6f288d2ee033c9dcb044ab8c797e28ed01c4e058999c74882a5",
+          "samples": 247209,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "13351cceec3132f72146a306e2fa0350c91d2bb555c250b2f51e0eb1a6928b59",
+          "samples": 247209,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "b74c92c32d0e6f1cf0ab70e243c1b00c966fccd5895ec1ccbb5a7492f0ab23bd",
+          "samples": 247209,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "759c26109a66d365147a49681e114dfc944a5d57ddff815f374f25117183719b",
+          "samples": 247209,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "bcdf36ec1c0b2aa9d31f3b6b17f261736e6f69e7d7be90e1d53e2a0a0e65641b",
+          "samples": 247209,
+          "sample_rate": 44100
+        }
+      ]
+    },
+    {
+      "variant": "candidate",
+      "run": 2,
+      "case": "names-acronyms",
+      "voice": "F1",
+      "backend": {
+        "effective_runtime": "openvino",
+        "fallback_used": false,
+        "kind": "openvino",
+        "model": "supertonic-3-openvino",
+        "placement_evidence": "OpenVINO EXECUTION_DEVICES matched the requested device for every compiled graph",
+        "placement_verified": true,
+        "requested_device": "cpu",
+        "requested_runtime": "openvino"
+      },
+      "load_ms": 62,
+      "summary": {
+        "p50_elapsed_milliseconds": 678.543047,
+        "p50_real_time_factor": 0.1208993564144198,
+        "p50_synthesis_milliseconds": 677.719025,
+        "p95_elapsed_milliseconds": 721.8713789999999,
+        "p95_real_time_factor": 0.12862137096903103,
+        "p95_synthesis_milliseconds": 721.005907,
+        "samples": 5
+      },
+      "max_process_rss_kib": 1491632,
+      "audio": [
+        {
+          "sha256": "62adab19a210a7dc4fa6a0e9113dec29c2782523631d3c1afca5a3a67ea9f0fb",
+          "samples": 247209,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "cddc8f153926a92c8c821addc7a9ff69a61240e6cc7fe4c44859a3a462d4e2f0",
+          "samples": 247209,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "1eedf587e593edb5fac54d8023325470ebae820580dbfc1dc8632a687ba403e9",
+          "samples": 247209,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "bae0705013a631806207a14ab126b3588222b5cf161e7a5abec657c7c0329cb0",
+          "samples": 247209,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "d0aed548653de829a368526e156ae0580b270cd29158b92d1889085a4d35ecd8",
+          "samples": 247209,
+          "sample_rate": 44100
+        }
+      ]
+    },
+    {
+      "variant": "reference",
+      "run": 2,
+      "case": "punctuation",
+      "voice": "M1",
+      "backend": {
+        "effective_runtime": "openvino",
+        "fallback_used": false,
+        "kind": "openvino",
+        "model": "supertonic-3-openvino",
+        "placement_evidence": "OpenVINO EXECUTION_DEVICES matched the requested device for every compiled graph",
+        "placement_verified": true,
+        "requested_device": "cpu",
+        "requested_runtime": "openvino"
+      },
+      "load_ms": 56,
+      "summary": {
+        "p50_elapsed_milliseconds": 790.727689,
+        "p50_real_time_factor": 0.12311238439694921,
+        "p50_synthesis_milliseconds": 789.839925,
+        "p95_elapsed_milliseconds": 882.003963,
+        "p95_real_time_factor": 0.13721770193645869,
+        "p95_synthesis_milliseconds": 880.334013,
+        "samples": 5
+      },
+      "max_process_rss_kib": 1494148,
+      "audio": [
+        {
+          "sha256": "3d8de17c1ddc87cfa525bd7dbd25284b0765c869fd11caf6124b313253f464fa",
+          "samples": 282928,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "c61f0d04352b10b58b7a18848319c107b2859e14d8c59270461445b15a82b120",
+          "samples": 282928,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "bcec49ebb4f59cefa8f2b514635a7fda5d1a8b04f8e8d64559b419f8bab95470",
+          "samples": 282928,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "b87d87217ded3813d2d277a856277d1987d9f2ffb8c5ce72945d1216a3ca1a12",
+          "samples": 282928,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "bbfdc610613fffc8da85210d7832c8ac84eef02506f6a0d855921025644819c0",
+          "samples": 282928,
+          "sample_rate": 44100
+        }
+      ]
+    },
+    {
+      "variant": "candidate",
+      "run": 2,
+      "case": "punctuation",
+      "voice": "M1",
+      "backend": {
+        "effective_runtime": "openvino",
+        "fallback_used": false,
+        "kind": "openvino",
+        "model": "supertonic-3-openvino",
+        "placement_evidence": "OpenVINO EXECUTION_DEVICES matched the requested device for every compiled graph",
+        "placement_verified": true,
+        "requested_device": "cpu",
+        "requested_runtime": "openvino"
+      },
+      "load_ms": 54,
+      "summary": {
+        "p50_elapsed_milliseconds": 769.646352,
+        "p50_real_time_factor": 0.11983358786566117,
+        "p50_synthesis_milliseconds": 768.804475,
+        "p95_elapsed_milliseconds": 785.62063,
+        "p95_real_time_factor": 0.12231587288164837,
+        "p95_synthesis_milliseconds": 784.729825,
+        "samples": 5
+      },
+      "max_process_rss_kib": 1499988,
+      "audio": [
+        {
+          "sha256": "9ebe7d6dd389b0ff7d881aea8d316737b8cc09da5f994bbc94b4a349eb08f6a4",
+          "samples": 282928,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "d91f9fe28fee7b681a2d0ee699bb497d740f133a2acadd6b58d0f008973b2da9",
+          "samples": 282928,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "a40cd92c4c577f152fb52a349c15ab5e9a642cd04be60afb3dd294019e1a8086",
+          "samples": 282928,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "fb2eca047b80098b96c1451769cc4a3ebd4698760587f3fec3b9ac2092efbd3d",
+          "samples": 282928,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "c46fe836a16ca7c156ecad4cea2065a3ae581657a5f9efbb9272d7ed874a3a53",
+          "samples": 282928,
+          "sample_rate": 44100
+        }
+      ]
+    },
+    {
+      "variant": "reference",
+      "run": 2,
+      "case": "punctuation",
+      "voice": "F1",
+      "backend": {
+        "effective_runtime": "openvino",
+        "fallback_used": false,
+        "kind": "openvino",
+        "model": "supertonic-3-openvino",
+        "placement_evidence": "OpenVINO EXECUTION_DEVICES matched the requested device for every compiled graph",
+        "placement_verified": true,
+        "requested_device": "cpu",
+        "requested_runtime": "openvino"
+      },
+      "load_ms": 54,
+      "summary": {
+        "p50_elapsed_milliseconds": 746.5084469999999,
+        "p50_real_time_factor": 0.11629011749382208,
+        "p50_synthesis_milliseconds": 745.649069,
+        "p95_elapsed_milliseconds": 754.275079,
+        "p95_real_time_factor": 0.11749495214521878,
+        "p95_synthesis_milliseconds": 753.374436,
+        "samples": 5
+      },
+      "max_process_rss_kib": 1502512,
+      "audio": [
+        {
+          "sha256": "7a7c325f9ed9352ef4bc7dbd46a401bb917ddc557e82f35085c1a77ae3778e69",
+          "samples": 282768,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "2c45277548c15af2b4b70c2ddfed4a0f4f03a0cc439ede935f9364078a2d0d37",
+          "samples": 282768,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "780e4852fdf9f414d07f87f5b70c2684ad1495494b12387573a226cdeb322040",
+          "samples": 282768,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "5fb48d8f86adf781d396147726a52d40855bc423b55a2d0e83c500ead49edbf7",
+          "samples": 282768,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "6bcf8aa942f13aad869ac366cf3d7fe28cc23a72b8495956b8f5a291cd8bd0e8",
+          "samples": 282768,
+          "sample_rate": 44100
+        }
+      ]
+    },
+    {
+      "variant": "candidate",
+      "run": 2,
+      "case": "punctuation",
+      "voice": "F1",
+      "backend": {
+        "effective_runtime": "openvino",
+        "fallback_used": false,
+        "kind": "openvino",
+        "model": "supertonic-3-openvino",
+        "placement_evidence": "OpenVINO EXECUTION_DEVICES matched the requested device for every compiled graph",
+        "placement_verified": true,
+        "requested_device": "cpu",
+        "requested_runtime": "openvino"
+      },
+      "load_ms": 55,
+      "summary": {
+        "p50_elapsed_milliseconds": 714.151521,
+        "p50_real_time_factor": 0.11124441017960783,
+        "p50_synthesis_milliseconds": 713.296131,
+        "p95_elapsed_milliseconds": 722.4918270000001,
+        "p95_real_time_factor": 0.11254509130762315,
+        "p95_synthesis_milliseconds": 721.636063,
+        "samples": 5
+      },
+      "max_process_rss_kib": 1494168,
+      "audio": [
+        {
+          "sha256": "2dfd7cb44c58769f0655064eabc8b8707822c22e6166cfd4c9bc967b1c91db55",
+          "samples": 282768,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "91274c4732d064302198594efa532348e80173aa5c64b67392782755da5e141e",
+          "samples": 282768,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "b0a20fe7db765b4469137f5bf34e8d6c664e2a15888fe93bd49f0447c1638ef7",
+          "samples": 282768,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "a9ab7b7fbdf718f9d5b7d11930e806c85fe18b495919b50d5007d628d089b0ca",
+          "samples": 282768,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "adb7b5f8e7a0b5c997a6c09fd088778bf5eab8a0856d2d1c402628755d453a42",
+          "samples": 282768,
+          "sample_rate": 44100
+        }
+      ]
+    },
+    {
+      "variant": "reference",
+      "run": 2,
+      "case": "long-reply",
+      "voice": "M1",
+      "backend": {
+        "effective_runtime": "openvino",
+        "fallback_used": false,
+        "kind": "openvino",
+        "model": "supertonic-3-openvino",
+        "placement_evidence": "OpenVINO EXECUTION_DEVICES matched the requested device for every compiled graph",
+        "placement_verified": true,
+        "requested_device": "cpu",
+        "requested_runtime": "openvino"
+      },
+      "load_ms": 52,
+      "summary": {
+        "p50_elapsed_milliseconds": 4313.646398000001,
+        "p50_real_time_factor": 0.11548961562583585,
+        "p50_synthesis_milliseconds": 4308.972554,
+        "p95_elapsed_milliseconds": 4760.340023999999,
+        "p95_real_time_factor": 0.12745693136649294,
+        "p95_synthesis_milliseconds": 4755.478803,
+        "samples": 5
+      },
+      "max_process_rss_kib": 2695120,
+      "audio": [
+        {
+          "sha256": "f29f2040cd51accf9a043a647cd2cfe9f440d6e6acb3e385ae39276e6123b621",
+          "samples": 1645392,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "e70b9f7c2890e9f985d95f03dbb5764c1524db8407f84031aeae615db2130fd6",
+          "samples": 1645392,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "288d845baad54ed4706b14eee024bfb0ff79140efd71d2789b53a306c69e86e5",
+          "samples": 1645392,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "e2d7551ec2fa11882d36ec9e1c411a11ad8948be0eb80a363d77559e742cc6e3",
+          "samples": 1645392,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "443753c64ff22dc4a8d2ebc8ef2a3e2ce20d1c88649a95fb3dca786031d30fea",
+          "samples": 1645392,
+          "sample_rate": 44100
+        }
+      ]
+    },
+    {
+      "variant": "candidate",
+      "run": 2,
+      "case": "long-reply",
+      "voice": "M1",
+      "backend": {
+        "effective_runtime": "openvino",
+        "fallback_used": false,
+        "kind": "openvino",
+        "model": "supertonic-3-openvino",
+        "placement_evidence": "OpenVINO EXECUTION_DEVICES matched the requested device for every compiled graph",
+        "placement_verified": true,
+        "requested_device": "cpu",
+        "requested_runtime": "openvino"
+      },
+      "load_ms": 61,
+      "summary": {
+        "p50_elapsed_milliseconds": 4513.358042,
+        "p50_real_time_factor": 0.12082967952599588,
+        "p50_synthesis_milliseconds": 4508.212881,
+        "p95_elapsed_milliseconds": 4733.242446,
+        "p95_real_time_factor": 0.12673044607957334,
+        "p95_synthesis_milliseconds": 4728.373291000001,
+        "samples": 5
+      },
+      "max_process_rss_kib": 2643460,
+      "audio": [
+        {
+          "sha256": "9b55166aa2302f49f05951fa62474ee3461896c4fdf98c33ef1e65c7f24041e8",
+          "samples": 1645392,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "f2c75d921804ac07d282c891774cf76134d77f26faa6f739d6664344ac5efa1c",
+          "samples": 1645392,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "53dc429369dcbfeda8565475e61081a427185b2d693ec25139ee1bc745543e5c",
+          "samples": 1645392,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "6c5d6880c2fd096e4734a3e46c72cbffaf554be68478bb4f0a3b84e368736e61",
+          "samples": 1645392,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "0d4ec185d0a4675eb986bff3979ddb800f73b102be9b5d163c79d7996c950b1f",
+          "samples": 1645392,
+          "sample_rate": 44100
+        }
+      ]
+    },
+    {
+      "variant": "reference",
+      "run": 2,
+      "case": "long-reply",
+      "voice": "F1",
+      "backend": {
+        "effective_runtime": "openvino",
+        "fallback_used": false,
+        "kind": "openvino",
+        "model": "supertonic-3-openvino",
+        "placement_evidence": "OpenVINO EXECUTION_DEVICES matched the requested device for every compiled graph",
+        "placement_verified": true,
+        "requested_device": "cpu",
+        "requested_runtime": "openvino"
+      },
+      "load_ms": 64,
+      "summary": {
+        "p50_elapsed_milliseconds": 4147.881291,
+        "p50_real_time_factor": 0.11115603230197448,
+        "p50_synthesis_milliseconds": 4143.100392,
+        "p95_elapsed_milliseconds": 4169.601575,
+        "p95_real_time_factor": 0.11174172736145077,
+        "p95_synthesis_milliseconds": 4164.930907,
+        "samples": 5
+      },
+      "max_process_rss_kib": 2695928,
+      "audio": [
+        {
+          "sha256": "480c620f978f48307b6c2ac0b7d150d1900d7519936430a4b360d26231a16664",
+          "samples": 1643732,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "9ba59d0250e4895645bfc257cf3a93e7b1a040beae20ee5fb51118371c5ea4bf",
+          "samples": 1643732,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "5b97e19426b2479cdf1577edbc8e39c7dc45e4c19a55df371ca2d4eb72352668",
+          "samples": 1643732,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "be9898f1be657dd09246903f1088f4d3802e076afe547da4c348e574389cac6b",
+          "samples": 1643732,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "d24294e76a4c0cbbf14448b1610affa6c45efcffad47c3ddf0ccad8845cdc574",
+          "samples": 1643732,
+          "sample_rate": 44100
+        }
+      ]
+    },
+    {
+      "variant": "candidate",
+      "run": 2,
+      "case": "long-reply",
+      "voice": "F1",
+      "backend": {
+        "effective_runtime": "openvino",
+        "fallback_used": false,
+        "kind": "openvino",
+        "model": "supertonic-3-openvino",
+        "placement_evidence": "OpenVINO EXECUTION_DEVICES matched the requested device for every compiled graph",
+        "placement_verified": true,
+        "requested_device": "cpu",
+        "requested_runtime": "openvino"
+      },
+      "load_ms": 58,
+      "summary": {
+        "p50_elapsed_milliseconds": 4168.468747000001,
+        "p50_real_time_factor": 0.11170966492195325,
+        "p50_synthesis_milliseconds": 4163.735849,
+        "p95_elapsed_milliseconds": 4355.152163,
+        "p95_real_time_factor": 0.11670879020084694,
+        "p95_synthesis_milliseconds": 4350.067418,
+        "samples": 5
+      },
+      "max_process_rss_kib": 2689360,
+      "audio": [
+        {
+          "sha256": "7f608aea74d7d6911f008f3c973b8701cfd717e5c41b8b0b0855c2298eefb6ff",
+          "samples": 1643732,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "401b6495f178c996f1b97c26cb8fd91469d4ed71dcdac3efc545eca72d742afb",
+          "samples": 1643732,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "52ca44adc787ee45d2a793a2bfa4939db5edb5d3d449bbdda90219906e8f8d10",
+          "samples": 1643732,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "e166587df2c1f159515a24ce854c53ba72255fa259facd38c4b2ba9eb6ad5cdd",
+          "samples": 1643732,
+          "sample_rate": 44100
+        },
+        {
+          "sha256": "51c3c386c60d990d11f3e4ad158fb009c6ddee75ff2eb55d3b729d8325484449",
+          "samples": 1643732,
+          "sample_rate": 44100
+        }
+      ]
+    }
+  ]
+}

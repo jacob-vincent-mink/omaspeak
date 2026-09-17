@@ -21,9 +21,14 @@ directory = ""
 file = "supertonic-3-orig.gguf"
 language = "en"
 steps = 8
-voice = 0 # M1-M5 = 0-4, F1-F5 = 5-9
+voice = 0 # Or "M1"; legacy M1-M5 = 0-4, F1-F5 = 5-9
 
 [model.options]
+
+[audio]
+# System default or pipewire:<node.name> from audio-devices --detailed --json.
+# A pinned device never falls back to another route.
+device = "default"
 
 [daemon]
 max_text_bytes = 65536

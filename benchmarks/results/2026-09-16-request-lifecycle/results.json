@@ -1,0 +1,328 @@
+{
+  "binary_sha256": "1a9dab469a1031e7e5f119284707dc58786901e1be8cabd697b40ca946d9d5db",
+  "config_sha256": "7ef2cd5981cc0b1b3131296302846435e551b046954eb414aa703056408b9d30",
+  "corpus_sha256": "0b48abbb4896ba33df4602b85890652994d0ad1759faed5fb4c0a4031be15bb7",
+  "cases": [
+    {
+      "id": "notification",
+      "voice": "M1",
+      "elapsed_ms": 1231.5593500097748,
+      "response": {
+        "protocol": 1,
+        "id": "0-M1",
+        "type": "synthesis",
+        "output": "/home/jacob/src/github.com/jacob-vincent-mink/.qualification/20260916-lifecycle/notification-M1.wav",
+        "sample_rate": 44100,
+        "samples": 148335,
+        "audio_seconds": 3.363605442176871,
+        "load_milliseconds": 62,
+        "synthesis_milliseconds": 1201
+      },
+      "samples": 148335,
+      "sample_rate": 44100,
+      "sha256": "c5d63f18ba76acdbaf4df458cf5232057ca18d73d85290d6db400bf340ef13d5",
+      "prior_seeded_sha256": "c5d63f18ba76acdbaf4df458cf5232057ca18d73d85290d6db400bf340ef13d5",
+      "identical_to_prior_seeded": true
+    },
+    {
+      "id": "notification",
+      "voice": "F1",
+      "elapsed_ms": 382.4760720017366,
+      "response": {
+        "protocol": 1,
+        "id": "0-F1",
+        "type": "synthesis",
+        "output": "/home/jacob/src/github.com/jacob-vincent-mink/.qualification/20260916-lifecycle/notification-F1.wav",
+        "sample_rate": 44100,
+        "samples": 148427,
+        "audio_seconds": 3.365691609977324,
+        "load_milliseconds": 62,
+        "synthesis_milliseconds": 356
+      },
+      "samples": 148427,
+      "sample_rate": 44100,
+      "sha256": "2a4f255317067c3f3b39d2be051fa499e72d3515aa94b2cd81df5eaee03b84f2",
+      "prior_seeded_sha256": "2a4f255317067c3f3b39d2be051fa499e72d3515aa94b2cd81df5eaee03b84f2",
+      "identical_to_prior_seeded": true
+    },
+    {
+      "id": "reply",
+      "voice": "M1",
+      "elapsed_ms": 1531.7825060046744,
+      "response": {
+        "protocol": 1,
+        "id": "1-M1",
+        "type": "synthesis",
+        "output": "/home/jacob/src/github.com/jacob-vincent-mink/.qualification/20260916-lifecycle/reply-M1.wav",
+        "sample_rate": 44100,
+        "samples": 254338,
+        "audio_seconds": 5.767301587301588,
+        "load_milliseconds": 62,
+        "synthesis_milliseconds": 1502
+      },
+      "samples": 254338,
+      "sample_rate": 44100,
+      "sha256": "cf1e41de1ddea23301cea8078cbfb2b702290730cb799106120e002205fa9bf4",
+      "prior_seeded_sha256": "cf1e41de1ddea23301cea8078cbfb2b702290730cb799106120e002205fa9bf4",
+      "identical_to_prior_seeded": true
+    },
+    {
+      "id": "reply",
+      "voice": "F1",
+      "elapsed_ms": 605.3461490082555,
+      "response": {
+        "protocol": 1,
+        "id": "1-F1",
+        "type": "synthesis",
+        "output": "/home/jacob/src/github.com/jacob-vincent-mink/.qualification/20260916-lifecycle/reply-F1.wav",
+        "sample_rate": 44100,
+        "samples": 254195,
+        "audio_seconds": 5.7640589569161,
+        "load_milliseconds": 62,
+        "synthesis_milliseconds": 575
+      },
+      "samples": 254195,
+      "sample_rate": 44100,
+      "sha256": "548dce8b7687df4851ab65fb6ced93ff3a486200f1621499df96806f903e3670",
+      "prior_seeded_sha256": "548dce8b7687df4851ab65fb6ced93ff3a486200f1621499df96806f903e3670",
+      "identical_to_prior_seeded": true
+    },
+    {
+      "id": "numbers",
+      "voice": "M1",
+      "elapsed_ms": 1823.555533977924,
+      "response": {
+        "protocol": 1,
+        "id": "2-M1",
+        "type": "synthesis",
+        "output": "/home/jacob/src/github.com/jacob-vincent-mink/.qualification/20260916-lifecycle/numbers-M1.wav",
+        "sample_rate": 44100,
+        "samples": 421490,
+        "audio_seconds": 9.557596371882086,
+        "load_milliseconds": 62,
+        "synthesis_milliseconds": 1800
+      },
+      "samples": 421490,
+      "sample_rate": 44100,
+      "sha256": "99534a33f5af8c667ace24b72983ee1c26c212dcfabe2a832aa651717c9910ca",
+      "prior_seeded_sha256": "99534a33f5af8c667ace24b72983ee1c26c212dcfabe2a832aa651717c9910ca",
+      "identical_to_prior_seeded": true
+    },
+    {
+      "id": "numbers",
+      "voice": "F1",
+      "elapsed_ms": 946.8881339998916,
+      "response": {
+        "protocol": 1,
+        "id": "2-F1",
+        "type": "synthesis",
+        "output": "/home/jacob/src/github.com/jacob-vincent-mink/.qualification/20260916-lifecycle/numbers-F1.wav",
+        "sample_rate": 44100,
+        "samples": 421062,
+        "audio_seconds": 9.547891156462583,
+        "load_milliseconds": 62,
+        "synthesis_milliseconds": 919
+      },
+      "samples": 421062,
+      "sample_rate": 44100,
+      "sha256": "cf6811e4e866ed9a36e8e27f0f9d3ddeba6ea6f6d53e9ca5bd70e777e4de4d87",
+      "prior_seeded_sha256": "cf6811e4e866ed9a36e8e27f0f9d3ddeba6ea6f6d53e9ca5bd70e777e4de4d87",
+      "identical_to_prior_seeded": true
+    },
+    {
+      "id": "names-acronyms",
+      "voice": "M1",
+      "elapsed_ms": 1360.6850759824738,
+      "response": {
+        "protocol": 1,
+        "id": "3-M1",
+        "type": "synthesis",
+        "output": "/home/jacob/src/github.com/jacob-vincent-mink/.qualification/20260916-lifecycle/names-acronyms-M1.wav",
+        "sample_rate": 44100,
+        "samples": 247361,
+        "audio_seconds": 5.609092970521542,
+        "load_milliseconds": 62,
+        "synthesis_milliseconds": 1330
+      },
+      "samples": 247361,
+      "sample_rate": 44100,
+      "sha256": "a9aa9cec58f0f10bb77fb0309b777309647932c8a5b9c549a13b74fe8ae2cfec",
+      "prior_seeded_sha256": "a9aa9cec58f0f10bb77fb0309b777309647932c8a5b9c549a13b74fe8ae2cfec",
+      "identical_to_prior_seeded": true
+    },
+    {
+      "id": "names-acronyms",
+      "voice": "F1",
+      "elapsed_ms": 584.2727209965233,
+      "response": {
+        "protocol": 1,
+        "id": "3-F1",
+        "type": "synthesis",
+        "output": "/home/jacob/src/github.com/jacob-vincent-mink/.qualification/20260916-lifecycle/names-acronyms-F1.wav",
+        "sample_rate": 44100,
+        "samples": 247209,
+        "audio_seconds": 5.605646258503401,
+        "load_milliseconds": 62,
+        "synthesis_milliseconds": 560
+      },
+      "samples": 247209,
+      "sample_rate": 44100,
+      "sha256": "90c31394829de9a6e38152837eb79423336ed2cfcd9e3723f3bc71a16641e4f0",
+      "prior_seeded_sha256": "90c31394829de9a6e38152837eb79423336ed2cfcd9e3723f3bc71a16641e4f0",
+      "identical_to_prior_seeded": true
+    },
+    {
+      "id": "punctuation",
+      "voice": "M1",
+      "elapsed_ms": 1381.6900409874506,
+      "response": {
+        "protocol": 1,
+        "id": "4-M1",
+        "type": "synthesis",
+        "output": "/home/jacob/src/github.com/jacob-vincent-mink/.qualification/20260916-lifecycle/punctuation-M1.wav",
+        "sample_rate": 44100,
+        "samples": 282928,
+        "audio_seconds": 6.415600907029479,
+        "load_milliseconds": 62,
+        "synthesis_milliseconds": 1358
+      },
+      "samples": 282928,
+      "sample_rate": 44100,
+      "sha256": "7ad2aa7b22b119c250581f1c7ff50225e85e726183e906f6719f828dbd01e41c",
+      "prior_seeded_sha256": "7ad2aa7b22b119c250581f1c7ff50225e85e726183e906f6719f828dbd01e41c",
+      "identical_to_prior_seeded": true
+    },
+    {
+      "id": "punctuation",
+      "voice": "F1",
+      "elapsed_ms": 655.2403079986107,
+      "response": {
+        "protocol": 1,
+        "id": "4-F1",
+        "type": "synthesis",
+        "output": "/home/jacob/src/github.com/jacob-vincent-mink/.qualification/20260916-lifecycle/punctuation-F1.wav",
+        "sample_rate": 44100,
+        "samples": 282768,
+        "audio_seconds": 6.411972789115646,
+        "load_milliseconds": 62,
+        "synthesis_milliseconds": 633
+      },
+      "samples": 282768,
+      "sample_rate": 44100,
+      "sha256": "4b8b125214e7d55797476ae4624093f6422aa1dbef69932a48c1eafb13171a2c",
+      "prior_seeded_sha256": "4b8b125214e7d55797476ae4624093f6422aa1dbef69932a48c1eafb13171a2c",
+      "identical_to_prior_seeded": true
+    },
+    {
+      "id": "long-reply",
+      "voice": "M1",
+      "elapsed_ms": 5152.361643995391,
+      "response": {
+        "protocol": 1,
+        "id": "5-M1",
+        "type": "synthesis",
+        "output": "/home/jacob/src/github.com/jacob-vincent-mink/.qualification/20260916-lifecycle/long-reply-M1.wav",
+        "sample_rate": 44100,
+        "samples": 1645392,
+        "audio_seconds": 37.31047619047619,
+        "load_milliseconds": 62,
+        "synthesis_milliseconds": 5122
+      },
+      "samples": 1645392,
+      "sample_rate": 44100,
+      "sha256": "8f64f432fce74c4fdba9419977c9220eaac01f9569c8a8f14397dccf2e236f8b",
+      "prior_seeded_sha256": "8f64f432fce74c4fdba9419977c9220eaac01f9569c8a8f14397dccf2e236f8b",
+      "identical_to_prior_seeded": true
+    },
+    {
+      "id": "long-reply",
+      "voice": "F1",
+      "elapsed_ms": 4826.610795018496,
+      "response": {
+        "protocol": 1,
+        "id": "5-F1",
+        "type": "synthesis",
+        "output": "/home/jacob/src/github.com/jacob-vincent-mink/.qualification/20260916-lifecycle/long-reply-F1.wav",
+        "sample_rate": 44100,
+        "samples": 1643732,
+        "audio_seconds": 37.272834467120184,
+        "load_milliseconds": 62,
+        "synthesis_milliseconds": 4804
+      },
+      "samples": 1643732,
+      "sample_rate": 44100,
+      "sha256": "c58345468fe2016a9693a329addfc5220d2037ac38296a3dbfa1674baafd865a",
+      "prior_seeded_sha256": "c58345468fe2016a9693a329addfc5220d2037ac38296a3dbfa1674baafd865a",
+      "identical_to_prior_seeded": true
+    }
+  ],
+  "initial_status": {
+    "protocol": 1,
+    "id": "startup",
+    "type": "status",
+    "running": true,
+    "pid": 3608828,
+    "model": "supertonic-3-openvino",
+    "sample_rate": 44100,
+    "backend": {
+      "effective": {
+        "device": "cpu",
+        "provider": "openvino",
+        "runtime": "openvino"
+      },
+      "evidence": [
+        "OpenVINO execution devices were validated during graph compilation"
+      ],
+      "fallback_policy": "error",
+      "fallback_used": false,
+      "kind": "openvino",
+      "placement_verified": true,
+      "requested": {
+        "device": "cpu",
+        "runtime": "openvino"
+      },
+      "requests": {
+        "active": null,
+        "capacity": 8,
+        "loading": false,
+        "queued": [],
+        "worker_ready": true
+      },
+      "supported_capabilities": [
+        "cpu",
+        "cuda",
+        "vulkan",
+        "hip",
+        "openvino"
+      ]
+    }
+  },
+  "worker_pids_before": "3608841",
+  "worker_pids_after_normal_requests": "3608841",
+  "cancellation": {
+    "elapsed_ms": 136.57731501734816,
+    "response": {
+      "protocol": 1,
+      "id": "cancel",
+      "type": "cancelled",
+      "request_id": "cancel-real",
+      "count": 1
+    },
+    "previous_output_preserved": true,
+    "request_error": "{'protocol': 1, 'id': 'cancel-real', 'type': 'error', 'code': 'cancelled', 'message': 'speech request cancelled'}"
+  },
+  "recovery": {
+    "protocol": 1,
+    "id": "recovery",
+    "type": "synthesis",
+    "output": "/home/jacob/src/github.com/jacob-vincent-mink/.qualification/20260916-lifecycle/recovery.wav",
+    "sample_rate": 44100,
+    "samples": 148335,
+    "audio_seconds": 3.363605442176871,
+    "load_milliseconds": 50,
+    "synthesis_milliseconds": 1192,
+    "sha256": "c5d63f18ba76acdbaf4df458cf5232057ca18d73d85290d6db400bf340ef13d5"
+  },
+  "daemon_exit": 0,
+  "socket_removed": true
+}

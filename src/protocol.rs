@@ -14,9 +14,12 @@ pub enum Command {
     Say {
         text: String,
         speed: f32,
-        voice: i32,
+        voice: crate::voices::VoiceSelection,
         output: Option<String>,
         no_play: bool,
+    },
+    Cancel {
+        request_id: Option<String>,
     },
     Status,
     Shutdown,
@@ -45,8 +48,17 @@ pub enum ResultPayload {
         running: bool,
         pid: u32,
         model: String,
+        /// Configured synthesis language; empty follows the model default.
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        language: String,
         sample_rate: i32,
         backend: serde_json::Value,
+        #[serde(default)]
+        audio: serde_json::Value,
+    },
+    Cancelled {
+        request_id: Option<String>,
+        count: usize,
     },
     Shutdown,
     Error {

@@ -1,0 +1,37 @@
+[backend]
+kind = "supertonic"
+runtime = "openvino"
+device = "cpu"
+threads = 2
+fallback = "error"
+device_id = 0
+library_dirs = [
+    "/usr/lib",
+    "/usr/lib/openvino",
+]
+openvino_library = "/usr/lib/libopenvino_c.so.2026.3.1"
+openvino_plugins = "/usr/lib/openvino/plugins.xml"
+
+[backend.options]
+
+[model]
+family = "supertonic"
+name = "supertonic-3-openvino"
+directory = ""
+file = ""
+duration_predictor = "onnx/duration_predictor.onnx"
+text_encoder = "onnx/text_encoder.onnx"
+vector_estimator = "onnx/vector_estimator.onnx"
+vocoder = "onnx/vocoder.onnx"
+tts_json = "onnx/tts.json"
+unicode_indexer = "onnx/unicode_indexer.json"
+voice_style = "voice_styles"
+language = "en"
+steps = 5
+voice = 5
+
+[model.options]
+seed = "20260916"
+
+[daemon]
+max_text_bytes = 65536

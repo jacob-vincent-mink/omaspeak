@@ -14,6 +14,7 @@ pub struct Config {
     pub backend: BackendConfig,
     pub model: ModelConfig,
     pub daemon: DaemonConfig,
+    pub audio: AudioConfig,
 }
 
 impl Config {
@@ -66,7 +67,7 @@ pub struct ModelConfig {
     pub voice_style: String,
     pub language: String,
     pub steps: i32,
-    pub voice: i32,
+    pub voice: crate::voices::VoiceSelection,
     pub options: BTreeMap<String, String>,
 }
 
@@ -86,7 +87,7 @@ impl Default for ModelConfig {
             voice_style: String::new(),
             language: "en".into(),
             steps: 8,
-            voice: 0,
+            voice: 0.into(),
             options: BTreeMap::new(),
         }
     }
@@ -109,3 +110,16 @@ impl Default for DaemonConfig {
 #[cfg(test)]
 #[path = "../tests/unit/config.rs"]
 mod tests;
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct AudioConfig {
+    pub device: String,
+}
+impl Default for AudioConfig {
+    fn default() -> Self {
+        Self {
+            device: "default".into(),
+        }
+    }
+}

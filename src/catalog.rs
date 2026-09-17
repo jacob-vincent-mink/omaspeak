@@ -1,12 +1,80 @@
 use serde::Serialize;
 
+use crate::backend::Runtime;
 use crate::config::Config;
+
+pub const DEFAULT_MODEL_ID: &str = "supertonic-3-gguf";
+pub const OPENVINO_MODEL_ID: &str = "supertonic-3-openvino";
+pub const KOKORO_MODEL_ID: &str = "kokoro-82m-gguf";
 
 pub const SUPERTONIC_VOICE_NAMES: [&str; 10] =
     ["M1", "M2", "M3", "M4", "M5", "F1", "F2", "F3", "F4", "F5"];
 
+/// Engine voice IDs for the pinned Kokoro 82M GGUF, in the exact order of its
+/// embedded `voices.json` (54 preset voice packs, all languages).
+pub const KOKORO_VOICE_IDS: [&str; 54] = [
+    "af_alloy",
+    "af_aoede",
+    "af_bella",
+    "af_heart",
+    "af_jessica",
+    "af_kore",
+    "af_nicole",
+    "af_nova",
+    "af_river",
+    "af_sarah",
+    "af_sky",
+    "am_adam",
+    "am_echo",
+    "am_eric",
+    "am_fenrir",
+    "am_liam",
+    "am_michael",
+    "am_onyx",
+    "am_puck",
+    "am_santa",
+    "bf_alice",
+    "bf_emma",
+    "bf_isabella",
+    "bf_lily",
+    "bm_daniel",
+    "bm_fable",
+    "bm_george",
+    "bm_lewis",
+    "ef_dora",
+    "em_alex",
+    "em_santa",
+    "ff_siwis",
+    "hf_alpha",
+    "hf_beta",
+    "hm_omega",
+    "hm_psi",
+    "if_sara",
+    "im_nicola",
+    "jf_alpha",
+    "jf_gongitsune",
+    "jf_nezumi",
+    "jf_tebukuro",
+    "jm_kumo",
+    "pf_dora",
+    "pm_alex",
+    "pm_santa",
+    "zf_xiaobei",
+    "zf_xiaoni",
+    "zf_xiaoxiao",
+    "zf_xiaoyi",
+    "zm_yunjian",
+    "zm_yunxi",
+    "zm_yunxia",
+    "zm_yunyang",
+];
+
 const OFFICIAL_REVISION: &str = "aafc6e32416a594460b32413efc49d7fe4ce6d46";
 const OFFICIAL_SOURCE: &str = "https://huggingface.co/supertone-oss-archive/supertonic-3";
+
+const KOKORO_ARTIFACT_REVISION: &str = "1b13cd58245c74e3ff4ca06925766c5ef7991bd4";
+const KOKORO_ARTIFACT_SOURCE: &str = "https://huggingface.co/audio-cpp/audio.cpp-gguf";
+const KOKORO_MODEL_SOURCE: &str = "https://huggingface.co/hexgrad/Kokoro-82M";
 
 #[derive(Clone, Copy, Debug, Serialize)]
 pub struct BackendSpec {
@@ -36,6 +104,8 @@ pub struct ModelSpec {
     pub backend: &'static str,
     pub family: &'static str,
     pub name: &'static str,
+    #[serde(skip)] // Presentation is not part of the schema-1 install identity.
+    pub display_name: &'static str,
     pub description: &'static str,
     pub license: &'static str,
     pub license_url: &'static str,
@@ -78,6 +148,225 @@ const SUPERTONIC_VOICES: &[VoiceSpec] = &[
     VoiceSpec { id: 7, name: "F3" },
     VoiceSpec { id: 8, name: "F4" },
     VoiceSpec { id: 9, name: "F5" },
+];
+
+const KOKORO_VOICES: &[VoiceSpec] = &[
+    VoiceSpec {
+        id: 0,
+        name: "af_alloy",
+    },
+    VoiceSpec {
+        id: 1,
+        name: "af_aoede",
+    },
+    VoiceSpec {
+        id: 2,
+        name: "af_bella",
+    },
+    VoiceSpec {
+        id: 3,
+        name: "af_heart",
+    },
+    VoiceSpec {
+        id: 4,
+        name: "af_jessica",
+    },
+    VoiceSpec {
+        id: 5,
+        name: "af_kore",
+    },
+    VoiceSpec {
+        id: 6,
+        name: "af_nicole",
+    },
+    VoiceSpec {
+        id: 7,
+        name: "af_nova",
+    },
+    VoiceSpec {
+        id: 8,
+        name: "af_river",
+    },
+    VoiceSpec {
+        id: 9,
+        name: "af_sarah",
+    },
+    VoiceSpec {
+        id: 10,
+        name: "af_sky",
+    },
+    VoiceSpec {
+        id: 11,
+        name: "am_adam",
+    },
+    VoiceSpec {
+        id: 12,
+        name: "am_echo",
+    },
+    VoiceSpec {
+        id: 13,
+        name: "am_eric",
+    },
+    VoiceSpec {
+        id: 14,
+        name: "am_fenrir",
+    },
+    VoiceSpec {
+        id: 15,
+        name: "am_liam",
+    },
+    VoiceSpec {
+        id: 16,
+        name: "am_michael",
+    },
+    VoiceSpec {
+        id: 17,
+        name: "am_onyx",
+    },
+    VoiceSpec {
+        id: 18,
+        name: "am_puck",
+    },
+    VoiceSpec {
+        id: 19,
+        name: "am_santa",
+    },
+    VoiceSpec {
+        id: 20,
+        name: "bf_alice",
+    },
+    VoiceSpec {
+        id: 21,
+        name: "bf_emma",
+    },
+    VoiceSpec {
+        id: 22,
+        name: "bf_isabella",
+    },
+    VoiceSpec {
+        id: 23,
+        name: "bf_lily",
+    },
+    VoiceSpec {
+        id: 24,
+        name: "bm_daniel",
+    },
+    VoiceSpec {
+        id: 25,
+        name: "bm_fable",
+    },
+    VoiceSpec {
+        id: 26,
+        name: "bm_george",
+    },
+    VoiceSpec {
+        id: 27,
+        name: "bm_lewis",
+    },
+    VoiceSpec {
+        id: 28,
+        name: "ef_dora",
+    },
+    VoiceSpec {
+        id: 29,
+        name: "em_alex",
+    },
+    VoiceSpec {
+        id: 30,
+        name: "em_santa",
+    },
+    VoiceSpec {
+        id: 31,
+        name: "ff_siwis",
+    },
+    VoiceSpec {
+        id: 32,
+        name: "hf_alpha",
+    },
+    VoiceSpec {
+        id: 33,
+        name: "hf_beta",
+    },
+    VoiceSpec {
+        id: 34,
+        name: "hm_omega",
+    },
+    VoiceSpec {
+        id: 35,
+        name: "hm_psi",
+    },
+    VoiceSpec {
+        id: 36,
+        name: "if_sara",
+    },
+    VoiceSpec {
+        id: 37,
+        name: "im_nicola",
+    },
+    VoiceSpec {
+        id: 38,
+        name: "jf_alpha",
+    },
+    VoiceSpec {
+        id: 39,
+        name: "jf_gongitsune",
+    },
+    VoiceSpec {
+        id: 40,
+        name: "jf_nezumi",
+    },
+    VoiceSpec {
+        id: 41,
+        name: "jf_tebukuro",
+    },
+    VoiceSpec {
+        id: 42,
+        name: "jm_kumo",
+    },
+    VoiceSpec {
+        id: 43,
+        name: "pf_dora",
+    },
+    VoiceSpec {
+        id: 44,
+        name: "pm_alex",
+    },
+    VoiceSpec {
+        id: 45,
+        name: "pm_santa",
+    },
+    VoiceSpec {
+        id: 46,
+        name: "zf_xiaobei",
+    },
+    VoiceSpec {
+        id: 47,
+        name: "zf_xiaoni",
+    },
+    VoiceSpec {
+        id: 48,
+        name: "zf_xiaoxiao",
+    },
+    VoiceSpec {
+        id: 49,
+        name: "zf_xiaoyi",
+    },
+    VoiceSpec {
+        id: 50,
+        name: "zm_yunjian",
+    },
+    VoiceSpec {
+        id: 51,
+        name: "zm_yunxi",
+    },
+    VoiceSpec {
+        id: 52,
+        name: "zm_yunxia",
+    },
+    VoiceSpec {
+        id: 53,
+        name: "zm_yunyang",
+    },
 ];
 
 const BACKENDS: &[BackendSpec] = &[
@@ -199,12 +488,20 @@ const OPENVINO_FILES: &[ModelFile] = &[
     },
 ];
 
+const KOKORO_FILES: &[ModelFile] = &[ModelFile {
+    path: "kokoro-82m-q8_0.gguf",
+    url: "https://huggingface.co/audio-cpp/audio.cpp-gguf/resolve/1b13cd58245c74e3ff4ca06925766c5ef7991bd4/Kokoro-82M-GGUF/kokoro-82m-q8_0.gguf?download=true",
+    size: 189_611_360,
+    sha256: "378abf37a0d086774f88e341165a51af631d09452ae37caed5e7cdc34c9889e6",
+}];
+
 const MODELS: &[ModelSpec] = &[
     ModelSpec {
-        id: "supertonic-3-gguf",
+        id: DEFAULT_MODEL_ID,
         backend: "audiocpp",
         family: "supertonic",
         name: "supertonic-3-gguf",
+        display_name: "Supertonic 3 · audio.cpp",
         description: "Supertonic 3 original-precision GGUF for audio.cpp (31 languages)",
         license: "OpenRAIL-M",
         license_url: "https://huggingface.co/supertone-oss-archive/supertonic-3/blob/aafc6e32416a594460b32413efc49d7fe4ce6d46/LICENSE",
@@ -234,10 +531,11 @@ const MODELS: &[ModelSpec] = &[
         files: GGUF_FILES,
     },
     ModelSpec {
-        id: "supertonic-3-openvino",
+        id: OPENVINO_MODEL_ID,
         backend: "supertonic",
         family: "supertonic",
         name: "supertonic-3-openvino",
+        display_name: "Supertonic 3 · OpenVINO",
         description: "Official Supertonic 3 ONNX graphs for direct OpenVINO (31 languages)",
         license: "OpenRAIL-M",
         license_url: "https://huggingface.co/supertone-oss-archive/supertonic-3/blob/aafc6e32416a594460b32413efc49d7fe4ce6d46/LICENSE",
@@ -266,6 +564,40 @@ const MODELS: &[ModelSpec] = &[
         npu_capable: true,
         files: OPENVINO_FILES,
     },
+    ModelSpec {
+        id: KOKORO_MODEL_ID,
+        backend: "audiocpp",
+        family: "kokoro",
+        name: "kokoro-82m-gguf",
+        display_name: "Kokoro 82M · audio.cpp",
+        description: "Kokoro 82M multilingual GGUF (54 preset voices) for audio.cpp; Apache-2.0, 24 kHz output",
+        license: "Apache-2.0",
+        license_url: "https://www.apache.org/licenses/LICENSE-2.0",
+        license_status: "Apache-2.0 (hexgrad/Kokoro-82M weights; GGUF packaged by audio.cpp)",
+        downloadable: true,
+        requires_acceptance: false,
+        source_revision: "",
+        artifact_source: KOKORO_ARTIFACT_SOURCE,
+        artifact_revision: KOKORO_ARTIFACT_REVISION,
+        original_model_source: KOKORO_MODEL_SOURCE,
+        original_model_revision: "",
+        license_file: "MODEL-LICENSE",
+        license_sha256: "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+        model_file: "kokoro-82m-q8_0.gguf",
+        duration_predictor: "",
+        text_encoder: "",
+        vector_estimator: "",
+        vocoder: "",
+        tts_json: "",
+        unicode_indexer: "",
+        voice_style: "",
+        language: "en",
+        steps: 0,
+        voices: KOKORO_VOICES,
+        openvino_capable: false,
+        npu_capable: false,
+        files: KOKORO_FILES,
+    },
 ];
 
 pub fn backends() -> &'static [BackendSpec] {
@@ -279,15 +611,103 @@ pub fn model(id: &str) -> Option<&'static ModelSpec> {
 }
 
 pub fn model_license_text(spec: &ModelSpec) -> Option<&'static str> {
-    (spec.license == "OpenRAIL-M").then_some(include_str!("../licenses/SUPERTONIC-3-MODEL-LICENSE"))
+    match spec.license {
+        "OpenRAIL-M" => Some(include_str!("../licenses/SUPERTONIC-3-MODEL-LICENSE")),
+        "Apache-2.0" => Some(include_str!("../licenses/KOKORO-82M-MODEL-LICENSE")),
+        _ => None,
+    }
+}
+
+/// Format/adapter compatibility does not establish hardware qualification.
+pub fn default_model(
+    backend: &str,
+    runtime: Runtime,
+    device: &str,
+) -> anyhow::Result<&'static ModelSpec> {
+    let id = match backend {
+        "audiocpp" => DEFAULT_MODEL_ID,
+        "supertonic" => OPENVINO_MODEL_ID,
+        _ => anyhow::bail!("no catalog default for backend {backend:?}"),
+    };
+    let spec = model(id).expect("catalog default exists");
+    anyhow::ensure!(
+        spec.compatible_with(backend, runtime, device),
+        "backend {backend:?} has no compatible default for {runtime:?} / {device}"
+    );
+    Ok(spec)
+}
+
+pub fn setup_model(config: &Config) -> anyhow::Result<&'static ModelSpec> {
+    if let Some(spec) = model(&config.model.name)
+        && spec.compatible_with(
+            &config.backend.kind,
+            config.backend.runtime,
+            &config.backend.device,
+        )
+    {
+        return Ok(spec);
+    }
+    default_model(
+        &config.backend.kind,
+        config.backend.runtime,
+        &config.backend.device,
+    )
 }
 
 impl ModelSpec {
+    pub fn compatible_with(self, backend: &str, runtime: Runtime, device: &str) -> bool {
+        if self.backend != backend || crate::backend::canonical_device(runtime, device).is_err() {
+            return false;
+        }
+        match backend {
+            "audiocpp" => matches!(
+                runtime,
+                Runtime::Default | Runtime::Cuda | Runtime::Vulkan | Runtime::Hip
+            ),
+            "supertonic" => {
+                runtime == Runtime::Openvino
+                    && self.openvino_capable
+                    && (!device.trim().eq_ignore_ascii_case("npu") || self.npu_capable)
+            }
+            _ => false,
+        }
+    }
+
     pub fn download_size(self) -> u64 {
         self.files.iter().map(|file| file.size).sum()
     }
 
     pub fn activate(self, config: &mut Config) {
+        let device = config.backend.canonical_device().unwrap_or_else(|_| {
+            if matches!(
+                config.backend.runtime,
+                Runtime::Cuda | Runtime::Vulkan | Runtime::Hip
+            ) {
+                "gpu".into()
+            } else {
+                "cpu".into()
+            }
+        });
+        config.backend.device = device;
+        if !self.compatible_with(
+            &config.backend.kind,
+            config.backend.runtime,
+            &config.backend.device,
+        ) {
+            config.backend.library = None;
+            config.backend.openvino_library = None;
+            config.backend.openvino_plugins = None;
+            config.backend.library_dirs.clear();
+            config.backend.options.clear();
+            config.backend.device_id = 0;
+            config.backend.fallback = Default::default();
+            config.backend.runtime = if self.backend == "supertonic" {
+                Runtime::Openvino
+            } else {
+                Runtime::Default
+            };
+            config.backend.device = "cpu".into();
+        }
         config.backend.kind = self.backend.into();
         config.model.family = self.family.into();
         config.model.name = self.name.into();
@@ -302,7 +722,7 @@ impl ModelSpec {
         config.model.voice_style = self.voice_style.into();
         config.model.language = self.language.into();
         config.model.steps = self.steps;
-        config.model.voice = 0;
+        config.model.voice = 0.into();
     }
 }
 

@@ -1,0 +1,254 @@
+[
+  {
+    "run": 0,
+    "case": "notification",
+    "voice": "M1",
+    "p95_ratio": 1.0175722759582375,
+    "rss_ratio": 1.1473077406094838
+  },
+  {
+    "run": 0,
+    "case": "notification",
+    "voice": "F1",
+    "p95_ratio": 1.8424727238035161,
+    "rss_ratio": 1.0002130356515162
+  },
+  {
+    "run": 0,
+    "case": "reply",
+    "voice": "M1",
+    "p95_ratio": 1.4988689511124518,
+    "rss_ratio": 1.1517772140703024
+  },
+  {
+    "run": 0,
+    "case": "reply",
+    "voice": "F1",
+    "p95_ratio": 1.0261716904277511,
+    "rss_ratio": 0.9981343035309836
+  },
+  {
+    "run": 0,
+    "case": "numbers",
+    "voice": "M1",
+    "p95_ratio": 1.0739405354149278,
+    "rss_ratio": 1.1507963038497986
+  },
+  {
+    "run": 0,
+    "case": "numbers",
+    "voice": "F1",
+    "p95_ratio": 1.0107880985060624,
+    "rss_ratio": 1.0077695889117748
+  },
+  {
+    "run": 0,
+    "case": "names-acronyms",
+    "voice": "M1",
+    "p95_ratio": 0.4705342130365038,
+    "rss_ratio": 1.1515523791681128
+  },
+  {
+    "run": 0,
+    "case": "names-acronyms",
+    "voice": "F1",
+    "p95_ratio": 1.0316556681379037,
+    "rss_ratio": 0.9999068162576344
+  },
+  {
+    "run": 0,
+    "case": "punctuation",
+    "voice": "M1",
+    "p95_ratio": 0.9890072276737091,
+    "rss_ratio": 1.1459078858656027
+  },
+  {
+    "run": 0,
+    "case": "punctuation",
+    "voice": "F1",
+    "p95_ratio": 0.9745125123626014,
+    "rss_ratio": 0.9985482931809662
+  },
+  {
+    "run": 0,
+    "case": "long-reply",
+    "voice": "M1",
+    "p95_ratio": 1.1336431629058417,
+    "rss_ratio": 1.1711390117620275
+  },
+  {
+    "run": 0,
+    "case": "long-reply",
+    "voice": "F1",
+    "p95_ratio": 1.5404973777381668,
+    "rss_ratio": 1.2043107647779934
+  },
+  {
+    "run": 1,
+    "case": "notification",
+    "voice": "M1",
+    "p95_ratio": 3.031618584426068,
+    "rss_ratio": 0.9988363919095954
+  },
+  {
+    "run": 1,
+    "case": "notification",
+    "voice": "F1",
+    "p95_ratio": 0.9858447445445382,
+    "rss_ratio": 1.0036903023649908
+  },
+  {
+    "run": 1,
+    "case": "reply",
+    "voice": "M1",
+    "p95_ratio": 0.9793715704576894,
+    "rss_ratio": 1.0003595455344445
+  },
+  {
+    "run": 1,
+    "case": "reply",
+    "voice": "F1",
+    "p95_ratio": 0.9566177719178761,
+    "rss_ratio": 0.9936246970331244
+  },
+  {
+    "run": 1,
+    "case": "numbers",
+    "voice": "M1",
+    "p95_ratio": 0.9699891625903155,
+    "rss_ratio": 0.9987704535452812
+  },
+  {
+    "run": 1,
+    "case": "numbers",
+    "voice": "F1",
+    "p95_ratio": 0.9594433337616568,
+    "rss_ratio": 0.998028919816139
+  },
+  {
+    "run": 1,
+    "case": "names-acronyms",
+    "voice": "M1",
+    "p95_ratio": 1.0104683765538514,
+    "rss_ratio": 0.9988813989969878
+  },
+  {
+    "run": 1,
+    "case": "names-acronyms",
+    "voice": "F1",
+    "p95_ratio": 1.042005304639475,
+    "rss_ratio": 1.0002426893176697
+  },
+  {
+    "run": 1,
+    "case": "punctuation",
+    "voice": "M1",
+    "p95_ratio": 0.9838348413831802,
+    "rss_ratio": 1.0034405046073425
+  },
+  {
+    "run": 1,
+    "case": "punctuation",
+    "voice": "F1",
+    "p95_ratio": 0.9393439562683664,
+    "rss_ratio": 1.0025707627129956
+  },
+  {
+    "run": 1,
+    "case": "long-reply",
+    "voice": "M1",
+    "p95_ratio": 1.1004636957026344,
+    "rss_ratio": 0.9951656026957628
+  },
+  {
+    "run": 1,
+    "case": "long-reply",
+    "voice": "F1",
+    "p95_ratio": 0.9542504171997479,
+    "rss_ratio": 0.977151041844286
+  },
+  {
+    "run": 2,
+    "case": "notification",
+    "voice": "M1",
+    "p95_ratio": 0.9977264684484216,
+    "rss_ratio": 0.9949117702020877
+  },
+  {
+    "run": 2,
+    "case": "notification",
+    "voice": "F1",
+    "p95_ratio": 1.0113755023404227,
+    "rss_ratio": 0.9987298121346878
+  },
+  {
+    "run": 2,
+    "case": "reply",
+    "voice": "M1",
+    "p95_ratio": 0.9960850072699007,
+    "rss_ratio": 1.0024140076532588
+  },
+  {
+    "run": 2,
+    "case": "reply",
+    "voice": "F1",
+    "p95_ratio": 1.0005321494098798,
+    "rss_ratio": 0.9973093333333334
+  },
+  {
+    "run": 2,
+    "case": "numbers",
+    "voice": "M1",
+    "p95_ratio": 1.0002755790388693,
+    "rss_ratio": 1.0009583274383294
+  },
+  {
+    "run": 2,
+    "case": "numbers",
+    "voice": "F1",
+    "p95_ratio": 1.0698191344817904,
+    "rss_ratio": 1.000173375868213
+  },
+  {
+    "run": 2,
+    "case": "names-acronyms",
+    "voice": "M1",
+    "p95_ratio": 0.8723534727608537,
+    "rss_ratio": 0.999994672576555
+  },
+  {
+    "run": 2,
+    "case": "names-acronyms",
+    "voice": "F1",
+    "p95_ratio": 1.0502655356150188,
+    "rss_ratio": 0.9929755609166387
+  },
+  {
+    "run": 2,
+    "case": "punctuation",
+    "voice": "M1",
+    "p95_ratio": 0.8914000974764109,
+    "rss_ratio": 1.0039085820146332
+  },
+  {
+    "run": 2,
+    "case": "punctuation",
+    "voice": "F1",
+    "p95_ratio": 0.9578717149356526,
+    "rss_ratio": 0.9944466333713142
+  },
+  {
+    "run": 2,
+    "case": "long-reply",
+    "voice": "M1",
+    "p95_ratio": 0.9943001508107029,
+    "rss_ratio": 0.9808320223218261
+  },
+  {
+    "run": 2,
+    "case": "long-reply",
+    "voice": "F1",
+    "p95_ratio": 1.0444512802574566,
+    "rss_ratio": 0.9975637331560784
+  }
+]

@@ -456,8 +456,10 @@ fn socket_client_sends_newline_delimited_request_and_decodes_response() {
                     protocol: 1,
                     id: incoming.id,
                     result: ResultPayload::Status {
+                        audio: serde_json::Value::Null,
                         running: true,
                         pid: 42,
+                        language: String::new(),
                         model: "test-model".into(),
                         sample_rate: 24_000,
                         backend: json!({"kind": "test"}),
@@ -506,7 +508,7 @@ fn daemon_request_handler_validates_and_dispatches_all_commands() {
         request(Command::Say {
             text: "hello".into(),
             speed: 1.0,
-            voice: 0,
+            voice: omaspeak::voices::VoiceSelection::Legacy(0),
             output: None,
             no_play: true,
         }),
@@ -537,7 +539,7 @@ fn daemon_request_handler_validates_and_dispatches_all_commands() {
         request(Command::Say {
             text: "ninebytes".into(),
             speed: 1.0,
-            voice: 0,
+            voice: omaspeak::voices::VoiceSelection::Legacy(0),
             output: None,
             no_play: true,
         }),
@@ -551,7 +553,7 @@ fn daemon_request_handler_validates_and_dispatches_all_commands() {
         request(Command::Say {
             text: "hello".into(),
             speed: 1.0,
-            voice: 0,
+            voice: omaspeak::voices::VoiceSelection::Legacy(0),
             output: None,
             no_play: true,
         }),
@@ -573,7 +575,7 @@ fn daemon_request_handler_validates_and_dispatches_all_commands() {
         request(Command::Say {
             text: "hello".into(),
             speed: 1.0,
-            voice: 0,
+            voice: omaspeak::voices::VoiceSelection::Legacy(0),
             output: Some("explicit.wav".into()),
             no_play: true,
         }),
@@ -646,7 +648,10 @@ fn config_helpers_cover_supported_values_defaults_and_schema() {
         config.backend.options.get("session.profile"),
         Some(&"/tmp/audiocpp-profile".to_string())
     );
-    assert_eq!(config.model.voice, 3);
+    assert_eq!(
+        config.model.voice,
+        omaspeak::voices::VoiceSelection::Legacy(3)
+    );
     assert_eq!(config.model.language, "fr");
     assert_eq!(config.model.steps, 8);
     assert!(set_config(&mut config, "unknown", "x").is_err());
@@ -674,7 +679,7 @@ fn config_helpers_cover_supported_values_defaults_and_schema() {
         .iter()
         .find(|item| item["key"] == "model.family")
         .unwrap();
-    assert_eq!(family["choices"], json!(["supertonic"]));
+    assert_eq!(family["choices"], json!(["supertonic", "kokoro"]));
     assert!(
         description["keys"]
             .as_array()
@@ -1449,7 +1454,7 @@ fn say_request_supports_explicit_text_and_piped_stdin_defaults() {
     let root = sandbox();
     let paths = paths(&root);
     let mut config = Config::default();
-    config.model.voice = 2;
+    config.model.voice = omaspeak::voices::VoiceSelection::Legacy(2);
     assert_eq!(resolve_voice(&config, None).unwrap(), 2);
     assert_eq!(resolve_voice(&config, Some("F3")).unwrap(), 7);
     assert_eq!(resolve_voice(&config, Some("f3")).unwrap(), 7);
@@ -1460,14 +1465,14 @@ fn say_request_supports_explicit_text_and_piped_stdin_defaults() {
     let supertonic_error = resolve_voice(&config, Some("unknown"))
         .unwrap_err()
         .to_string();
-    assert!(supertonic_error.contains("M1, M2"));
+    assert!(supertonic_error.contains("M1 (0), M2 (1)"));
     config.model.family = "custom".into();
     let custom_error = resolve_voice(&config, Some("unknown"))
         .unwrap_err()
         .to_string();
-    assert!(custom_error.contains("numeric ID"));
+    assert!(custom_error.contains("no voice inventory for family custom"));
     config = Config::default();
-    config.model.voice = 2;
+    config.model.voice = omaspeak::voices::VoiceSelection::Legacy(2);
     let expected_output = root.join("spoken.wav");
     let received = build_say_request_with_terminal(
         &config,
@@ -1494,7 +1499,7 @@ fn say_request_supports_explicit_text_and_piped_stdin_defaults() {
         } => {
             assert_eq!(text, "hello from the client");
             assert_eq!(speed, 1.25);
-            assert_eq!(voice, 4);
+            assert_eq!(voice, omaspeak::voices::VoiceSelection::Legacy(4));
             assert_eq!(
                 output.as_deref(),
                 Some(root.join("spoken.wav").to_str().unwrap())
@@ -1528,7 +1533,7 @@ fn say_request_supports_explicit_text_and_piped_stdin_defaults() {
         } => {
             assert_eq!(text, "piped text\n");
             assert_eq!(speed, 1.0);
-            assert_eq!(voice, 2);
+            assert_eq!(voice, omaspeak::voices::VoiceSelection::Legacy(2));
             assert_eq!(
                 output.as_deref(),
                 Some(paths.state_dir.join("last.wav").to_str().unwrap())
@@ -1807,7 +1812,10 @@ fn model_setup_dispatches_list_verify_set_and_install_actions() {
         ProgressFormat::Human,
     )
     .unwrap();
-    assert_eq!(Config::load(&paths.config_file).unwrap().model.voice, 0);
+    assert_eq!(
+        Config::load(&paths.config_file).unwrap().model.voice,
+        omaspeak::voices::VoiceSelection::Legacy(0)
+    );
 
     setup_model(
         &paths.config_file,
@@ -1897,11 +1905,12 @@ fn native_provider_helpers_cover_setup_defaults_and_custom_models() {
     let mut config = Config::default();
     config.backend.library = Some(provider.canonicalize().unwrap());
 
-    let probe = TerminalSetupSelector
-        .probe_runtime(&config, &paths.config_file)
-        .unwrap();
-    assert!(probe.ready);
-    assert!(probe.evidence.versions[0].contains("libaudiocpp"));
+    // A file with the right basename is not evidence of a runnable provider.
+    assert!(
+        TerminalSetupSelector
+            .probe_runtime(&config, &paths.config_file)
+            .is_err()
+    );
 
     pin_audio_cpp_library(&mut config, &paths.config_file).unwrap();
     assert!(config.backend.library.as_deref().unwrap().is_file());
@@ -2252,7 +2261,7 @@ fn voice_picker_uses_installed_metadata_and_preselects_active_voice() {
     let spec = omaspeak::catalog::model("supertonic-3-openvino").unwrap();
     let mut config = Config::default();
     spec.activate(&mut config);
-    config.model.voice = 1;
+    config.model.voice = omaspeak::voices::VoiceSelection::Legacy(1);
     config.save(&paths.config_file).unwrap();
     let directory = config.model_directory(&paths);
     fs::create_dir_all(&directory).unwrap();
@@ -2405,7 +2414,7 @@ fn top_level_guide_routes_every_choice_and_rejects_invalid_selection() {
             .iter()
             .map(|item| item.label.as_str())
             .collect::<Vec<_>>(),
-        ["Full setup", "Runtime", "Model", "Check"]
+        ["Full setup", "Runtime", "Model", "Check", "Audio"]
     );
 
     for selections in [
@@ -2485,7 +2494,10 @@ fn runtime_catalog_covers_each_device_matrix_and_back_at_device_picker() {
 
 #[test]
 fn only_engine_loading_commands_require_runtime_path_preparation() {
-    assert!(command_loads_engine(&TopCommand::Daemon));
+    assert!(!command_loads_engine(&TopCommand::Daemon));
+    assert!(!command_loads_engine(&TopCommand::RequestWorker {
+        spec: "{}".into()
+    }));
     assert!(command_loads_engine(&TopCommand::Say(SayArgs {
         text: Some("test".into()),
         voice: None,
@@ -2520,7 +2532,7 @@ fn only_engine_loading_commands_require_runtime_path_preparation() {
     }));
     assert!(!command_loads_engine(&TopCommand::Setup {
         command: Some(SetupCommand::All {
-            model: "supertonic-3-openvino".into(),
+            model: Some("supertonic-3-openvino".into()),
             source: None,
             accept_license: None,
             progress_format: ProgressFormat::Human,
@@ -3014,7 +3026,10 @@ fn setup_transaction_checks_then_restarts_and_prints_both_formats() {
         )
         .unwrap();
         assert_eq!(&*order.borrow(), &["check", "restart"]);
-        assert_eq!(Config::load(&paths.config_file).unwrap().model.voice, 1);
+        assert_eq!(
+            Config::load(&paths.config_file).unwrap().model.voice,
+            omaspeak::voices::VoiceSelection::Legacy(1)
+        );
     }
 }
 
@@ -3023,7 +3038,7 @@ fn builtin_model_boundaries_and_offline_command_validation_are_actionable() {
     let root = sandbox();
     let paths = paths(&root);
     let spec = BuiltinModels.resolve("supertonic-3-openvino").unwrap();
-    assert_eq!(BuiltinModels.models().len(), 2);
+    assert_eq!(BuiltinModels.models().len(), 3);
     assert!(BuiltinModels.verify(&paths, spec).is_err());
     assert!(
         BuiltinModels
@@ -3139,7 +3154,10 @@ fn installed_guided_model_and_voice_validation_cover_local_only_paths() {
             .as_deref(),
         Some("supertonic-3-gguf")
     );
-    assert_eq!(Config::load(&paths.config_file).unwrap().model.voice, 2);
+    assert_eq!(
+        Config::load(&paths.config_file).unwrap().model.voice,
+        omaspeak::voices::VoiceSelection::Name("M3".into())
+    );
 
     let mut empty = *omaspeak::catalog::model("supertonic-3-openvino").unwrap();
     empty.id = "empty-voices";
@@ -3275,6 +3293,11 @@ fn catalog_status_matrix_and_guided_model_cancellations_use_existing_paths() {
     )
     .unwrap();
 
+    // Cancellation paths must select a model that the active runtime can run.
+    config.backend.kind = "supertonic".into();
+    config.backend.runtime = Runtime::Openvino;
+    config.backend.device = "cpu".into();
+    config.save(&paths.config_file).unwrap();
     let mut selector = ScriptedSelector::new([Some(4), None]);
     assert!(
         guided_model(&paths.config_file, &paths, &operations, &mut selector)
@@ -3430,7 +3453,7 @@ fn filesystem_daemon_and_report_branches_need_no_native_runtime() {
         request(Command::Say {
             text: "play".into(),
             speed: 1.0,
-            voice: 0,
+            voice: omaspeak::voices::VoiceSelection::Legacy(0),
             output: Some(root.join("missing.wav").to_string_lossy().into_owned()),
             no_play: true,
         }),
@@ -4064,7 +4087,7 @@ fn daemon_orchestration_serves_shutdown_and_cleans_its_socket_without_signals() 
 fn benchmark_orchestration_uses_loaded_engine_and_emits_a_complete_report() {
     let root = sandbox();
     let mut config = Config::default();
-    config.model.voice = 3;
+    config.model.voice = omaspeak::voices::VoiceSelection::Legacy(3);
     assert!(
         benchmark_with_engine(
             &config,
@@ -4430,13 +4453,19 @@ fn top_level_online_commands_exchange_protocol_without_loading_an_engine() {
                     synthesis_milliseconds: 2,
                 },
                 Command::Status => ResultPayload::Status {
+                    audio: serde_json::Value::Null,
                     running: true,
                     pid: 42,
+                    language: String::new(),
                     model: "fixture".into(),
                     sample_rate: 16_000,
                     backend: json!({"kind": "injected"}),
                 },
                 Command::Shutdown => ResultPayload::Shutdown,
+                Command::Cancel { request_id } => ResultPayload::Cancelled {
+                    request_id,
+                    count: 0,
+                },
             };
             write_response(
                 &mut stream,
@@ -4541,7 +4570,8 @@ fn unattended_setup_validation_boundary_preserves_transaction_semantics() {
         || false,
         |_| unreachable!("failed health check must prevent restart"),
         |config, path, explicit| {
-            assert_eq!(config.backend.runtime, Runtime::Default);
+            assert_eq!(config.backend.runtime, Runtime::Openvino);
+            assert_eq!(config.model.name, omaspeak::catalog::OPENVINO_MODEL_ID);
             assert_eq!(path, app_paths.config_file);
             assert!(!explicit);
             validated.set(true);
@@ -4603,4 +4633,80 @@ fn default_setup_selector_and_accept_wrapper_cover_production_boundaries() {
     drop(connector.join().unwrap());
 
     let _ = is_interactive_terminal();
+}
+
+#[test]
+fn runtime_switch_resolves_model_format_and_retains_voice_on_same_backend() {
+    let root = sandbox();
+    let paths = paths(&root);
+    let mut config = Config::default();
+    config.model.voice = omaspeak::voices::VoiceSelection::Legacy(9);
+    config.save(&paths.config_file).unwrap();
+    let cuda =
+        runtime_configuration_candidate(&paths.config_file, Runtime::Cuda, "gpu", Some(2), None)
+            .unwrap();
+    assert_eq!(
+        cuda.model.voice,
+        omaspeak::voices::VoiceSelection::Legacy(9)
+    );
+    assert_eq!(cuda.model.name, omaspeak::catalog::DEFAULT_MODEL_ID);
+    let ov =
+        runtime_configuration_candidate(&paths.config_file, Runtime::Openvino, "npu", None, None)
+            .unwrap();
+    assert_eq!(ov.model.name, omaspeak::catalog::OPENVINO_MODEL_ID);
+    assert!(ov.model.file.is_empty());
+    assert_eq!(ov.backend.device, "npu");
+    ov.save(&paths.config_file).unwrap();
+    assert_eq!(
+        setup_model_id(&paths.config_file, None).unwrap(),
+        omaspeak::catalog::OPENVINO_MODEL_ID
+    );
+    let cpu =
+        runtime_configuration_candidate(&paths.config_file, Runtime::Default, "cpu", None, None)
+            .unwrap();
+    assert_eq!(cpu.model.name, omaspeak::catalog::DEFAULT_MODEL_ID);
+    assert!(!cpu.model.file.is_empty());
+    assert_eq!(
+        setup_model_id(&paths.config_file, Some("explicit-model")).unwrap(),
+        "explicit-model"
+    );
+    let cli = Cli::try_parse_from(["omaspeak", "setup", "all"]).unwrap();
+    assert!(matches!(
+        cli.command,
+        TopCommand::Setup {
+            command: Some(SetupCommand::All { model: None, .. })
+        }
+    ));
+}
+
+#[test]
+fn model_picker_prefers_compatible_row_and_rejects_disabled_selection() {
+    let root = sandbox();
+    let paths = paths(&root);
+    Config::default().save(&paths.config_file).unwrap();
+    let operations = FakeModelOperations { installed: true };
+    let mut selector = ScriptedSelector::new([Some(1)]);
+    let chosen = choose_model(
+        &paths.config_file,
+        &paths,
+        &operations,
+        Some((Runtime::Openvino, "npu")),
+        &mut selector,
+    )
+    .unwrap();
+    assert_eq!(chosen.as_deref(), Some("supertonic-3-openvino"));
+    assert_eq!(selector.calls[0].2, 1);
+    for index in [0, usize::MAX] {
+        let mut selector = ScriptedSelector::new([Some(index)]);
+        assert!(
+            choose_model(
+                &paths.config_file,
+                &paths,
+                &operations,
+                Some((Runtime::Openvino, "npu")),
+                &mut selector
+            )
+            .is_err()
+        );
+    }
 }
