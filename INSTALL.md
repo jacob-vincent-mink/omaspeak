@@ -90,3 +90,11 @@ to configure the provider and retry with `omaspeak setup model --set MODEL`.
 Once that service is active, later CLI config, runtime, model, and speaker
 changes use `try-restart` so the daemon adopts the saved configuration. An
 inactive or uninstalled service is left untouched.
+
+## Audio devices
+
+Run `omaspeak setup audio` to select and test the application’s audio device.
+Pinned routing requires PipeWire’s `pw-dump` and `pw-record` (Omawake) or
+`pw-play` (Omaspeak), supplied by `pipewire` and `pipewire-audio` on Arch.
+See [Audio device selection](docs/AUDIO-DEVICES.md) for configuration,
+service restart behavior, discovery JSON, and disconnect recovery.
