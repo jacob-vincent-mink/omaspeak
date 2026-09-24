@@ -1,0 +1,35 @@
+{
+  "date": "2026-09-24",
+  "host": "Intel Core Ultra Series 3 NPU 8086:b03e",
+  "app_version": "0.1.0 candidate",
+  "openvino": "2026.4.0",
+  "genai": "2026.4.0.0",
+  "model": "kokoro-82m-openvino",
+  "model_revision": "9c035d0bfab136f0c1c525a5841d3411d7220c66",
+  "checks": [
+    "catalog source install verified all 14 pinned files",
+    "setup activation synthesized on NPU",
+    "setup check passed model, voice, runtime, device, engine",
+    "benchmark synthesized af_heart on NPU",
+    "normal say request worker synthesized am_michael on NPU",
+    "Omawake Whisper via 2026.4 GenAI C build transcribed and detected the benchmark WAV with an exact alias"
+  ],
+  "samples": [
+    {
+      "file": "samples/app-benchmark-af_heart.wav",
+      "sha256": "b3caa040f5455e4b6f9e395ef392672bb5280724704a4de783b47197ea509fb0",
+      "sample_rate": 24000,
+      "channels": 1,
+      "frames": 76200,
+      "rms": 0.05158
+    },
+    {
+      "file": "samples/app-say-am_michael.wav",
+      "sha256": "4a16499dbd60e46bf3f27c790e6762994c50d9a46de9d996b62e8c1d446cc03c",
+      "sample_rate": 24000,
+      "channels": 1,
+      "frames": 106200,
+      "rms": 0.03742
+    }
+  ]
+}

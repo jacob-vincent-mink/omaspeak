@@ -81,8 +81,8 @@ pub fn installed(config: &Config, paths: &AppPaths) -> Result<Vec<Voice>> {
         "supertonic" if config.backend.kind == "audiocpp" => Ok(supertonic_presets()),
         "supertonic" => supertonic_voices(config, paths),
         "kokoro" => {
-            // All 54 voice packs are embedded in the pinned GGUF; the catalog is
-            // the trusted inventory. Require the model file to be installed.
+            // The catalog is the trusted inventory. GGUF voices are embedded;
+            // OpenVINO GenAI voices are separate pinned embedding files.
             let directory = config.model_directory(paths);
             if !directory.join(&config.model.file).is_file() {
                 bail!(
@@ -91,13 +91,26 @@ pub fn installed(config: &Config, paths: &AppPaths) -> Result<Vec<Voice>> {
                 );
             }
             crate::catalog::model(&config.model.name)
-                .map(from_catalog)
+                .map(|spec| {
+                    if config.backend.kind == "kokoro-genai" {
+                        for voice in spec.voices {
+                            let file = directory.join(format!("voices/{}.bin", voice.name));
+                            if !file.is_file() {
+                                bail!(
+                                    "Kokoro voice embedding is not installed: {}",
+                                    file.display()
+                                );
+                            }
+                        }
+                    }
+                    Ok(from_catalog(spec))
+                })
                 .with_context(|| {
                     format!(
                         "Kokoro model {:?} has no catalog voice metadata",
                         config.model.name
                     )
-                })
+                })?
         }
         family => bail!("cannot enumerate voices for model family {family:?}"),
     }

@@ -87,6 +87,23 @@ fn direct_openvino_uses_one_complete_official_archive_snapshot() {
 }
 
 #[test]
+fn kokoro_openvino_catalog_pins_genai_model_and_version_floor() {
+    let spec = model(KOKORO_OPENVINO_MODEL_ID).unwrap();
+    assert_eq!(spec.backend, "kokoro-genai");
+    assert_eq!(spec.min_openvino_version, "2026.4.0");
+    assert!(spec.downloadable && spec.openvino_capable && spec.npu_capable);
+    assert!(spec.compatible_with("kokoro-genai", Runtime::Openvino, "npu"));
+    assert!(!spec.compatible_with("audiocpp", Runtime::Default, "cpu"));
+    assert_eq!(spec.voices.len(), 2);
+    assert_eq!(spec.files.len(), 14);
+    assert!(
+        spec.files
+            .iter()
+            .all(|file| file.url.contains(KOKORO_OPENVINO_REVISION))
+    );
+}
+
+#[test]
 fn converted_default_keeps_distinct_artifact_provenance() {
     let gguf = model("supertonic-3-gguf").unwrap();
     assert_eq!(gguf.backend, "audiocpp");

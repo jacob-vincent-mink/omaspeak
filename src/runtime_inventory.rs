@@ -274,6 +274,9 @@ fn required(config: &BackendConfig) -> Vec<Option<&Path>> {
 }
 
 pub fn probe(config: &BackendConfig, path: &Path) -> Probe {
+    if config.kind == "kokoro-genai" {
+        return crate::kokoro_genai::probe(config);
+    }
     let exact = resolve(config, path);
     let attempt = (|| -> Result<Probe> {
         exact.validate_shape()?;

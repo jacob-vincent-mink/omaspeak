@@ -5,8 +5,37 @@ lists Kokoro-82M as supported on Intel CPU, GPU, and NPU. Intel's
 [INT8 IR](https://huggingface.co/OpenVINO/Kokoro-82M-int8-ov) is a different
 model representation from Omaspeak's `kokoro-82m-gguf`. On NPU it runs through
 the [OpenVINO GenAI speech pipeline](https://docs.openvino.ai/2026/api/genai_api/_autosummary/openvino_genai.Text2SpeechPipeline.html),
-which supplies phonemization, voice loading, and generation. The direct Omaspeak
-OpenVINO provider still runs Supertonic.
+which supplies phonemization and generation. Omaspeak's `kokoro-genai` adapter
+keeps a Python worker loaded and passes one of two pinned voice embeddings.
+
+## Install the catalog profile
+
+The profile requires Python with `openvino>=2026.4`, `openvino-genai>=2026.4`,
+and NumPy. The tested environment used exact versions 2026.4.0 and 2026.4.0.0:
+
+```sh
+uv venv ~/.local/share/omaspeak/kokoro-python
+uv pip install --python ~/.local/share/omaspeak/kokoro-python/bin/python \
+  'openvino==2026.4.0' 'openvino-genai==2026.4.0.0' numpy
+
+omaspeak config set backend.kind kokoro-genai
+omaspeak config set backend.runtime openvino
+omaspeak config set backend.device npu
+omaspeak config set backend.options.python \
+  "$HOME/.local/share/omaspeak/kokoro-python/bin/python"
+omaspeak setup model --download kokoro-82m-openvino
+omaspeak say --voice af_heart --out /tmp/kokoro.wav --no-play \
+  'Hello from Kokoro on the NPU.'
+```
+
+The catalog pins the Intel INT8 model at revision
+`9c035d0bfab136f0c1c525a5841d3411d7220c66`, including its phonemizer
+data and two American English voice embeddings (`af_heart`, `am_michael`).
+Activation proves actual synthesis on the selected device and rejects OpenVINO
+or GenAI older than 2026.4. The current GenAI path supports speed `1.0`.
+To install from an already downloaded revision, add
+`--source /path/to/Kokoro-82M-int8-ov` to the setup command. The catalog
+verifies every file's size and SHA-256 before activation.
 
 ## File-only device probe
 
@@ -34,16 +63,17 @@ explicit `NPU` device. It reports load and repeat synthesis time and writes a
 show successful `af_heart` and `am_michael` synthesis. The Optimum Intel model
 wrapper failed NPU compilation on the same model, so this probe uses GenAI.
 
-Before adding a supported catalog profile, pin the complete IR and voice file
-set, prove fresh installation and Omaspeak worker integration, compare listening
-quality and latency against the existing Kokoro GGUF and Supertonic profiles,
-and verify device placement in the integrated worker. The NPU result proves
-the upstream pipeline on this host, not an Omaspeak Kokoro provider.
+The integrated profile was installed from the pinned source set and passed
+Omaspeak's activation proof, benchmark command, and normal `say` request worker
+on the Panther Lake NPU. Both generated WAVs were finite, non-silent 24 kHz
+mono. A Kokoro `say` output was also transcribed and detected by Omawake's
+Whisper verifier running against an isolated OpenVINO 2026.4 GenAI C build.
+These are file-only checks; no microphone, speaker, or live daemon was used.
 
 The 2026.4 OpenVINO GenAI C headers expose Whisper but no text-to-speech
-pipeline. Native integration therefore needs a small C++ bridge or an upstream
-GenAI C API addition. The GenAI speech pipeline and its sample request C++17;
-the successful Python probe did not compile an Omaspeak C++ bridge.
+pipeline, so the Omaspeak adapter uses the Python API. A future C++ bridge or
+GenAI C API addition could remove the Python dependency. The upstream speech
+pipeline and sample request C++17.
 
 An `openvino-rs` change is only needed if the native adapter requires a C API
 that its current bindings lack or a 2026.4 runtime compatibility defect is

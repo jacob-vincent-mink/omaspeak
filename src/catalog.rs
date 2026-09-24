@@ -6,6 +6,7 @@ use crate::config::Config;
 pub const DEFAULT_MODEL_ID: &str = "supertonic-3-gguf";
 pub const OPENVINO_MODEL_ID: &str = "supertonic-3-openvino";
 pub const KOKORO_MODEL_ID: &str = "kokoro-82m-gguf";
+pub const KOKORO_OPENVINO_MODEL_ID: &str = "kokoro-82m-openvino";
 
 pub const SUPERTONIC_VOICE_NAMES: [&str; 10] =
     ["M1", "M2", "M3", "M4", "M5", "F1", "F2", "F3", "F4", "F5"];
@@ -75,6 +76,8 @@ const OFFICIAL_SOURCE: &str = "https://huggingface.co/supertone-oss-archive/supe
 const KOKORO_ARTIFACT_REVISION: &str = "1b13cd58245c74e3ff4ca06925766c5ef7991bd4";
 const KOKORO_ARTIFACT_SOURCE: &str = "https://huggingface.co/audio-cpp/audio.cpp-gguf";
 const KOKORO_MODEL_SOURCE: &str = "https://huggingface.co/hexgrad/Kokoro-82M";
+const KOKORO_OPENVINO_SOURCE: &str = "https://huggingface.co/OpenVINO/Kokoro-82M-int8-ov";
+const KOKORO_OPENVINO_REVISION: &str = "9c035d0bfab136f0c1c525a5841d3411d7220c66";
 
 #[derive(Clone, Copy, Debug, Serialize)]
 pub struct BackendSpec {
@@ -134,6 +137,10 @@ pub struct ModelSpec {
     pub voices: &'static [VoiceSpec],
     pub openvino_capable: bool,
     pub npu_capable: bool,
+    /// Minimum runtime required by this model/provider pair; empty means no
+    /// additional version floor beyond the provider's own ABI checks.
+    #[serde(skip)] // Runtime capability is not part of the installed model identity.
+    pub min_openvino_version: &'static str,
     pub files: &'static [ModelFile],
 }
 
@@ -380,6 +387,11 @@ const BACKENDS: &[BackendSpec] = &[
         name: "Direct OpenVINO",
         description: "Direct execution of official Supertonic ONNX graphs on Intel hardware",
     },
+    BackendSpec {
+        kind: "kokoro-genai",
+        name: "OpenVINO GenAI Kokoro",
+        description: "Kokoro INT8 synthesis through OpenVINO GenAI 2026.4 or newer",
+    },
 ];
 
 const GGUF_FILES: &[ModelFile] = &[ModelFile {
@@ -507,6 +519,104 @@ const KOKORO_FILES: &[ModelFile] = &[
     },
 ];
 
+const KOKORO_OPENVINO_VOICES: &[VoiceSpec] = &[
+    VoiceSpec {
+        id: 0,
+        name: "af_heart",
+    },
+    VoiceSpec {
+        id: 1,
+        name: "am_michael",
+    },
+];
+
+const KOKORO_OPENVINO_FILES: &[ModelFile] = &[
+    ModelFile {
+        path: "openvino_model.xml",
+        url: "https://huggingface.co/OpenVINO/Kokoro-82M-int8-ov/resolve/9c035d0bfab136f0c1c525a5841d3411d7220c66/openvino_model.xml?download=true",
+        size: 2_551_038,
+        sha256: "a04d5d91e8d6f8d8c1ade28ad331b65827aa148e65515acb4c6725f876257fa5",
+    },
+    ModelFile {
+        path: "openvino_model.bin",
+        url: "https://huggingface.co/OpenVINO/Kokoro-82M-int8-ov/resolve/9c035d0bfab136f0c1c525a5841d3411d7220c66/openvino_model.bin?download=true",
+        size: 114_025_461,
+        sha256: "c879cdd88275b9bfa25e51204d969013d701ea8699e15f99fd1957caf75a29ab",
+    },
+    ModelFile {
+        path: "openvino_config.json",
+        url: "https://huggingface.co/OpenVINO/Kokoro-82M-int8-ov/resolve/9c035d0bfab136f0c1c525a5841d3411d7220c66/openvino_config.json?download=true",
+        size: 440,
+        sha256: "93ae65d623c5448b13621720d342e046d6e32d727a1040df47c8ef9f11b65945",
+    },
+    ModelFile {
+        path: "config.json",
+        url: "https://huggingface.co/OpenVINO/Kokoro-82M-int8-ov/resolve/9c035d0bfab136f0c1c525a5841d3411d7220c66/config.json?download=true",
+        size: 3_170,
+        sha256: "95ecf2f3c6f8dce3d3894fcf06b2640d8867e33d6a69fe68c6be457d4a5ec09c",
+    },
+    ModelFile {
+        path: "voices/af_heart.bin",
+        url: "https://huggingface.co/OpenVINO/Kokoro-82M-int8-ov/resolve/9c035d0bfab136f0c1c525a5841d3411d7220c66/voices/af_heart.bin?download=true",
+        size: 522_240,
+        sha256: "d583ccff3cdca2f7fae535cb998ac07e9fcb90f09737b9a41fa2734ec44a8f0b",
+    },
+    ModelFile {
+        path: "voices/am_michael.bin",
+        url: "https://huggingface.co/OpenVINO/Kokoro-82M-int8-ov/resolve/9c035d0bfab136f0c1c525a5841d3411d7220c66/voices/am_michael.bin?download=true",
+        size: 522_240,
+        sha256: "1d1f21dd8da39c30705cd4c75d039d265e9bc4a2a93ed09bc9e1b1225eb95ba1",
+    },
+    ModelFile {
+        path: "data/gb_gold.json",
+        url: "https://huggingface.co/OpenVINO/Kokoro-82M-int8-ov/resolve/9c035d0bfab136f0c1c525a5841d3411d7220c66/data/gb_gold.json?download=true",
+        size: 2_838_552,
+        sha256: "29e62f4b60261c88f7f3c2c7811ca3825978948090b72d2b27d565b729282f71",
+    },
+    ModelFile {
+        path: "data/gb_silver.json",
+        url: "https://huggingface.co/OpenVINO/Kokoro-82M-int8-ov/resolve/9c035d0bfab136f0c1c525a5841d3411d7220c66/data/gb_silver.json?download=true",
+        size: 3_663_898,
+        sha256: "48131e2d92ccc41655f4543e87e0f938e71463eb5a54be7f0693bb712ebb6bce",
+    },
+    ModelFile {
+        path: "data/ja_words.txt",
+        url: "https://huggingface.co/OpenVINO/Kokoro-82M-int8-ov/resolve/9c035d0bfab136f0c1c525a5841d3411d7220c66/data/ja_words.txt?download=true",
+        size: 1_921_140,
+        sha256: "a93a8e8aee24db307a32becb8bf01c4c2908ecf37e6c91f7a705fafdfeba67ff",
+    },
+    ModelFile {
+        path: "data/us_gold.json",
+        url: "https://huggingface.co/OpenVINO/Kokoro-82M-int8-ov/resolve/9c035d0bfab136f0c1c525a5841d3411d7220c66/data/us_gold.json?download=true",
+        size: 3_000_469,
+        sha256: "dc414872a49a28ae6c141463d502fd945f3b2fde040484fdc47d00cc4612686f",
+    },
+    ModelFile {
+        path: "data/us_silver.json",
+        url: "https://huggingface.co/OpenVINO/Kokoro-82M-int8-ov/resolve/9c035d0bfab136f0c1c525a5841d3411d7220c66/data/us_silver.json?download=true",
+        size: 3_099_517,
+        sha256: "de8f67be911bb6c659187b4a65fd966b6a30e56350e0f790d763210b053ac475",
+    },
+    ModelFile {
+        path: "data/vi_acronyms.json",
+        url: "https://huggingface.co/OpenVINO/Kokoro-82M-int8-ov/resolve/9c035d0bfab136f0c1c525a5841d3411d7220c66/data/vi_acronyms.json?download=true",
+        size: 136_822,
+        sha256: "5da337cdde5231e72680fa4bf29f5dfe906f769492e9ee950ac2d73a28eba529",
+    },
+    ModelFile {
+        path: "data/vi_symbols.json",
+        url: "https://huggingface.co/OpenVINO/Kokoro-82M-int8-ov/resolve/9c035d0bfab136f0c1c525a5841d3411d7220c66/data/vi_symbols.json?download=true",
+        size: 1_298,
+        sha256: "d963c9261f6ae0211c5941a357dff58f3599b5db98ed38e4cc722bc67ffcb728",
+    },
+    ModelFile {
+        path: "data/vi_teencode.json",
+        url: "https://huggingface.co/OpenVINO/Kokoro-82M-int8-ov/resolve/9c035d0bfab136f0c1c525a5841d3411d7220c66/data/vi_teencode.json?download=true",
+        size: 10_889,
+        sha256: "e35baf886a44a92e08c5d900abbcf921eb69efa198821e2a9de85ca8f5dfa7f3",
+    },
+];
+
 const MODELS: &[ModelSpec] = &[
     ModelSpec {
         id: DEFAULT_MODEL_ID,
@@ -540,6 +650,7 @@ const MODELS: &[ModelSpec] = &[
         voices: SUPERTONIC_VOICES,
         openvino_capable: false,
         npu_capable: false,
+        min_openvino_version: "",
         files: GGUF_FILES,
     },
     ModelSpec {
@@ -574,6 +685,7 @@ const MODELS: &[ModelSpec] = &[
         voices: SUPERTONIC_VOICES,
         openvino_capable: true,
         npu_capable: true,
+        min_openvino_version: "",
         files: OPENVINO_FILES,
     },
     ModelSpec {
@@ -608,7 +720,43 @@ const MODELS: &[ModelSpec] = &[
         voices: KOKORO_VOICES,
         openvino_capable: false,
         npu_capable: false,
+        min_openvino_version: "",
         files: KOKORO_FILES,
+    },
+    ModelSpec {
+        id: KOKORO_OPENVINO_MODEL_ID,
+        backend: "kokoro-genai",
+        family: "kokoro",
+        name: "kokoro-82m-openvino",
+        display_name: "Kokoro 82M · OpenVINO GenAI",
+        description: "Intel Kokoro 82M INT8 IR for OpenVINO GenAI 2026.4+; two American English voices",
+        license: "Apache-2.0",
+        license_url: "https://www.apache.org/licenses/LICENSE-2.0",
+        license_status: "Apache-2.0 (Intel conversion of hexgrad/Kokoro-82M)",
+        downloadable: true,
+        requires_acceptance: false,
+        source_revision: KOKORO_OPENVINO_REVISION,
+        artifact_source: KOKORO_OPENVINO_SOURCE,
+        artifact_revision: KOKORO_OPENVINO_REVISION,
+        original_model_source: KOKORO_MODEL_SOURCE,
+        original_model_revision: "",
+        license_file: "MODEL-LICENSE",
+        license_sha256: "791a61f7afcb80f050e546b6778b98bb86e5ffe4e096dbeff07691f8999ba0ad",
+        model_file: "openvino_model.xml",
+        duration_predictor: "",
+        text_encoder: "",
+        vector_estimator: "",
+        vocoder: "",
+        tts_json: "",
+        unicode_indexer: "",
+        voice_style: "voices",
+        language: "en-us",
+        steps: 0,
+        voices: KOKORO_OPENVINO_VOICES,
+        openvino_capable: true,
+        npu_capable: true,
+        min_openvino_version: "2026.4.0",
+        files: KOKORO_OPENVINO_FILES,
     },
 ];
 
@@ -639,6 +787,7 @@ pub fn default_model(
     let id = match backend {
         "audiocpp" => DEFAULT_MODEL_ID,
         "supertonic" => OPENVINO_MODEL_ID,
+        "kokoro-genai" => KOKORO_OPENVINO_MODEL_ID,
         _ => anyhow::bail!("no catalog default for backend {backend:?}"),
     };
     let spec = model(id).expect("catalog default exists");
@@ -676,7 +825,7 @@ impl ModelSpec {
                 runtime,
                 Runtime::Default | Runtime::Cuda | Runtime::Vulkan | Runtime::Hip
             ),
-            "supertonic" => {
+            "supertonic" | "kokoro-genai" => {
                 runtime == Runtime::Openvino
                     && self.openvino_capable
                     && (!device.trim().eq_ignore_ascii_case("npu") || self.npu_capable)
@@ -713,7 +862,7 @@ impl ModelSpec {
             config.backend.options.clear();
             config.backend.device_id = 0;
             config.backend.fallback = Default::default();
-            config.backend.runtime = if self.backend == "supertonic" {
+            config.backend.runtime = if matches!(self.backend, "supertonic" | "kokoro-genai") {
                 Runtime::Openvino
             } else {
                 Runtime::Default

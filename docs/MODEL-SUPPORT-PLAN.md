@@ -111,9 +111,9 @@ Sources and qualifications:
 - [Intel Kokoro IR](https://huggingface.co/OpenVINO/Kokoro-82M-int8-ov) specifies
   OpenVINO 2026.3.0+ and demonstrates Optimum/OVMS inference. OpenVINO 2026.4.0
   [announces NPU support](https://github.com/openvinotoolkit/openvino/releases/tag/2026.4.0).
-  A local [file-only probe](KOKORO-OPENVINO-2026.4.md) is available; neither the
-  release note nor the probe establishes a native Omaspeak adapter or NPU
-  qualification.
+  The pinned `kokoro-82m-openvino` catalog profile and its persistent GenAI
+  worker are documented in the [integration evidence](KOKORO-OPENVINO-2026.4.md).
+  The profile requires OpenVINO and GenAI 2026.4 or newer at activation.
 - [Echo9Zulu Qwen3 Base IR](https://huggingface.co/Echo9Zulu/Qwen3-TTS-12Hz-Base-1.7B-INT8-OpenVINO)
   is a community conversion. Its card largely repeats the upstream Python
   workflow; inspect the actual graph contracts and converter before relying

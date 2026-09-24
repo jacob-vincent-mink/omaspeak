@@ -4,6 +4,7 @@ pub mod catalog;
 pub mod config;
 pub mod engine;
 pub mod hardware;
+pub mod kokoro_genai;
 pub mod paths;
 pub mod protocol;
 mod provider_families;

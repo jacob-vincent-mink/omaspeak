@@ -35,3 +35,22 @@ static sentence length then failed because `aten::repeat_interleave/Tile` had a
 nonconstant repeats input. OpenVINO GenAI 2026.4 succeeded with the same IR.
 Release integration should use the GenAI Kokoro pipeline, not assume that
 Optimum's raw model wrapper is NPU-ready.
+
+## Omaspeak 0.1.0 candidate integration
+
+The pinned `kokoro-82m-openvino` catalog profile installed all 14 assets from
+the local immutable model snapshot, verified its manifest, and activated after
+a file-only NPU synthesis proof. `setup check --json` passed the config,
+backend, model, voice, runtime, device, and engine checks. The normal app paths
+then generated [af_heart benchmark audio](samples/app-benchmark-af_heart.wav)
+(76,200 frames, 3.175 s; 2.71 s synthesis) and
+[am_michael request-worker audio](samples/app-say-am_michael.wav)
+(106,200 frames, 4.425 s; 2.64 s synthesis). Both are finite, non-silent
+24 kHz mono WAVs. File hashes and the complete check list are in
+[`integration.json`](integration.json).
+
+An Omawake 0.1.0 candidate loaded the existing Whisper Base.en INT8 model
+through the isolated OpenVINO GenAI 2026.4 C build on NPU. It transcribed the
+Kokoro benchmark WAV as “Hello from Kakoro and Amispeak on the NPU.” With that
+exact transcript added as a temporary alias, Omawake returned a `probe` wake
+detection. The live service configuration and action mapping were unchanged.

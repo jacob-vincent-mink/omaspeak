@@ -122,9 +122,9 @@ an offline override with the same directory layout and pinned bytes.
 Use `supertonic-3-openvino` for Intel CPU, GPU, and NPU. NPU activation compiles
 and verifies the fixed shape cache during setup; first inference refuses to
 compile a missing cache.
-Kokoro 82M also synthesized on a Panther Lake NPU with OpenVINO GenAI 2026.4;
-the [probe and evidence](docs/KOKORO-OPENVINO-2026.4.md) are available while
-Omaspeak's direct Kokoro adapter remains under development.
+`kokoro-82m-openvino` uses OpenVINO GenAI 2026.4 or newer on Intel CPU, GPU,
+and NPU. It currently includes `af_heart` and `am_michael` voices and needs an
+OpenVINO GenAI Python environment. See the [setup and NPU evidence](docs/KOKORO-OPENVINO-2026.4.md).
 Omaspeak does not claim CUDA, Vulkan, HIP, GPU, or NPU placement until a
 model-backed provider proof succeeds on that machine.
 

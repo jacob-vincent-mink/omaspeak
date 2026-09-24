@@ -815,7 +815,8 @@ pub struct NpuNativePreparation {
 }
 
 pub fn uses_static_npu_shapes(config: &Config) -> bool {
-    config.backend.runtime == Runtime::Openvino
+    config.backend.kind == "supertonic"
+        && config.backend.runtime == Runtime::Openvino
         && config.backend.device.trim().eq_ignore_ascii_case("npu")
 }
 
