@@ -247,3 +247,132 @@ impl Drop for KokoroGenAiBackend {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::backend::Runtime;
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn fixture() -> (std::path::PathBuf, Config, AppPaths) {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!("omaspeak-kokoro-test-{nonce}"));
+        let model = directory.join("model");
+        fs::create_dir_all(model.join("voices")).unwrap();
+        for asset in [
+            "openvino_model.xml",
+            "openvino_model.bin",
+            "config.json",
+            "voices/af_heart.bin",
+            "voices/am_michael.bin",
+        ] {
+            fs::write(model.join(asset), []).unwrap();
+        }
+        let interpreter = directory.join("fake-python");
+        fs::write(
+            &interpreter,
+            r#"#!/usr/bin/env python3
+import json, struct, sys
+if '-u' not in sys.argv:
+    print(json.dumps({'openvino': '2026.4.0', 'genai': '2026.4.0', 'device': 'NPU'}))
+else:
+    print(json.dumps({'ready': True, 'sample_rate': 24000, 'device': 'NPU'}), flush=True)
+    for request in sys.stdin:
+        request = json.loads(request)
+        if request['text'] == 'error':
+            print(json.dumps({'error': 'synthesis rejected'}), flush=True)
+        elif request['text'] == 'nan':
+            print(json.dumps({'ok': True, 'bytes': 4}), flush=True)
+            sys.stdout.buffer.write(struct.pack('<f', float('nan')))
+            sys.stdout.buffer.flush()
+        else:
+            payload = struct.pack('<ff', 0.25, -0.5)
+            print(json.dumps({'ok': True, 'bytes': len(payload)}), flush=True)
+            sys.stdout.buffer.write(payload)
+            sys.stdout.buffer.flush()
+"#,
+        )
+        .unwrap();
+        let mut permissions = fs::metadata(&interpreter).unwrap().permissions();
+        permissions.set_mode(0o700);
+        fs::set_permissions(&interpreter, permissions).unwrap();
+        let mut config = Config::default();
+        config.model.name = crate::catalog::KOKORO_OPENVINO_MODEL_ID.into();
+        config.model.directory = model.to_string_lossy().into_owned();
+        config.backend.kind = "kokoro-genai".into();
+        config.backend.runtime = Runtime::Openvino;
+        config.backend.device = "npu".into();
+        config
+            .backend
+            .options
+            .insert("python".into(), interpreter.to_string_lossy().into_owned());
+        (directory, config, AppPaths::discover())
+    }
+
+    #[test]
+    fn probes_explicit_npu_and_reports_runtime_errors() {
+        let (directory, mut config, _) = fixture();
+        let found = probe(&config.backend);
+        assert!(found.ready, "{:?}", found.errors);
+        assert_eq!(found.evidence.selected_device.as_deref(), Some("NPU"));
+        config.backend.runtime = Runtime::Default;
+        assert!(probe(&config.backend).errors[0].contains("runtime=openvino"));
+        config.backend.runtime = Runtime::Openvino;
+        config.backend.options.insert(
+            "python".into(),
+            directory
+                .join("missing-python")
+                .to_string_lossy()
+                .into_owned(),
+        );
+        assert!(probe(&config.backend).errors[0].contains("run Kokoro GenAI probe"));
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn worker_confirms_device_decodes_audio_and_rejects_bad_samples() {
+        let (directory, mut config, paths) = fixture();
+        let backend = KokoroGenAiBackend::create(&config, &paths).unwrap();
+        assert_eq!(backend.kind(), "kokoro-genai");
+        assert_eq!(backend.sample_rate(), 24_000);
+        assert_eq!(backend.num_voices(), 2);
+        assert_eq!(backend.generate("hello", 1.0, 0).unwrap(), vec![0.25, -0.5]);
+        assert!(
+            backend
+                .generate("error", 1.0, 0)
+                .unwrap_err()
+                .to_string()
+                .contains("synthesis rejected")
+        );
+        assert!(
+            backend
+                .generate("nan", 1.0, 0)
+                .unwrap_err()
+                .to_string()
+                .contains("non-finite")
+        );
+        drop(backend);
+        config.backend.device = "gpu".into();
+        assert!(
+            KokoroGenAiBackend::create(&config, &paths)
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("requested device")
+        );
+        config.model.name = "supertonic-3-gguf".into();
+        assert!(
+            KokoroGenAiBackend::create(&config, &paths)
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("pinned Kokoro")
+        );
+        fs::remove_dir_all(directory).unwrap();
+    }
+}
