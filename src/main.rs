@@ -596,7 +596,7 @@ fn prepare_native_library_path(command: &TopCommand, config_path: &Path) -> Resu
     // audio.cpp and its transitive libraries belong to the supervised worker.
     // Keep optional native code out of the CLI/daemon process and scope its
     // loader path to that worker's exec environment.
-    if config.backend.kind == "audiocpp" {
+    if matches!(config.backend.kind.as_str(), "audiocpp" | "kokoro-genai") {
         return Ok(());
     }
     let report = omaspeak::runtime::discover(&config.backend, config_path);
@@ -836,9 +836,11 @@ fn benchmark_report(
             "requested_device": config.backend.canonical_device()?,
             "effective_runtime": engine.effective_runtime(),
             "fallback_used": engine.fallback_used(),
-            "placement_verified": matches!(engine.backend_kind(), "audiocpp" | "openvino"),
+            "placement_verified": matches!(engine.backend_kind(), "audiocpp" | "openvino" | "kokoro-genai"),
             "placement_evidence": if engine.backend_kind() == "openvino" {
                 "OpenVINO EXECUTION_DEVICES matched the requested device for every compiled graph"
+            } else if engine.backend_kind() == "kokoro-genai" {
+                "OpenVINO GenAI initialized the Kokoro pipeline on the explicitly requested device"
             } else if engine.backend_kind() == "audiocpp" && engine.effective_runtime() == Runtime::Default {
                 "audio.cpp CPU backend initialized in a supervised worker"
             } else {
@@ -1310,6 +1312,11 @@ fn status_payload(engine: &impl SpeechEngine, config: &Config) -> ResultPayload 
             "openvino",
             true,
             vec!["OpenVINO execution devices were validated during graph compilation"],
+        ),
+        "kokoro-genai" => (
+            "openvino",
+            true,
+            vec!["OpenVINO GenAI initialized Kokoro on the explicitly requested device"],
         ),
         _ => (
             effective_runtime.capability(),
@@ -1788,7 +1795,7 @@ fn schema(path: &Path, paths: &AppPaths) -> Result<Value> {
     Ok(
         json!({"schema_version":1,"app":"omaspeak","app_version":env!("CARGO_PKG_VERSION"),"daemon_version":env!("CARGO_PKG_VERSION"),"config_path":path,
         "keys":[
-            {"key":"backend.kind","type":"enum","section":"Backend","label":"Backend","description":"Inference engine","value":config.backend.kind,"file_value":null,"compiled":true,"restart_required":true,"choices":["audiocpp","supertonic"]},
+            {"key":"backend.kind","type":"enum","section":"Backend","label":"Backend","description":"Inference engine","value":config.backend.kind,"file_value":null,"compiled":true,"restart_required":true,"choices":["audiocpp","supertonic","kokoro-genai"]},
             {"key":"backend.runtime","type":"enum","section":"Backend","label":"Runtime","description":"Inference runtime; availability means a matching provider was detected","value":config.backend.runtime,"file_value":null,"compiled":true,"restart_required":true,"choices":runtime_choices},
             {"key":"backend.device","type":"string","section":"Backend","label":"Device","description":"Runtime-specific device","value":config.backend.device,"file_value":null,"compiled":true,"restart_required":true},
             {"key":"backend.device_id","type":"integer","section":"Backend","label":"Device index","description":"Zero-based GPU index for CUDA, Vulkan, or HIP","value":config.backend.device_id,"file_value":null,"compiled":true,"restart_required":true,"min":0},
@@ -3235,8 +3242,7 @@ fn choose_model(
         .map(|model| {
             let installed = operations.verify(paths, model).is_ok();
             let runtime_compatible = runtime.is_none_or(|(runtime, device)| {
-                let backend = if runtime == Runtime::Openvino { "supertonic" } else { "audiocpp" };
-                model.compatible_with(backend, runtime, device)
+                model.compatible_with(model.backend, runtime, device)
             });
             let selectable = installed || model.downloadable;
             let active = model.id == config.model.name;

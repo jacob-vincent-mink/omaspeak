@@ -138,6 +138,7 @@ fn write_compact_assets(root: &Path) -> (Config, AppPaths) {
     let model = root.join("model");
     fs::create_dir_all(&model).unwrap();
     let mut config = Config::default();
+    config.backend.kind = "supertonic".into();
     config.backend.runtime = Runtime::Openvino;
     config.backend.device = "cpu".into();
     config.model.family = "supertonic".into();
@@ -1175,6 +1176,7 @@ fn native_npu_preparation_contract_validates_plan_and_persisted_blobs_without_ff
     .unwrap_err();
     assert!(skipped.to_string().contains("non-NPU"));
 
+    config.backend.kind = "supertonic".into();
     config.backend.runtime = Runtime::Openvino;
     config.backend.device = "npu".into();
     let compile_error = prepare_npu_cache_native_with(&config, &cache, false, || {

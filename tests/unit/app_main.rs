@@ -3038,7 +3038,7 @@ fn builtin_model_boundaries_and_offline_command_validation_are_actionable() {
     let root = sandbox();
     let paths = paths(&root);
     let spec = BuiltinModels.resolve("supertonic-3-openvino").unwrap();
-    assert_eq!(BuiltinModels.models().len(), 3);
+    assert_eq!(BuiltinModels.models().len(), 4);
     assert!(BuiltinModels.verify(&paths, spec).is_err());
     assert!(
         BuiltinModels
@@ -3709,6 +3709,7 @@ fn npu_cache_progress_orchestration_handles_formats_skip_and_missing_state() {
     .unwrap();
     assert_eq!(calls.get(), 0);
 
+    config.backend.kind = "supertonic".into();
     config.backend.runtime = Runtime::Openvino;
     config.backend.device = "npu".into();
     for format in [ProgressFormat::Human, ProgressFormat::Json] {
@@ -3745,6 +3746,7 @@ fn npu_model_readiness_distinguishes_catalog_custom_and_device_states() {
     let mut config = Config::default();
     assert!(!npu_model_ready_with(&config, &app_paths, |_, _| Ok(())).unwrap());
 
+    config.backend.kind = "supertonic".into();
     config.backend.runtime = Runtime::Openvino;
     config.backend.device = "npu".into();
     let error = npu_model_ready_with(&config, &app_paths, |_, _| Ok(())).unwrap_err();
@@ -4014,6 +4016,7 @@ fn production_npu_setup_guards_are_safe_before_native_preparation() {
     prepare_npu_for_runtime_selection(&mut config, &app_paths, ProgressFormat::Human).unwrap();
     prepare_npu_cache_with_progress(&mut config, &app_paths, ProgressFormat::Json).unwrap();
 
+    config.backend.kind = "supertonic".into();
     config.backend.runtime = Runtime::Openvino;
     config.backend.device = "npu".into();
     config.model.name = "custom-npu".into();

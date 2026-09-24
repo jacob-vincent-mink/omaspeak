@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.0 - 2026-09-24
+
+- Add the pinned `kokoro-82m-openvino` catalog profile with two American English
+  voices and an OpenVINO GenAI 2026.4 minimum for activation.
+- Keep Kokoro's GenAI pipeline loaded in a supervised Python worker and prove
+  catalog installation, normal request synthesis, and file-only NPU output.
+- Preserve Supertonic's fixed NPU cache preparation for its own provider;
+  Kokoro uses GenAI's compilation path.
+
 ## 0.0.3 - 2026-09-17
 
 - The eSpeak-ng phonemizer data package is catalog-managed with the Kokoro

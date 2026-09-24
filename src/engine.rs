@@ -54,6 +54,14 @@ impl Engine {
                         config, paths, runtime,
                     )?)
                 }
+                "kokoro-genai" => {
+                    if runtime != Runtime::Openvino {
+                        bail!("backend.kind=\"kokoro-genai\" requires runtime=openvino")
+                    }
+                    Box::new(crate::kokoro_genai::KokoroGenAiBackend::create(
+                        config, paths,
+                    )?)
+                }
                 kind => bail!("unsupported TTS backend {kind:?}"),
             };
             Ok(backend)
@@ -87,8 +95,10 @@ impl Engine {
             Ok(backend) => backend,
             Err(accelerator_error)
                 if (effective.backend.runtime != Runtime::Default
-                    || (effective.backend.kind == "supertonic"
-                        && !effective.backend.device.eq_ignore_ascii_case("cpu")))
+                    || (matches!(
+                        effective.backend.kind.as_str(),
+                        "supertonic" | "kokoro-genai"
+                    ) && !effective.backend.device.eq_ignore_ascii_case("cpu")))
                     && config.backend.fallback == Fallback::Cpu =>
             {
                 eprintln!(
@@ -96,8 +106,10 @@ impl Engine {
                 );
                 if effective.backend.kind == "audiocpp" {
                     effective.backend.runtime = Runtime::Default;
-                } else if effective.backend.kind == "supertonic"
-                    && effective.backend.runtime == Runtime::Openvino
+                } else if matches!(
+                    effective.backend.kind.as_str(),
+                    "supertonic" | "kokoro-genai"
+                ) && effective.backend.runtime == Runtime::Openvino
                 {
                     effective.backend.runtime = Runtime::Openvino;
                 } else {

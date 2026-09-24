@@ -1,4 +1,22 @@
-# Omaspeak 0.0.3
+# Omaspeak 0.1.0
+
+The new `kokoro-82m-openvino` catalog profile uses OpenVINO GenAI 2026.4 or
+newer on Intel NPU, GPU, and CPU. It pins the INT8 IR, phonemizer data, and
+`af_heart` and `am_michael` voice embeddings. A persistent Python worker keeps
+the model loaded across synthesis requests. The backend currently supports
+speed 1.0 and needs an environment with OpenVINO, OpenVINO GenAI, and NumPy.
+See [Kokoro setup](docs/KOKORO-OPENVINO-2026.4.md).
+
+On a Panther Lake NPU, catalog installation and activation, `benchmark`, and
+the normal `say` request worker produced non-silent 24 kHz WAVs. A Kokoro WAV
+also reached an Omawake Whisper wake detection with the isolated 2026.4 C
+runtime. Existing Supertonic and audio.cpp profiles remain available.
+
+If an existing configuration pins a versioned 2026.3 OpenVINO library path,
+update it with `omaspeak config unset backend.openvino_library` after upgrading
+the system runtime; the unversioned runtime will then be discovered.
+
+## Omaspeak 0.0.3
 
 This release delivers the model-support roadmap on the native-provider
 architecture (first packaged as 0.0.1, setup hardened in 0.0.2):

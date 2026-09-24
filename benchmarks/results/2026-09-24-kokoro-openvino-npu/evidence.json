@@ -1,0 +1,23 @@
+{
+  "date": "2026-09-24",
+  "device": "Intel Core Ultra Series 3 NPU 8086:b03e",
+  "requested_device": "NPU",
+  "available_devices": ["CPU", "GPU", "NPU"],
+  "openvino": "2026.4.0-22959-99c81491cc3-releases/2026/4",
+  "openvino_genai": "2026.4.0.0-3407-7ea2546852a",
+  "model": "OpenVINO/Kokoro-82M-int8-ov",
+  "model_revision": "9c035d0bfab136f0c1c525a5841d3411d7220c66",
+  "model_files": {
+    "openvino_model.bin": {"size": 114025461, "sha256": "c879cdd88275b9bfa25e51204d969013d701ea8699e15f99fd1957caf75a29ab"},
+    "openvino_model.xml": {"size": 2551038, "sha256": "a04d5d91e8d6f8d8c1ade28ad331b65827aa148e65515acb4c6725f876257fa5"},
+    "config.json": {"size": 3170, "sha256": "95ecf2f3c6f8dce3d3894fcf06b2640d8867e33d6a69fe68c6be457d4a5ec09c"},
+    "voices/af_heart.bin": {"size": 522240, "sha256": "d583ccff3cdca2f7fae535cb998ac07e9fcb90f09737b9a41fa2734ec44a8f0b"},
+    "voices/am_michael.bin": {"size": 522240, "sha256": "1d1f21dd8da39c30705cd4c75d039d265e9bc4a2a93ed09bc9e1b1225eb95ba1"}
+  },
+  "initial_uncached_load_seconds": 78.892,
+  "minimal_environment_retest": {"voice": "af_heart", "requested_device": "NPU", "load_seconds": 3.558, "synthesis_seconds": 2.656, "frames": 61200, "sample_rate": 24000},
+  "samples": [
+    {"voice": "af_heart", "text": "Hello from Kokoro on the NPU.", "load_seconds": 3.422, "synthesis_seconds": [2.494, 0.985], "frames": 61200, "sample_rate": 24000, "rms": 0.05059, "peak": 0.31525, "wav_sha256": "4ca7a40b1473e26a5e756f3ea66b0cdbe1c7df364cce4a6e1b9c3a907ddf0290"},
+    {"voice": "am_michael", "text": "The build finished at ten forty-five, after three retries. Version two point six is ready.", "load_seconds": 3.728, "synthesis_seconds": [3.654], "frames": 161400, "sample_rate": 24000, "rms": 0.04217, "peak": 0.3902, "wav_sha256": "6c442d08215ec9b0d8ec5421000f5e1c500e58f09556e7651bb37b92f35b6d77"}
+  ]
+}
