@@ -18,10 +18,12 @@ NPU pipeline construction took 78.9 s and generated the short utterance in
 | `af_heart` | “Hello from Kokoro on the NPU.” | 3.42 s | 2.49 s, then 0.99 s | 61,200 frames, 2.55 s | 0.0506 / 0.315 |
 | `am_michael` | “The build finished at ten forty-five, after three retries. Version two point six is ready.” | 3.73 s | 3.65 s | 161,400 frames, 6.73 s | 0.0422 / 0.390 |
 
-The files are in [`samples/`](samples). Both WAVs have finite, non-silent audio
-at 24 kHz mono. These are single-run timings, not latency percentiles. The
-samples have not received a human listening rating. The probe targets the NPU
-explicitly; it is separate from Omaspeak's application worker.
+Both generated WAVs had finite, non-silent audio at 24 kHz mono. Their hashes
+and measurements remain in [`evidence.json`](evidence.json); the generated
+audio files were kept outside the repository. These are single-run timings,
+not latency percentiles. The samples have not received a human listening
+rating. The probe targets the NPU explicitly; it is separate from Omaspeak's
+application worker.
 
 A second run from a fresh environment containing only `openvino==2026.4.0`,
 `openvino-genai==2026.4.0.0`, NumPy, SoundFile, and Hugging Face Hub also
@@ -42,11 +44,10 @@ The pinned `kokoro-82m-openvino` catalog profile installed all 14 assets from
 the local immutable model snapshot, verified its manifest, and activated after
 a file-only NPU synthesis proof. `setup check --json` passed the config,
 backend, model, voice, runtime, device, and engine checks. The normal app paths
-then generated [af_heart benchmark audio](samples/app-benchmark-af_heart.wav)
-(76,200 frames, 3.175 s; 2.71 s synthesis) and
-[am_michael request-worker audio](samples/app-say-am_michael.wav)
-(106,200 frames, 4.425 s; 2.64 s synthesis). Both are finite, non-silent
-24 kHz mono WAVs. File hashes and the complete check list are in
+then generated af_heart benchmark audio (76,200 frames, 3.175 s; 2.71 s
+synthesis) and am_michael request-worker audio (106,200 frames, 4.425 s;
+2.64 s synthesis). Both are finite, non-silent 24 kHz mono WAVs. File hashes
+and the complete check list are in
 [`integration.json`](integration.json).
 
 An Omawake 0.1.0 candidate loaded the existing Whisper Base.en INT8 model

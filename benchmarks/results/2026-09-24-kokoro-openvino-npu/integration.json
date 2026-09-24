@@ -16,16 +16,16 @@
   ],
   "samples": [
     {
-      "file": "samples/app-benchmark-af_heart.wav",
-      "sha256": "b3caa040f5455e4b6f9e395ef392672bb5280724704a4de783b47197ea509fb0",
+      "voice": "af_heart",
+      "wav_sha256": "b3caa040f5455e4b6f9e395ef392672bb5280724704a4de783b47197ea509fb0",
       "sample_rate": 24000,
       "channels": 1,
       "frames": 76200,
       "rms": 0.05158
     },
     {
-      "file": "samples/app-say-am_michael.wav",
-      "sha256": "4a16499dbd60e46bf3f27c790e6762994c50d9a46de9d996b62e8c1d446cc03c",
+      "voice": "am_michael",
+      "wav_sha256": "4a16499dbd60e46bf3f27c790e6762994c50d9a46de9d996b62e8c1d446cc03c",
       "sample_rate": 24000,
       "channels": 1,
       "frames": 106200,
