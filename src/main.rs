@@ -1877,7 +1877,7 @@ fn setup(command: Option<SetupCommand>, config_path: &Path, paths: &AppPaths) ->
     }
     let Some(command) = command else {
         if is_interactive_terminal() {
-            return guided_setup(
+            return guided_full_setup(
                 config_path,
                 paths,
                 &BuiltinModels,
@@ -2303,6 +2303,7 @@ fn is_interactive_terminal() -> bool {
     std::io::stdin().is_terminal() && std::io::stdout().is_terminal()
 }
 
+#[cfg(test)]
 fn guided_setup(
     config_path: &Path,
     paths: &AppPaths,

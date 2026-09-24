@@ -736,7 +736,7 @@ fn no_text_on_a_terminal_fails_immediately_while_piped_text_remains_supported() 
 
 #[cfg(unix)]
 #[test]
-fn guided_setup_accepts_arrow_keys_and_enter_in_a_real_pty() {
+fn guided_setup_cancels_before_install_in_a_real_pty() {
     assert!(
         Command::new("script").arg("--version").output().is_ok(),
         "the real-PTY setup regression test requires util-linux script(1)"
@@ -758,14 +758,10 @@ fn guided_setup_accepts_arrow_keys_and_enter_in_a_real_pty() {
         .spawn()
         .unwrap();
     let mut input = child.stdin.take().unwrap();
-    // Wait until the child enables raw mode, choose Runtime from the setup
-    // screen with an arrow and Enter, then cancel its runtime screen. This
-    // remains deterministic on CPU-only and accelerator hosts.
+    // The setup command opens the runtime step directly. Cancel before Apply.
     thread::sleep(Duration::from_millis(750));
-    input.write_all(b"\x1b[B\r").unwrap();
+    input.write_all(b"q").unwrap();
     input.flush().unwrap();
-    thread::sleep(Duration::from_millis(150));
-    let _ = input.write_all(b"q");
     drop(input);
     let deadline = Instant::now() + Duration::from_secs(5);
     while child.try_wait().unwrap().is_none() {
@@ -777,7 +773,6 @@ fn guided_setup_accepts_arrow_keys_and_enter_in_a_real_pty() {
     }
     let output = child.wait_with_output().unwrap();
     let terminal = stdout(&output);
-    assert!(terminal.contains("Omaspeak setup"));
     assert!(terminal.contains("Omaspeak runtime"));
     assert!(!root.join("config/omaspeak/config.toml").exists());
 }
