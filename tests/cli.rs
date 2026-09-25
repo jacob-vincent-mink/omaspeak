@@ -754,6 +754,10 @@ fn run_setup_pty(root: &Path, keys: &[&[u8]]) -> (std::process::ExitStatus, Stri
         .env("XDG_RUNTIME_DIR", root.join("run"))
         .env("TERM", "xterm-256color")
         .env("OMASPEAK_LIBRARY_PATH", root.join("missing-runtime"))
+        .env(
+            "OMASPEAK_OPENVINO_LIBRARY",
+            root.join("missing-openvino.so"),
+        )
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -827,6 +831,45 @@ fn setup_customize_reaches_accept_then_cancels_without_installing() {
     assert!(status.success(), "{terminal}");
     assert!(terminal.contains("✓ Output"), "{terminal}");
     assert!(terminal.contains("Setup cancelled"), "{terminal}");
+    assert!(!root.join("config/omaspeak/config.toml").exists());
+    assert!(!root.join("data/omaspeak").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn setup_customize_can_review_cpu_kokoro_without_license_or_install() {
+    let root = sandbox();
+    let (status, terminal) = run_setup_pty(
+        &root,
+        &[
+            b"\x1b[C", b"\r", b"", b"", b"\x1b[H", b" ", b"\r", b" ", b"\r", b"\x1b[B", b" ",
+            b"\r", b" ", b"\r", b" ", b"\r", b"", b"q",
+        ],
+    );
+    assert!(status.success(), "{terminal}");
+    assert!(terminal.contains("Kokoro"), "{terminal}");
+    assert!(terminal.contains("✓ Output"), "{terminal}");
+    assert!(terminal.contains("Setup cancelled"), "{terminal}");
+    assert!(!root.join("config/omaspeak/config.toml").exists());
+    assert!(!root.join("data/omaspeak").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn setup_customize_accept_rejects_missing_provider_before_download() {
+    let root = sandbox();
+    let (status, terminal) = run_setup_pty(
+        &root,
+        &[
+            b"\x1b[C", b"\r", b"", b"", b" ", b"\r", b" ", b"\r", b" ", b"\r", b" ", b"\r", b" ",
+            b"\r", b" ", b"\r",
+        ],
+    );
+    assert!(!status.success(), "{terminal}");
+    assert!(
+        terminal.contains("required OpenVINO C library missing"),
+        "{terminal}"
+    );
     assert!(!root.join("config/omaspeak/config.toml").exists());
     assert!(!root.join("data/omaspeak").exists());
 }
