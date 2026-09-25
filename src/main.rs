@@ -2288,7 +2288,7 @@ fn apply_runtime_selection_with_provider_probe(
         save_and_reload_active(candidate.clone(), config_path, paths)?;
     }
     let next = (!model_installed).then_some(
-        "provider ABI is valid; run `omaspeak setup` and choose Full setup, or install a compatible model to complete the model-backed provider proof",
+        "provider ABI is valid; run `omaspeak setup` or install a compatible model to complete the model-backed provider proof",
     );
     println!(
         "{}",
@@ -2301,55 +2301,6 @@ fn apply_runtime_selection_with_provider_probe(
 
 fn is_interactive_terminal() -> bool {
     std::io::stdin().is_terminal() && std::io::stdout().is_terminal()
-}
-
-#[cfg(test)]
-fn guided_setup(
-    config_path: &Path,
-    paths: &AppPaths,
-    operations: &impl ModelSetupOperations,
-    selector: &mut impl SetupSelector,
-) -> Result<()> {
-    let actions = [
-        MenuItem::available(
-            "Full setup",
-            "Choose a runtime, device, and model, then install the desktop launcher. This never installs or starts a service; an active daemon restarts after Apply.",
-        ),
-        MenuItem::available(
-            "Runtime",
-            "Choose and save an inference runtime and device.",
-        ),
-        MenuItem::available(
-            "Model",
-            "Browse, download, verify, and activate a catalog model.",
-        ),
-        MenuItem::available(
-            "Check",
-            "Check the current model, runtime, audio, launcher, and optional service.",
-        ),
-        MenuItem::available(
-            "Audio",
-            "Select or test the output device without loading a model.",
-        ),
-    ];
-    let Some(selected) = selector.select(
-        "Omaspeak setup",
-        "Choose the part of Omaspeak you want to configure.",
-        &actions,
-        0,
-    )?
-    else {
-        println!("Setup cancelled.");
-        return Ok(());
-    };
-    match selected {
-        0 => guided_full_setup(config_path, paths, operations, selector),
-        1 => guided_runtime(config_path, paths, selector).map(|_| ()),
-        2 => guided_model(config_path, paths, operations, selector).map(|_| ()),
-        3 => app_setup::print_checks(config_path, paths, false),
-        4 => setup_audio(config_path, paths, None, false, false),
-        _ => bail!("interactive setup returned an invalid choice"),
-    }
 }
 
 fn guided_full_setup(
@@ -2505,7 +2456,7 @@ fn guided_runtime(
             });
         if !compatible {
             bail!(
-                "model {} is not compatible with direct OpenVINO on {}; run `omaspeak setup` and choose Full setup to select a compatible Supertonic model",
+                "model {} is not compatible with direct OpenVINO on {}; run `omaspeak setup` to select a compatible Supertonic model",
                 config.model.name,
                 selection.device
             );

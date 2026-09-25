@@ -2401,43 +2401,6 @@ fn guided_flows_handle_back_without_mutating_configuration() {
 }
 
 #[test]
-fn top_level_guide_routes_every_choice_and_rejects_invalid_selection() {
-    let root = sandbox();
-    let paths = paths(&root);
-    let operations = FakeModelOperations { installed: false };
-
-    let mut selector = ScriptedSelector::new([None]);
-    guided_setup(&paths.config_file, &paths, &operations, &mut selector).unwrap();
-    assert_eq!(
-        selector.calls[0]
-            .1
-            .iter()
-            .map(|item| item.label.as_str())
-            .collect::<Vec<_>>(),
-        ["Full setup", "Runtime", "Model", "Check", "Audio"]
-    );
-
-    for selections in [
-        vec![Some(0), None],
-        vec![Some(1), None],
-        vec![Some(2), None],
-    ] {
-        let mut selector = ScriptedSelector::new(selections);
-        guided_setup(&paths.config_file, &paths, &operations, &mut selector).unwrap();
-    }
-
-    let mut selector = ScriptedSelector::new([Some(3)]);
-    assert!(guided_setup(&paths.config_file, &paths, &operations, &mut selector).is_err());
-    let mut selector = ScriptedSelector::new([Some(99)]);
-    assert!(
-        guided_setup(&paths.config_file, &paths, &operations, &mut selector)
-            .unwrap_err()
-            .to_string()
-            .contains("invalid choice")
-    );
-}
-
-#[test]
 fn runtime_catalog_covers_each_device_matrix_and_back_at_device_picker() {
     assert_eq!(setup_path_list(&[]), "none");
     assert_eq!(
@@ -3311,7 +3274,9 @@ fn catalog_status_matrix_and_guided_model_cancellations_use_existing_paths() {
             .is_none()
     );
 
-    assert!(guided_setup(&paths.config_file, &paths, &operations, &mut ErrorSelector).is_err());
+    assert!(
+        guided_full_setup(&paths.config_file, &paths, &operations, &mut ErrorSelector).is_err()
+    );
     assert!(
         choose_model(
             &paths.config_file,
