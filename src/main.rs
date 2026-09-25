@@ -2014,6 +2014,53 @@ fn apply_recommended_plan(
     Ok(true)
 }
 
+#[derive(Debug, Eq, PartialEq)]
+enum SetupIntent {
+    Recommended,
+    Customize,
+    Cancel,
+}
+
+fn choose_setup_intent(
+    plan: &RecommendedSetupPlan,
+    mut select: impl FnMut(&str, &str, &[MenuItem; 2]) -> Result<Option<usize>>,
+) -> Result<SetupIntent> {
+    let items = [
+        if plan.provider_detected {
+            MenuItem::available("Use recommended settings", "Continue to the final review")
+        } else {
+            MenuItem::unavailable(
+                "Use recommended settings",
+                "Provider missing; choose Customize",
+            )
+        },
+        MenuItem::available("Customize", "Choose runtime, model, voice, and output"),
+    ];
+    loop {
+        match select("Select setup", &plan.summary, &items)? {
+            Some(0) if plan.provider_detected => {
+                let confirm = [
+                    MenuItem::available(
+                        "Accept setup",
+                        "Download and verify the model, then save settings",
+                    ),
+                    MenuItem::available(
+                        "Back",
+                        "Return to setup choices without changing anything",
+                    ),
+                ];
+                match select("Accept setup", &plan.summary, &confirm)? {
+                    Some(0) => return Ok(SetupIntent::Recommended),
+                    Some(1) | None => continue,
+                    _ => unreachable!(),
+                }
+            }
+            Some(1) => return Ok(SetupIntent::Customize),
+            _ => return Ok(SetupIntent::Cancel),
+        }
+    }
+}
+
 fn setup(command: Option<SetupCommand>, config_path: &Path, paths: &AppPaths) -> Result<()> {
     if let Some(error) = app_setup::config_recovery(config_path)? {
         eprintln!(
@@ -2023,71 +2070,23 @@ fn setup(command: Option<SetupCommand>, config_path: &Path, paths: &AppPaths) ->
     let Some(command) = command else {
         if is_interactive_terminal() {
             let mut selector = TerminalSetupSelector;
-            loop {
-                let plan = recommended_setup_plan(config_path)?;
-                let items = [
-                    if plan.provider_detected {
-                        MenuItem::available(
-                            "Use recommended settings",
-                            "Continue to the final review",
-                        )
-                    } else {
-                        MenuItem::unavailable(
-                            "Use recommended settings",
-                            "Provider missing; choose Customize",
-                        )
-                    },
-                    MenuItem::available("Customize", "Choose runtime, model, voice, and output"),
-                ];
-                match app_setup::wizard::select_choice("Select setup", &plan.summary, &items)? {
-                    Some(0) => {
-                        let confirm = [
-                            MenuItem::available(
-                                "Accept setup",
-                                "Download and verify the model, then save settings",
-                            ),
-                            MenuItem::available(
-                                "Back",
-                                "Return to setup choices without changing anything",
-                            ),
-                        ];
-                        match app_setup::wizard::select_choice(
-                            "Accept setup",
-                            &plan.summary,
-                            &confirm,
-                        )? {
-                            Some(0) => {
-                                let applied = apply_recommended_plan(
-                                    plan,
-                                    config_path,
-                                    paths,
-                                    None,
-                                    true,
-                                    &mut selector,
-                                )?;
-                                if applied {
-                                    println!("Setup complete.");
-                                }
-                                return Ok(());
-                            }
-                            Some(1) | None => continue,
-                            _ => unreachable!(),
-                        }
+            let plan = recommended_setup_plan(config_path)?;
+            return match choose_setup_intent(&plan, app_setup::wizard::select_choice)? {
+                SetupIntent::Recommended => {
+                    if apply_recommended_plan(plan, config_path, paths, None, true, &mut selector)?
+                    {
+                        println!("Setup complete.");
                     }
-                    Some(1) => {
-                        return guided_full_setup(
-                            config_path,
-                            paths,
-                            &BuiltinModels,
-                            &mut selector,
-                        );
-                    }
-                    _ => {
-                        println!("Setup cancelled.");
-                        return Ok(());
-                    }
+                    Ok(())
                 }
-            }
+                SetupIntent::Customize => {
+                    guided_full_setup(config_path, paths, &BuiltinModels, &mut selector)
+                }
+                SetupIntent::Cancel => {
+                    println!("Setup cancelled.");
+                    Ok(())
+                }
+            };
         }
         eprintln!(
             "Run `omaspeak setup` in a terminal for guided setup, or use `omaspeak setup all --accept-license OpenRAIL-M` for an unattended install."

@@ -4704,6 +4704,200 @@ fn recommended_setup_requires_license_before_installing() {
 }
 
 #[test]
+fn recommended_setup_plan_displays_system_choices_without_writing_config() {
+    let root = sandbox();
+    let app_paths = paths(&root);
+    let plan = recommended_setup_plan(&app_paths.config_file).unwrap();
+    assert!(plan.summary.contains("Runtime:"));
+    assert!(plan.summary.contains("Model:"));
+    assert!(plan.summary.contains("Voice:"));
+    assert!(plan.summary.contains("Output:"));
+    assert!(plan.summary.contains("Service unit: unchanged"));
+    assert_eq!(plan.candidate.model.name, plan.model.id);
+    assert!(!app_paths.config_file.exists());
+    assert!(!app_paths.data_dir.exists());
+}
+
+#[test]
+fn recommended_menu_requires_final_accept_and_back_returns_to_selection() {
+    let model = omaspeak::catalog::default_model("audiocpp", Runtime::Default, "cpu").unwrap();
+    let plan = RecommendedSetupPlan {
+        candidate: Config::default(),
+        model,
+        provider_detected: true,
+        summary: "Model: Supertonic".into(),
+    };
+    let mut choices = VecDeque::from([Some(0), Some(1), Some(0), Some(0)]);
+    let mut titles = Vec::new();
+    let intent = choose_setup_intent(&plan, |title, summary, items| {
+        titles.push(title.to_owned());
+        assert_eq!(summary, "Model: Supertonic");
+        assert!(items[0].enabled);
+        Ok(choices.pop_front().unwrap())
+    })
+    .unwrap();
+    assert_eq!(intent, SetupIntent::Recommended);
+    assert_eq!(
+        titles,
+        [
+            "Select setup",
+            "Accept setup",
+            "Select setup",
+            "Accept setup"
+        ]
+    );
+    assert!(choices.is_empty());
+}
+
+#[test]
+fn recommended_menu_customize_and_cancel_need_no_apply() {
+    let model = omaspeak::catalog::default_model("audiocpp", Runtime::Default, "cpu").unwrap();
+    let plan = RecommendedSetupPlan {
+        candidate: Config::default(),
+        model,
+        provider_detected: false,
+        summary: String::new(),
+    };
+    assert_eq!(
+        choose_setup_intent(&plan, |_, _, items| {
+            assert!(!items[0].enabled);
+            Ok(Some(1))
+        })
+        .unwrap(),
+        SetupIntent::Customize
+    );
+    assert_eq!(
+        choose_setup_intent(&plan, |_, _, _| Ok(None)).unwrap(),
+        SetupIntent::Cancel
+    );
+    assert_eq!(
+        choose_setup_intent(&plan, |_, _, _| Ok(Some(0))).unwrap(),
+        SetupIntent::Cancel
+    );
+}
+
+#[test]
+fn recommended_setup_rejects_missing_provider_and_wrong_license_before_install() {
+    let root = sandbox();
+    let app_paths = paths(&root);
+    let model = omaspeak::catalog::default_model("audiocpp", Runtime::Default, "cpu").unwrap();
+    let make_plan = |provider_detected| RecommendedSetupPlan {
+        candidate: Config::default(),
+        model,
+        provider_detected,
+        summary: String::new(),
+    };
+    let mut selector = ScriptedSelector::new([]);
+    let missing = apply_recommended_plan(
+        make_plan(false),
+        &app_paths.config_file,
+        &app_paths,
+        Some(model.license),
+        false,
+        &mut selector,
+    )
+    .unwrap_err();
+    assert!(missing.to_string().contains("provider is missing"));
+    let wrong = apply_recommended_plan(
+        make_plan(true),
+        &app_paths.config_file,
+        &app_paths,
+        Some("wrong-license"),
+        false,
+        &mut selector,
+    )
+    .unwrap_err();
+    assert!(wrong.to_string().contains("--accept-license OpenRAIL-M"));
+    assert!(!app_paths.config_file.exists());
+    assert!(!app_paths.data_dir.exists());
+}
+
+#[test]
+fn recommended_command_rejects_a_subcommand_before_touching_config() {
+    let root = sandbox();
+    let app_paths = paths(&root);
+    let cli = Cli::try_parse_from(["omaspeak", "setup", "--recommended", "check"]).unwrap();
+    let error = run_with_paths(cli, app_paths.clone()).unwrap_err();
+    assert!(error.to_string().contains("cannot be combined"));
+    assert!(!app_paths.config_file.exists());
+    assert!(!app_paths.data_dir.exists());
+}
+
+#[test]
+fn recommended_command_without_license_stops_before_install() {
+    let root = sandbox();
+    let app_paths = paths(&root);
+    let error = apply_recommended_setup(&app_paths.config_file, &app_paths, None).unwrap_err();
+    let message = error.to_string();
+    assert!(
+        message.contains("provider is missing") || message.contains("--accept-license OpenRAIL-M")
+    );
+    assert!(!app_paths.config_file.exists());
+    assert!(!app_paths.data_dir.exists());
+}
+
+#[test]
+fn recommended_apply_validates_runtime_after_license_choice_and_before_install() {
+    let root = sandbox();
+    let app_paths = paths(&root);
+    let make_plan = |model: &'static omaspeak::catalog::ModelSpec| {
+        let mut candidate = Config::default();
+        candidate.backend.kind = model.backend.into();
+        candidate.backend.runtime = Runtime::Openvino;
+        candidate.backend.device = "npu".into();
+        model.activate(&mut candidate);
+        candidate.backend.library_dirs = vec![PathBuf::from("relative-invalid-runtime")];
+        RecommendedSetupPlan {
+            candidate,
+            model,
+            provider_detected: true,
+            summary: String::new(),
+        }
+    };
+    let supertonic = omaspeak::catalog::model(omaspeak::catalog::OPENVINO_MODEL_ID).unwrap();
+    let mut noninteractive = ScriptedSelector::new([]);
+    assert!(
+        apply_recommended_plan(
+            make_plan(supertonic),
+            &app_paths.config_file,
+            &app_paths,
+            Some(supertonic.license),
+            false,
+            &mut noninteractive
+        )
+        .is_err()
+    );
+    let mut interactive = ScriptedSelector::new([Some(0)]);
+    assert!(
+        apply_recommended_plan(
+            make_plan(supertonic),
+            &app_paths.config_file,
+            &app_paths,
+            None,
+            true,
+            &mut interactive
+        )
+        .is_err()
+    );
+    assert_eq!(interactive.calls[0].0, "Model license");
+    let kokoro = omaspeak::catalog::model(omaspeak::catalog::KOKORO_OPENVINO_MODEL_ID).unwrap();
+    assert!(!kokoro.requires_acceptance);
+    assert!(
+        apply_recommended_plan(
+            make_plan(kokoro),
+            &app_paths.config_file,
+            &app_paths,
+            None,
+            false,
+            &mut noninteractive
+        )
+        .is_err()
+    );
+    assert!(!app_paths.config_file.exists());
+    assert!(!app_paths.data_dir.exists());
+}
+
+#[test]
 fn cancelling_recommended_model_license_does_not_report_an_apply() {
     let root = sandbox();
     let app_paths = paths(&root);

@@ -30,6 +30,60 @@ fn horizontal_setup_choice_requires_a_direction_before_enter() {
 }
 
 #[test]
+fn horizontal_setup_choice_skips_unavailable_option_and_can_go_back() {
+    let items = [
+        MenuItem::unavailable("Recommended", "Provider missing"),
+        MenuItem::available("Customize", "Select a provider"),
+    ];
+    let mut keys = std::collections::VecDeque::from([
+        KeyCode::Left,
+        KeyCode::Enter,
+        KeyCode::Right,
+        KeyCode::Enter,
+    ]);
+    let mut output = Vec::new();
+    let choice = run_choice(
+        &mut output,
+        "Select setup",
+        "Model: Supertonic",
+        &items,
+        || {
+            Ok(Event::Key(KeyEvent::new(
+                keys.pop_front().unwrap(),
+                KeyModifiers::NONE,
+            )))
+        },
+    )
+    .unwrap();
+    assert_eq!(choice, Some(1));
+    assert!(keys.is_empty());
+    assert!(String::from_utf8_lossy(&output).contains("unavailable: Recommended"));
+
+    let mut keys = std::collections::VecDeque::from([KeyCode::Esc]);
+    assert_eq!(
+        run_choice(&mut Vec::new(), "Accept setup", "", &items, || {
+            Ok(Event::Key(KeyEvent::new(
+                keys.pop_front().unwrap(),
+                KeyModifiers::NONE,
+            )))
+        })
+        .unwrap(),
+        None
+    );
+    assert!(
+        select_choice(
+            "Select setup",
+            "",
+            &[
+                MenuItem::unavailable("A", ""),
+                MenuItem::unavailable("B", "")
+            ]
+        )
+        .is_err()
+    );
+}
+
+#[test]
 fn rows_wrap_unicode_at_narrow_and_normal_widths() {
     use unicode_width::UnicodeWidthStr;
     for width in [24, 80] {
