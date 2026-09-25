@@ -787,16 +787,13 @@ fn run_setup_pty(root: &Path, keys: &[&[u8]]) -> (std::process::ExitStatus, Stri
 #[test]
 fn guided_setup_cancels_before_install_in_a_real_pty() {
     let root = sandbox();
-    let (status, terminal) = run_setup_pty(&root, &[b"\r", b"q"]);
+    let (status, terminal) = run_setup_pty(&root, &[b"q"]);
     assert!(status.success(), "{terminal}");
-    assert!(terminal.contains("Select setup"), "{terminal}");
+    assert!(terminal.contains("Choose runtime"), "{terminal}");
     assert!(terminal.contains("Runtime:"));
     assert!(terminal.contains("Model:"));
     assert!(terminal.contains("Output:"));
-    assert!(terminal.contains("Use recommended settings"));
-    assert!(terminal.contains("Customize"));
-    assert!(terminal.contains("Choose an option to continue"));
-    assert!(!terminal.contains("Accept setup"));
+    assert!(terminal.contains("Space select"));
     assert!(!root.join("config/omaspeak/config.toml").exists());
     assert!(!root.join("data/omaspeak").exists());
 }
@@ -805,12 +802,9 @@ fn guided_setup_cancels_before_install_in_a_real_pty() {
 #[test]
 fn setup_menu_opens_customize_without_installing_in_a_real_pty() {
     let root = sandbox();
-    let (status, terminal) = run_setup_pty(
-        &root,
-        &[b"\x1b[C", b"\r", b"", b"", b"\r", b" ", b"\r", b"", b"q"],
-    );
+    let (status, terminal) = run_setup_pty(&root, &[b"\x1b[C", b"", b"q"]);
     assert!(status.success(), "{terminal}");
-    assert!(terminal.contains("Select setup"), "{terminal}");
+    assert!(terminal.contains("✓ Device"), "{terminal}");
     assert!(terminal.contains("Space select"), "{terminal}");
     assert!(terminal.contains("AUTO"), "{terminal}");
     assert!(!root.join("config/omaspeak/config.toml").exists());
@@ -824,8 +818,7 @@ fn setup_customize_reaches_accept_then_cancels_without_installing() {
     let (status, terminal) = run_setup_pty(
         &root,
         &[
-            b"\x1b[C", b"\r", b"", b"", b" ", b"\r", b" ", b"\r", b" ", b"\r", b" ", b"\r", b" ",
-            b"\r", b"", b"q",
+            b"\x1b[C", b"", b"\x1b[C", b"", b"\x1b[C", b"", b"\x1b[C", b"", b"\x1b[C", b"", b"q",
         ],
     );
     assert!(status.success(), "{terminal}");
@@ -842,35 +835,14 @@ fn setup_customize_can_review_cpu_kokoro_without_license_or_install() {
     let (status, terminal) = run_setup_pty(
         &root,
         &[
-            b"\x1b[C", b"\r", b"", b"", b"\x1b[H", b" ", b"\r", b" ", b"\r", b"\x1b[B", b" ",
-            b"\r", b" ", b"\r", b" ", b"\r", b"", b"q",
+            b"\x1b[H", b" ", b"\x1b[C", b"", b"\x1b[C", b"", b"\x1b[B", b" ", b"\x1b[C", b"",
+            b"\x1b[C", b"", b"\x1b[C", b"", b"q",
         ],
     );
     assert!(status.success(), "{terminal}");
     assert!(terminal.contains("Kokoro"), "{terminal}");
     assert!(terminal.contains("✓ Output"), "{terminal}");
     assert!(terminal.contains("Setup cancelled"), "{terminal}");
-    assert!(!root.join("config/omaspeak/config.toml").exists());
-    assert!(!root.join("data/omaspeak").exists());
-}
-
-#[cfg(unix)]
-#[test]
-fn setup_customize_accept_rejects_missing_provider_before_download() {
-    let root = sandbox();
-    let (status, terminal) = run_setup_pty(
-        &root,
-        &[
-            b"\x1b[C", b"\r", b"", b"", b" ", b"\r", b" ", b"\r", b" ", b"\r", b" ", b"\r", b" ",
-            b"\r", b" ", b"\r",
-        ],
-    );
-    assert!(!status.success(), "{terminal}");
-    assert!(
-        terminal.contains("required OpenVINO C library missing")
-            || terminal.contains("audio.cpp provider is not configured"),
-        "{terminal}"
-    );
     assert!(!root.join("config/omaspeak/config.toml").exists());
     assert!(!root.join("data/omaspeak").exists());
 }

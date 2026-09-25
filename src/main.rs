@@ -2018,53 +2018,6 @@ fn apply_recommended_plan(
     Ok(true)
 }
 
-#[derive(Debug, Eq, PartialEq)]
-enum SetupIntent {
-    Recommended,
-    Customize,
-    Cancel,
-}
-
-fn choose_setup_intent(
-    plan: &RecommendedSetupPlan,
-    mut select: impl FnMut(&str, &str, &[MenuItem; 2]) -> Result<Option<usize>>,
-) -> Result<SetupIntent> {
-    let items = [
-        if plan.provider_detected {
-            MenuItem::available("Use recommended settings", "Continue to the final review")
-        } else {
-            MenuItem::unavailable(
-                "Use recommended settings",
-                "Provider missing; choose Customize",
-            )
-        },
-        MenuItem::available("Customize", "Choose runtime, model, voice, and output"),
-    ];
-    loop {
-        match select("Select setup", &plan.summary, &items)? {
-            Some(0) if plan.provider_detected => {
-                let confirm = [
-                    MenuItem::available(
-                        "Accept setup",
-                        "Download and verify the model, then save settings",
-                    ),
-                    MenuItem::available(
-                        "Back",
-                        "Return to setup choices without changing anything",
-                    ),
-                ];
-                match select("Accept setup", &plan.summary, &confirm)? {
-                    Some(0) => return Ok(SetupIntent::Recommended),
-                    Some(1) | None => continue,
-                    _ => unreachable!(),
-                }
-            }
-            Some(1) => return Ok(SetupIntent::Customize),
-            _ => return Ok(SetupIntent::Cancel),
-        }
-    }
-}
-
 fn setup(command: Option<SetupCommand>, config_path: &Path, paths: &AppPaths) -> Result<()> {
     if let Some(error) = app_setup::config_recovery(config_path)? {
         eprintln!(
@@ -2073,22 +2026,7 @@ fn setup(command: Option<SetupCommand>, config_path: &Path, paths: &AppPaths) ->
     }
     let Some(command) = command else {
         if is_interactive_terminal() {
-            let mut selector = TerminalSetupSelector;
-            let plan = recommended_setup_plan(config_path)?;
-            return match choose_setup_intent(&plan, app_setup::wizard::select_choice)? {
-                SetupIntent::Recommended => {
-                    if apply_recommended_plan(plan, config_path, paths, None, true, &mut selector)?
-                    {
-                        println!("Setup complete.");
-                    }
-                    Ok(())
-                }
-                SetupIntent::Customize => guided_tabbed_setup(config_path, paths),
-                SetupIntent::Cancel => {
-                    println!("Setup cancelled.");
-                    Ok(())
-                }
-            };
+            return guided_tabbed_setup(config_path, paths);
         }
         eprintln!(
             "Run `omaspeak setup` in a terminal for guided setup, or use `omaspeak setup all --accept-license OpenRAIL-M` for an unattended install."
@@ -2510,6 +2448,7 @@ fn is_interactive_terminal() -> bool {
 }
 
 fn guided_tabbed_setup(config_path: &Path, paths: &AppPaths) -> Result<()> {
+    let plan = recommended_setup_plan(config_path)?;
     let current = app_setup::load_config(config_path)?;
     let locations = omaspeak::runtime::discover(&current.backend, config_path);
     let providers = omaspeak::hardware::provider_availability(&current.backend, &locations);
@@ -2578,7 +2517,7 @@ fn guided_tabbed_setup(config_path: &Path, paths: &AppPaths) -> Result<()> {
         .collect::<Vec<_>>();
     let models = omaspeak::catalog::models();
     let picks = app_setup::tabbed::run(
-        &["Runtime", "Device", "Model", "Voice", "Output", "Accept"],
+        &["Runtime", "Device", "Model", "Voice", "Output", "Apply"],
         |tab, picks| {
             let runtime = runtimes[picks[0].unwrap_or(preferred_runtime)];
             let devices = device_items(runtime);
@@ -2591,7 +2530,7 @@ fn guided_tabbed_setup(config_path: &Path, paths: &AppPaths) -> Result<()> {
             Ok(match tab {
                 0 => app_setup::tabbed::Page::new(
                     "Choose runtime",
-                    recommendation.detail.clone(),
+                    plan.summary.clone(),
                     runtime_items.clone(),
                     preferred_runtime,
                 ),
@@ -2684,9 +2623,9 @@ fn guided_tabbed_setup(config_path: &Path, paths: &AppPaths) -> Result<()> {
                         String::new()
                     };
                     app_setup::tabbed::Page::new(
-                        "Accept setup",
+                        "Review and apply",
                         format!(
-                            "Runtime: {} · Device: {}\nModel: {} · Voice: {}\nOutput: {}{}\nDownloads and compilation start after Accept.",
+                            "Runtime: {} · Device: {}\nModel: {} · Voice: {}\nOutput: {}{}\nDownloads and compilation start after Apply.",
                             runtime.name(),
                             device,
                             model.display_name,
@@ -2695,7 +2634,7 @@ fn guided_tabbed_setup(config_path: &Path, paths: &AppPaths) -> Result<()> {
                             license
                         ),
                         vec![MenuItem::available(
-                            "Accept and apply",
+                            "Apply setup",
                             "Install and verify the model, then save settings",
                         )],
                         0,
@@ -2732,7 +2671,9 @@ fn guided_tabbed_setup(config_path: &Path, paths: &AppPaths) -> Result<()> {
         app_setup::systemd::reload_if_was_active,
         |config, paths| app_setup::print_checks(config, paths, false),
         app_setup::print_checks_event,
-    )
+    )?;
+    println!("Setup complete.");
+    Ok(())
 }
 
 #[cfg(test)]

@@ -24,14 +24,12 @@ Download the archive for your architecture from Releases, extract it, and put
 omaspeak setup
 ```
 
-The first page shows the detected hardware recommendation, runtime, model,
-speaker, and output device. Press Left or Right to select **Use recommended
-settings** or **Customize**, then Enter to continue. A separate **Accept setup**
-page starts model download and any NPU cache compilation only after acceptance.
-Customize shows Runtime, Device, Model, Voice, Output, and Accept tabs. Use
-Up/Down to highlight an option, Space to select it, Enter to continue, and
-Left/Right to revisit completed steps. Changing an earlier choice clears
-dependent selections. Esc or `q` cancels without applying.
+Setup opens one menu with Runtime, Device, Model, Voice, Output, and Apply tabs.
+The detected recommendation is selected by default. Use Left/Right to move
+between tabs, Up/Down to highlight another option, and Space to select it.
+Enter advances to the next tab or applies from the final review. Changing an
+earlier choice updates dependent defaults. Model download and NPU cache
+compilation start only after Apply. Esc or `q` cancels without applying.
 The same recommendation is available
 as `omaspeak setup --recommended --accept-license OpenRAIL-M` when the selected
 model requires that license and is not already installed. It detects accelerator hardware and considers CUDA GPU, Intel NPU,

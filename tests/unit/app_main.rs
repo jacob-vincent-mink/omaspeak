@@ -4719,64 +4719,6 @@ fn recommended_setup_plan_displays_system_choices_without_writing_config() {
 }
 
 #[test]
-fn recommended_menu_requires_final_accept_and_back_returns_to_selection() {
-    let model = omaspeak::catalog::default_model("audiocpp", Runtime::Default, "cpu").unwrap();
-    let plan = RecommendedSetupPlan {
-        candidate: Config::default(),
-        model,
-        provider_detected: true,
-        summary: "Model: Supertonic".into(),
-    };
-    let mut choices = VecDeque::from([Some(0), Some(1), Some(0), Some(0)]);
-    let mut titles = Vec::new();
-    let intent = choose_setup_intent(&plan, |title, summary, items| {
-        titles.push(title.to_owned());
-        assert_eq!(summary, "Model: Supertonic");
-        assert!(items[0].enabled);
-        Ok(choices.pop_front().unwrap())
-    })
-    .unwrap();
-    assert_eq!(intent, SetupIntent::Recommended);
-    assert_eq!(
-        titles,
-        [
-            "Select setup",
-            "Accept setup",
-            "Select setup",
-            "Accept setup"
-        ]
-    );
-    assert!(choices.is_empty());
-}
-
-#[test]
-fn recommended_menu_customize_and_cancel_need_no_apply() {
-    let model = omaspeak::catalog::default_model("audiocpp", Runtime::Default, "cpu").unwrap();
-    let plan = RecommendedSetupPlan {
-        candidate: Config::default(),
-        model,
-        provider_detected: false,
-        summary: String::new(),
-    };
-    assert_eq!(
-        choose_setup_intent(&plan, |_, _, items| {
-            assert!(!items[0].enabled);
-            Ok(Some(1))
-        })
-        .unwrap(),
-        SetupIntent::Customize
-    );
-    assert_eq!(
-        choose_setup_intent(&plan, |_, _, _| Ok(None)).unwrap(),
-        SetupIntent::Cancel
-    );
-    assert_eq!(
-        choose_setup_intent(&plan, |_, _, _| Ok(Some(0))).unwrap(),
-        SetupIntent::Cancel
-    );
-}
-
-#[test]
 fn recommended_setup_rejects_missing_provider_and_wrong_license_before_install() {
     let root = sandbox();
     let app_paths = paths(&root);
