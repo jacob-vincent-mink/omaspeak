@@ -2469,9 +2469,13 @@ fn only_engine_loading_commands_require_runtime_path_preparation() {
         no_play: true,
     })));
     assert!(!command_loads_engine(&TopCommand::Setup {
+        recommended: false,
+        accept_license: None,
         command: Some(SetupCommand::Check { json: true }),
     }));
     assert!(!command_loads_engine(&TopCommand::Setup {
+        recommended: false,
+        accept_license: None,
         command: Some(SetupCommand::Runtime {
             json: true,
             runtime: None,
@@ -2494,6 +2498,8 @@ fn only_engine_loading_commands_require_runtime_path_preparation() {
         },
     }));
     assert!(!command_loads_engine(&TopCommand::Setup {
+        recommended: false,
+        accept_license: None,
         command: Some(SetupCommand::All {
             model: Some("supertonic-3-openvino".into()),
             source: None,
@@ -3852,6 +3858,8 @@ fn top_level_dispatch_uses_injected_paths_for_safe_offline_commands() {
             Cli {
                 config: Some(app_paths.config_file.clone()),
                 command: TopCommand::Setup {
+                    recommended: false,
+                    accept_license: None,
                     command: Some(SetupCommand::Model {
                         list: !json,
                         json,
@@ -3958,7 +3966,9 @@ fn top_level_dispatch_uses_injected_paths_for_safe_offline_commands() {
         invoke(
             &mut injected,
             TopCommand::Setup {
-                command: Some(SetupCommand::Check { json: true })
+                command: Some(SetupCommand::Check { json: true }),
+                recommended: false,
+                accept_license: None,
             }
         )
         .is_err()
@@ -4646,9 +4656,51 @@ fn runtime_switch_resolves_model_format_and_retains_voice_on_same_backend() {
     assert!(matches!(
         cli.command,
         TopCommand::Setup {
-            command: Some(SetupCommand::All { model: None, .. })
+            command: Some(SetupCommand::All { model: None, .. }),
+            ..
         }
     ));
+}
+
+#[test]
+fn setup_recommended_accepts_explicit_model_license() {
+    let cli = Cli::try_parse_from([
+        "omaspeak",
+        "setup",
+        "--recommended",
+        "--accept-license",
+        "OpenRAIL-M",
+    ])
+    .unwrap();
+    assert!(
+        matches!(cli.command, TopCommand::Setup { recommended: true, accept_license: Some(ref license), command: None } if license == "OpenRAIL-M")
+    );
+    assert!(Cli::try_parse_from(["omaspeak", "setup", "--accept-license", "OpenRAIL-M"]).is_err());
+}
+
+#[test]
+fn recommended_setup_requires_license_before_installing() {
+    let root = sandbox();
+    let app_paths = paths(&root);
+    let model = omaspeak::catalog::default_model("audiocpp", Runtime::Default, "cpu").unwrap();
+    assert!(model.requires_acceptance);
+    let plan = RecommendedSetupPlan {
+        candidate: Config::default(),
+        model,
+        provider_detected: true,
+        summary: String::new(),
+    };
+    let error = apply_recommended_plan(
+        plan,
+        &app_paths.config_file,
+        &app_paths,
+        None,
+        false,
+        &mut TerminalSetupSelector,
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("--accept-license OpenRAIL-M"));
+    assert!(!app_paths.config_file.exists());
 }
 
 #[test]

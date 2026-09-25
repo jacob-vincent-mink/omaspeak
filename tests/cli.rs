@@ -758,7 +758,7 @@ fn guided_setup_cancels_before_install_in_a_real_pty() {
         .spawn()
         .unwrap();
     let mut input = child.stdin.take().unwrap();
-    // The setup command opens the runtime step directly. Cancel before Apply.
+    // Cancel on the recommendation page before Apply.
     thread::sleep(Duration::from_millis(750));
     input.write_all(b"q").unwrap();
     input.flush().unwrap();
@@ -773,7 +773,12 @@ fn guided_setup_cancels_before_install_in_a_real_pty() {
     }
     let output = child.wait_with_output().unwrap();
     let terminal = stdout(&output);
-    assert!(terminal.contains("Omaspeak runtime"));
+    assert!(terminal.contains("Review recommended setup"));
+    assert!(terminal.contains("Runtime:"));
+    assert!(terminal.contains("Model:"));
+    assert!(terminal.contains("Output:"));
+    assert!(terminal.contains("Use recommended settings"));
+    assert!(terminal.contains("Customize"));
     assert!(!root.join("config/omaspeak/config.toml").exists());
 }
 

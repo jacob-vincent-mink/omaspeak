@@ -24,8 +24,11 @@ Download the archive for your architecture from Releases, extract it, and put
 omaspeak setup
 ```
 
-The guided terminal uses arrow keys and Enter to choose a runtime, model, and
-speaker. It detects accelerator hardware and considers CUDA GPU, Intel NPU,
+The first page shows the detected hardware recommendation, runtime, model,
+speaker, and output device. Choose **Use recommended settings** to apply it,
+or **Customize** to choose each setting. The same recommendation is available
+as `omaspeak setup --recommended --accept-license OpenRAIL-M` when the selected
+model requires that license and is not already installed. It detects accelerator hardware and considers CUDA GPU, Intel NPU,
 Intel GPU through OpenVINO, then a Vulkan-capable GPU. It recommends the first
 candidate with a complete provider, or the packaged CPU fallback. If no provider
 is present, it highlights the best hardware candidate and explains what is

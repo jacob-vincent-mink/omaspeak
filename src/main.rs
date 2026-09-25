@@ -18,7 +18,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context, Result, anyhow, bail, ensure};
 use clap::{Args, Parser, Subcommand};
 use omaspeak::backend::{
     BackendConfig, Fallback, Runtime, canonical_device, supported_capabilities,
@@ -108,6 +108,12 @@ enum TopCommand {
     },
     /// Configure runtimes and models through a guided terminal or scriptable commands.
     Setup {
+        /// Apply the detected hardware recommendation without prompts.
+        #[arg(long)]
+        recommended: bool,
+        /// Accept the recommended model's license when installation requires it.
+        #[arg(long, value_name = "LICENSE", requires = "recommended")]
+        accept_license: Option<String>,
         #[command(subcommand)]
         command: Option<SetupCommand>,
     },
@@ -579,7 +585,21 @@ fn run_with_paths_and_prepare(
         TopCommand::Stop => stop(paths),
         TopCommand::Voices { json } => voices(&config_path, paths, json),
         TopCommand::Config { command } => config_command(command, &config_path, paths),
-        TopCommand::Setup { command } => setup(command, &config_path, paths),
+        TopCommand::Setup {
+            command,
+            recommended,
+            accept_license,
+        } => {
+            if recommended {
+                ensure!(
+                    command.is_none(),
+                    "--recommended cannot be combined with a setup subcommand"
+                );
+                apply_recommended_setup(&config_path, paths, accept_license.as_deref())
+            } else {
+                setup(command, &config_path, paths)
+            }
+        }
     }
 }
 
@@ -1869,6 +1889,125 @@ fn human_schema_lines(schema: &Value) -> Result<Vec<String>> {
         .collect()
 }
 
+struct RecommendedSetupPlan {
+    candidate: Config,
+    model: &'static omaspeak::catalog::ModelSpec,
+    provider_detected: bool,
+    summary: String,
+}
+
+fn recommended_setup_plan(config_path: &Path) -> Result<RecommendedSetupPlan> {
+    let current = app_setup::load_config(config_path)?;
+    let locations = omaspeak::runtime::discover(&current.backend, config_path);
+    let providers = omaspeak::hardware::provider_availability(&current.backend, &locations);
+    let recommendation = omaspeak::hardware::recommend(&detected_setup_hardware(), providers);
+    let candidate = runtime_configuration_candidate(
+        config_path,
+        recommendation.runtime,
+        &recommendation.device,
+        None,
+        None,
+    )?;
+    let model = omaspeak::catalog::setup_model(&candidate)?;
+    let voice = model.voices.first().map_or("default", |voice| voice.name);
+    let summary = format!(
+        "Detected: {}\nRuntime: {} · Device: {}\nModel: {} · Voice: {}\nOutput: {}\nLicense: {}{}\nService unit: unchanged\n{}\n\nThe model and provider are verified before configuration is saved.",
+        recommendation.label,
+        recommendation.runtime.name(),
+        recommendation.device,
+        model.display_name,
+        voice,
+        candidate.audio.device,
+        model.license,
+        if model.requires_acceptance {
+            " (acceptance required for download)"
+        } else {
+            ""
+        },
+        recommendation.detail,
+    );
+    Ok(RecommendedSetupPlan {
+        candidate,
+        model,
+        provider_detected: recommendation.provider_detected,
+        summary,
+    })
+}
+
+fn apply_recommended_setup(
+    config_path: &Path,
+    paths: &AppPaths,
+    accept_license: Option<&str>,
+) -> Result<()> {
+    let mut selector = TerminalSetupSelector;
+    apply_recommended_plan(
+        recommended_setup_plan(config_path)?,
+        config_path,
+        paths,
+        accept_license,
+        false,
+        &mut selector,
+    )
+}
+
+fn apply_recommended_plan(
+    plan: RecommendedSetupPlan,
+    config_path: &Path,
+    paths: &AppPaths,
+    accept_license: Option<&str>,
+    prompt_license: bool,
+    selector: &mut impl SetupSelector,
+) -> Result<()> {
+    ensure!(
+        plan.provider_detected,
+        "recommended provider is missing; run `omaspeak setup` to customize its path"
+    );
+    let operations = BuiltinModels;
+    let installed = operations.verify(paths, plan.model).is_ok();
+    let accepted_license = if plan.model.requires_acceptance && !installed {
+        if let Some(license) = accept_license {
+            ensure!(
+                license == plan.model.license,
+                "recommended model {} requires --accept-license {}",
+                plan.model.id,
+                plan.model.license
+            );
+            Some(license)
+        } else if prompt_license {
+            if !confirm_model_license(plan.model, installed, selector)? {
+                println!("Setup cancelled; the model license was not accepted.");
+                return Ok(());
+            }
+            Some(plan.model.license)
+        } else {
+            bail!(
+                "recommended model {} requires --accept-license {}",
+                plan.model.id,
+                plan.model.license
+            );
+        }
+    } else {
+        accept_license
+    };
+    validate_runtime_configuration(&plan.candidate, config_path, false)?;
+    setup_all_with_config(
+        plan.candidate,
+        config_path,
+        paths,
+        &operations,
+        plan.model.id,
+        plan.model.voices.first().map(|voice| voice.id),
+        None,
+        accepted_license,
+        ProgressFormat::Human,
+        app_setup::menu::install,
+        app_setup::systemd::is_active,
+        app_setup::systemd::reload_if_was_active,
+        |config, paths| app_setup::print_checks(config, paths, false),
+        app_setup::print_checks_event,
+    )
+}
+
 fn setup(command: Option<SetupCommand>, config_path: &Path, paths: &AppPaths) -> Result<()> {
     if let Some(error) = app_setup::config_recovery(config_path)? {
         eprintln!(
@@ -1877,12 +2016,37 @@ fn setup(command: Option<SetupCommand>, config_path: &Path, paths: &AppPaths) ->
     }
     let Some(command) = command else {
         if is_interactive_terminal() {
-            return guided_full_setup(
-                config_path,
-                paths,
-                &BuiltinModels,
-                &mut TerminalSetupSelector,
-            );
+            let mut selector = TerminalSetupSelector;
+            let plan = recommended_setup_plan(config_path)?;
+            let items = [
+                if plan.provider_detected {
+                    MenuItem::available(
+                        "Use recommended settings",
+                        "Install the shown model and launcher, then verify synthesis",
+                    )
+                } else {
+                    MenuItem::unavailable(
+                        "Use recommended settings",
+                        "The recommended provider is missing; customize its path",
+                    )
+                },
+                MenuItem::available("Customize", "Choose runtime, model, voice, and output"),
+            ];
+            return match selector.select(
+                "Review recommended setup",
+                &plan.summary,
+                &items,
+                if plan.provider_detected { 0 } else { 1 },
+            )? {
+                Some(0) => {
+                    apply_recommended_plan(plan, config_path, paths, None, true, &mut selector)
+                }
+                Some(1) => guided_full_setup(config_path, paths, &BuiltinModels, &mut selector),
+                _ => {
+                    println!("Setup cancelled.");
+                    Ok(())
+                }
+            };
         }
         eprintln!(
             "Run `omaspeak setup` in a terminal for guided setup, or use `omaspeak setup all --accept-license OpenRAIL-M` for an unattended install."
