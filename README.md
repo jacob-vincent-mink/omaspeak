@@ -28,6 +28,8 @@ The first page shows the detected hardware recommendation, runtime, model,
 speaker, and output device. Press Left or Right to select **Use recommended
 settings** or **Customize**, then Enter to continue. A separate **Accept setup**
 page starts model download and any NPU cache compilation only after acceptance.
+Customize uses the same Left/Right choices for runtime, device, model, voice,
+and later steps; Enter does nothing until you choose on each page.
 The same recommendation is available
 as `omaspeak setup --recommended --accept-license OpenRAIL-M` when the selected
 model requires that license and is not already installed. It detects accelerator hardware and considers CUDA GPU, Intel NPU,
@@ -62,6 +64,10 @@ applicable, config, and launcher.
 Use `python3 scripts/verify-setup-tui.py --binary ~/.local/bin/omaspeak --cancel-before-accept`
 to confirm that backing out of the final page creates no config, model,
 launcher, or compiled cache files.
+Use `python3 scripts/verify-setup-tui.py --binary ~/.local/bin/omaspeak --customize`
+to navigate Customize through runtime and device, then cancel with no files changed.
+Add `--model-cache ~/.local/share/omaspeak/models/supertonic-3-openvino --customize-review`
+instead to navigate every Customize page through final Accept and cancel there.
 
 Browse the same runtime and model catalog without changing the machine:
 

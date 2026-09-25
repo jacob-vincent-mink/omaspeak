@@ -797,10 +797,12 @@ fn guided_setup_cancels_before_install_in_a_real_pty() {
 #[test]
 fn setup_menu_opens_customize_without_installing_in_a_real_pty() {
     let root = sandbox();
-    let (status, terminal) = run_setup_pty(&root, &[b"\x1b[C", b"\r", b"q"]);
+    let (status, terminal) =
+        run_setup_pty(&root, &[b"\x1b[C", b"\r", b"\r", b"\x1b[D", b"\r", b"q"]);
     assert!(status.success(), "{terminal}");
     assert!(terminal.contains("Select setup"), "{terminal}");
     assert!(terminal.contains("Omaspeak runtime"), "{terminal}");
+    assert!(terminal.contains("Omaspeak device"), "{terminal}");
     assert!(!root.join("config/omaspeak/config.toml").exists());
     assert!(!root.join("data/omaspeak").exists());
 }

@@ -1,4 +1,5 @@
 use super::*;
+use crossterm::event::KeyEvent;
 
 #[test]
 fn horizontal_setup_choice_requires_a_direction_before_enter() {
@@ -252,6 +253,102 @@ fn menu_renders_metadata_and_processes_arrow_enter_and_cancel() {
     );
 }
 
+#[test]
+fn customize_choices_require_direction_and_skip_disabled_options() {
+    let items = [
+        MenuItem::available("CPU", "Built in"),
+        MenuItem::unavailable("CUDA", "Unavailable in this build"),
+        MenuItem::available("OpenVINO", "Intel CPU, GPU, and NPU"),
+    ];
+    let mut events = VecDeque::from([
+        key(KeyCode::Enter),
+        key(KeyCode::Left),
+        key(KeyCode::Right),
+        key(KeyCode::Enter),
+    ]);
+    let mut output = Vec::new();
+    let selected = run_options(
+        &mut output,
+        "Runtime",
+        "Choose a runtime.",
+        &items,
+        0,
+        || Ok(events.pop_front().unwrap()),
+    )
+    .unwrap();
+    assert_eq!(selected, Some(2));
+    assert!(events.is_empty());
+    let rendered = String::from_utf8(output).unwrap();
+    assert!(rendered.contains("Choose an option to continue"));
+    assert!(rendered.contains("unavailable: CUDA"));
+    assert!(rendered.contains("Intel CPU, GPU, and NPU"));
+    assert_no_bare_line_feeds(rendered.as_bytes());
+
+    let mut events = VecDeque::from([key(KeyCode::Char('q'))]);
+    assert_eq!(
+        run_options(&mut Vec::new(), "x", "y", &items, 0, || {
+            Ok(events.pop_front().unwrap())
+        })
+        .unwrap(),
+        None
+    );
+}
+
+#[test]
+fn customize_choices_page_through_more_than_three_options() {
+    let items = (0..5)
+        .map(|index| MenuItem::available(format!("Choice {index}"), "detail"))
+        .collect::<Vec<_>>();
+    let mut events = VecDeque::from([
+        key(KeyCode::Enter),
+        key(KeyCode::Left),
+        key(KeyCode::Right),
+        key(KeyCode::Right),
+        key(KeyCode::Right),
+        key(KeyCode::Enter),
+    ]);
+    let mut output = Vec::new();
+    assert_eq!(
+        run_options(&mut output, "Model", "Choose a model", &items, 1, || {
+            Ok(events.pop_front().unwrap())
+        })
+        .unwrap(),
+        Some(4)
+    );
+    assert!(String::from_utf8_lossy(&output).contains("Options 3–5 of 5"));
+}
+
+#[test]
+fn customize_menu_handles_disabled_and_single_choices() {
+    let disabled = [MenuItem::unavailable("Unavailable", "Missing provider")];
+    assert!(
+        run_options(&mut Vec::new(), "Runtime", "", &disabled, 0, || {
+            Ok(key(KeyCode::Enter))
+        })
+        .is_err()
+    );
+    assert!(
+        run_options(&mut Vec::new(), "Runtime", "", &[], 0, || {
+            Ok(key(KeyCode::Enter))
+        })
+        .is_err()
+    );
+
+    let only = [MenuItem::available("CPU", "Packaged provider")];
+    let mut events = VecDeque::from([
+        key(KeyCode::Enter),
+        key(KeyCode::Right),
+        key(KeyCode::Enter),
+    ]);
+    assert_eq!(
+        run_options(&mut Vec::new(), "Runtime", "", &only, 99, || {
+            Ok(events.pop_front().unwrap())
+        })
+        .unwrap(),
+        Some(0)
+    );
+}
+
 fn plain_terminal_output(output: &[u8]) -> String {
     let mut text = String::new();
     let mut escape = false;
@@ -283,11 +380,12 @@ fn viewport_keeps_selection_visible_without_overflow_on_resize() {
     for (width, height) in [(24, 8), (80, 24), (12, 4), (4, 2), (1, 1)] {
         for selected in [0, 50, 99] {
             let mut output = Vec::new();
-            render_at_size(
+            render_choice_at_size(
                 &mut output,
                 "Choose a model",
                 "Navigate the installed and downloadable catalog.",
                 &items,
+                Some(selected),
                 selected,
                 width,
                 height,
@@ -337,6 +435,7 @@ fn voice_preview_plays_highlighted_voice_and_stops_on_navigation_and_exit() {
         MenuItem::available("F1", "two"),
     ];
     let mut events = VecDeque::from([
+        Some(key(KeyCode::Left)),
         Some(key(KeyCode::Char(' '))),
         Some(Event::Key(KeyEvent::new_with_kind(
             KeyCode::Char(' '),
@@ -371,9 +470,40 @@ fn voice_preview_plays_highlighted_voice_and_stops_on_navigation_and_exit() {
 }
 
 #[test]
+fn voice_preview_requires_a_choice_before_space_can_play() {
+    let items = [MenuItem::available("M1", "one")];
+    let mut events = VecDeque::from([
+        Some(key(KeyCode::Char(' '))),
+        Some(key(KeyCode::Enter)),
+        Some(key(KeyCode::Right)),
+        Some(key(KeyCode::Char(' '))),
+        Some(key(KeyCode::Esc)),
+    ]);
+    let mut preview = FakePreview::default();
+    assert_eq!(
+        run_preview_menu(
+            &mut Vec::new(),
+            "Voices",
+            "Space play/stop",
+            &items,
+            0,
+            &mut preview,
+            || Ok(events.pop_front().unwrap())
+        )
+        .unwrap(),
+        None
+    );
+    assert_eq!(preview.toggles, [0]);
+}
+
+#[test]
 fn preview_error_is_inline_and_does_not_select_or_exit() {
     let items = [MenuItem::available("M1", "one")];
-    let mut events = VecDeque::from([Some(key(KeyCode::Char(' '))), Some(key(KeyCode::Esc))]);
+    let mut events = VecDeque::from([
+        Some(key(KeyCode::Left)),
+        Some(key(KeyCode::Char(' '))),
+        Some(key(KeyCode::Esc)),
+    ]);
     let mut preview = FakePreview {
         fail: true,
         message: Some("Sample finished".into()),

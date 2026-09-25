@@ -371,7 +371,9 @@ struct TerminalSetupSelector;
 
 impl SetupSelector for TerminalSetupSelector {
     fn audio_device(&mut self, current: &str) -> Result<Option<String>> {
-        choose_audio_device(current)
+        app_setup::audio::choose_horizontal(current, |selected| {
+            omaspeak::audio_devices::inventory("output", selected)
+        })
     }
     fn probe_runtime(
         &mut self,
@@ -397,7 +399,7 @@ impl SetupSelector for TerminalSetupSelector {
             let options = [items[0].clone(), items[1].clone()];
             return app_setup::wizard::select_choice(title, help, &options);
         }
-        app_setup::wizard::select(title, help, items, preferred)
+        app_setup::wizard::select_horizontal(title, help, items, preferred)
     }
 
     #[allow(clippy::too_many_arguments)]
