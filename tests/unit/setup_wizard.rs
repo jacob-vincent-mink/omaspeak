@@ -157,8 +157,10 @@ fn menu_renders_metadata_and_processes_arrow_enter_and_cancel() {
     assert!(rendered.contains("Runtime"));
     assert!(rendered.contains("CUDA"));
     assert!(rendered.contains("Unavailable in this build"));
-    assert!(rendered.contains("Esc cancel"));
-    assert!(plain_terminal_output(rendered.as_bytes()).contains("\r\n      "));
+    assert!(rendered.contains("Esc/q back"));
+    assert!(rendered.contains("OMASPEAK  /  RUNTIME"));
+    assert!(rendered.contains("SELECTED  /  OpenVINO"));
+    assert!(rendered.contains("Intel CPU, GPU, and NPU"));
     assert_no_bare_line_feeds(rendered.as_bytes());
 
     let mut events = VecDeque::from([key(KeyCode::Char('q'))]);
