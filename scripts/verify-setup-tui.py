@@ -56,7 +56,8 @@ def main():
                    XDG_STATE_HOME=str(root / "state"), XDG_CACHE_HOME=str(root / "cache"),
                    XDG_RUNTIME_DIR=str(root / "run"), TERM="xterm-256color")
         provider = args.provider_library or Path(f"/usr/lib/{APP}/libaudiocpp.so")
-        if APP == "omaspeak" and provider.is_file():
+        needs_provider_override = args.provider_library is not None or binary.parent.name in {"debug", "release"}
+        if APP == "omaspeak" and needs_provider_override and provider.is_file():
             env["OMASPEAK_LIBRARY_PATH"] = str(provider.resolve().parent)
         if copied:
             verified = subprocess.run([str(binary), "setup", "model", "--verify", source.name],
@@ -94,6 +95,10 @@ def main():
                 expected = source.name.split("-")[0]
                 if expected not in first.lower():
                     raise AssertionError(f"recommended model did not match cached {source.name}:\n{first}")
+                if source.name.endswith("-openvino") and "OpenVINO" not in first:
+                    raise AssertionError(f"recommended provider did not match cached {source.name}:\n{first}")
+                if source.name.endswith("-gguf") and "audio.cpp" not in first:
+                    raise AssertionError(f"recommended provider did not match cached {source.name}:\n{first}")
             if args.customize or args.customize_review or args.customize_apply:
                 key("Right", "Enter")
                 await_text(CUSTOM_TABS[0])
