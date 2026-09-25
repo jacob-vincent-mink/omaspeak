@@ -847,6 +847,46 @@ fn setup_customize_can_review_cpu_kokoro_without_license_or_install() {
     assert!(!root.join("data/omaspeak").exists());
 }
 
+#[cfg(unix)]
+#[test]
+fn setup_apply_checks_provider_before_download() {
+    let root = sandbox();
+    let (status, terminal) = run_setup_pty(
+        &root,
+        &[
+            b"\x1b[C", b"", b"\x1b[C", b"", b"\x1b[C", b"", b"\x1b[C", b"", b"\x1b[C", b"", b"\r",
+        ],
+    );
+    assert!(!status.success(), "{terminal}");
+    assert!(
+        terminal.contains("required OpenVINO C library missing")
+            || terminal.contains("audio.cpp provider is not configured"),
+        "{terminal}"
+    );
+    assert!(!root.join("config/omaspeak/config.toml").exists());
+    assert!(!root.join("data/omaspeak").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn setup_apply_after_changing_runtime_checks_provider_before_download() {
+    let root = sandbox();
+    let (status, terminal) = run_setup_pty(
+        &root,
+        &[
+            b"\x1b[H", b" ", b"\x1b[C", b"", b"\x1b[C", b"", b"\x1b[C", b"", b"\x1b[C", b"",
+            b"\x1b[C", b"", b"\r",
+        ],
+    );
+    assert!(!status.success(), "{terminal}");
+    assert!(
+        terminal.contains("audio.cpp provider is not configured"),
+        "{terminal}"
+    );
+    assert!(!root.join("config/omaspeak/config.toml").exists());
+    assert!(!root.join("data/omaspeak").exists());
+}
+
 fn serve_once(root: &Path, result: ResultPayload) -> Option<thread::JoinHandle<Request>> {
     let directory = root.join("run/omaspeak");
     fs::create_dir_all(&directory).unwrap();
