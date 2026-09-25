@@ -59,6 +59,9 @@ To repeat a full TUI Apply without changing your active configuration, run
 The script verifies the cached model first, then uses isolated XDG directories
 to check the final Accept page, model proof, NPU cache preparation when
 applicable, config, and launcher.
+Use `python3 scripts/verify-setup-tui.py --binary ~/.local/bin/omaspeak --cancel-before-accept`
+to confirm that backing out of the final page creates no config, model,
+launcher, or compiled cache files.
 
 Browse the same runtime and model catalog without changing the machine:
 
