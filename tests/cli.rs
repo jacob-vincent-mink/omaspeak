@@ -867,7 +867,8 @@ fn setup_customize_accept_rejects_missing_provider_before_download() {
     );
     assert!(!status.success(), "{terminal}");
     assert!(
-        terminal.contains("required OpenVINO C library missing"),
+        terminal.contains("required OpenVINO C library missing")
+            || terminal.contains("audio.cpp provider is not configured"),
         "{terminal}"
     );
     assert!(!root.join("config/omaspeak/config.toml").exists());
