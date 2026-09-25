@@ -27,3 +27,4 @@ ureq = { version = "2.12", default-features = false, features = ["tls"] }
 unicode-normalization = "0.1"
 unicode-width = "0.2"
 libloading = "0.8"
+ratatui = { version = "0.29.0", default-features = false, features = ["crossterm"] }

@@ -743,7 +743,11 @@ fn run_setup_pty(root: &Path, keys: &[&[u8]]) -> (std::process::ExitStatus, Stri
     let binary = env!("CARGO_BIN_EXE_omaspeak");
     assert!(!binary.contains(['\'', '"', ' ']));
     let mut child = Command::new("script")
-        .args(["-qec", &format!("{binary} setup"), "/dev/null"])
+        .args([
+            "-qec",
+            &format!("stty rows 24 cols 100 && {binary} setup"),
+            "/dev/null",
+        ])
         .env("XDG_CONFIG_HOME", root.join("config"))
         .env("XDG_DATA_HOME", root.join("data"))
         .env("XDG_STATE_HOME", root.join("state"))
@@ -797,12 +801,32 @@ fn guided_setup_cancels_before_install_in_a_real_pty() {
 #[test]
 fn setup_menu_opens_customize_without_installing_in_a_real_pty() {
     let root = sandbox();
-    let (status, terminal) =
-        run_setup_pty(&root, &[b"\x1b[C", b"\r", b"\r", b"\x1b[D", b"\r", b"q"]);
+    let (status, terminal) = run_setup_pty(
+        &root,
+        &[b"\x1b[C", b"\r", b"", b"", b"\r", b" ", b"\r", b"", b"q"],
+    );
     assert!(status.success(), "{terminal}");
     assert!(terminal.contains("Select setup"), "{terminal}");
-    assert!(terminal.contains("Omaspeak runtime"), "{terminal}");
-    assert!(terminal.contains("Omaspeak device"), "{terminal}");
+    assert!(terminal.contains("Space select"), "{terminal}");
+    assert!(terminal.contains("AUTO"), "{terminal}");
+    assert!(!root.join("config/omaspeak/config.toml").exists());
+    assert!(!root.join("data/omaspeak").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn setup_customize_reaches_accept_then_cancels_without_installing() {
+    let root = sandbox();
+    let (status, terminal) = run_setup_pty(
+        &root,
+        &[
+            b"\x1b[C", b"\r", b"", b"", b" ", b"\r", b" ", b"\r", b" ", b"\r", b" ", b"\r", b" ",
+            b"\r", b"", b"q",
+        ],
+    );
+    assert!(status.success(), "{terminal}");
+    assert!(terminal.contains("✓ Output"), "{terminal}");
+    assert!(terminal.contains("Setup cancelled"), "{terminal}");
     assert!(!root.join("config/omaspeak/config.toml").exists());
     assert!(!root.join("data/omaspeak").exists());
 }

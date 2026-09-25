@@ -2,6 +2,7 @@ mod install_guard;
 pub mod menu;
 pub mod model;
 pub mod systemd;
+pub mod tabbed;
 pub mod wizard;
 
 use std::fs;

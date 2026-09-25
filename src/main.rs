@@ -312,6 +312,7 @@ enum SetupCommand {
 }
 
 trait SetupSelector {
+    #[cfg(test)]
     fn audio_device(&mut self, current: &str) -> Result<Option<String>> {
         Ok(Some(current.into()))
     }
@@ -370,6 +371,7 @@ struct RuntimeSelection {
 struct TerminalSetupSelector;
 
 impl SetupSelector for TerminalSetupSelector {
+    #[cfg(test)]
     fn audio_device(&mut self, current: &str) -> Result<Option<String>> {
         app_setup::audio::choose_horizontal(current, |selected| {
             omaspeak::audio_devices::inventory("output", selected)
@@ -2081,9 +2083,7 @@ fn setup(command: Option<SetupCommand>, config_path: &Path, paths: &AppPaths) ->
                     }
                     Ok(())
                 }
-                SetupIntent::Customize => {
-                    guided_full_setup(config_path, paths, &BuiltinModels, &mut selector)
-                }
+                SetupIntent::Customize => guided_tabbed_setup(config_path, paths),
                 SetupIntent::Cancel => {
                     println!("Setup cancelled.");
                     Ok(())
@@ -2509,6 +2509,233 @@ fn is_interactive_terminal() -> bool {
     std::io::stdin().is_terminal() && std::io::stdout().is_terminal()
 }
 
+fn guided_tabbed_setup(config_path: &Path, paths: &AppPaths) -> Result<()> {
+    let current = app_setup::load_config(config_path)?;
+    let locations = omaspeak::runtime::discover(&current.backend, config_path);
+    let providers = omaspeak::hardware::provider_availability(&current.backend, &locations);
+    let recommendation = omaspeak::hardware::recommend(&detected_setup_hardware(), providers);
+    let runtimes = [
+        Runtime::Default,
+        Runtime::Openvino,
+        Runtime::Cuda,
+        Runtime::Vulkan,
+        Runtime::Hip,
+    ];
+    let runtime_items = runtimes
+        .iter()
+        .map(|runtime| {
+            let detected = match runtime {
+                Runtime::Default => providers.packaged_cpu,
+                Runtime::Openvino => providers.openvino,
+                Runtime::Cuda => providers.cuda,
+                Runtime::Vulkan => providers.vulkan,
+                Runtime::Hip => {
+                    current.backend.runtime == Runtime::Hip
+                        && omaspeak::audio_cpp::discover_provider_library(&current, config_path)
+                            .ok()
+                            .flatten()
+                            .is_some()
+                }
+            };
+            let label = format!(
+                "{}{}",
+                runtime.name(),
+                if *runtime == recommendation.runtime {
+                    " · recommended"
+                } else {
+                    ""
+                }
+            );
+            if detected {
+                MenuItem::available(label, "Provider detected")
+            } else {
+                MenuItem::available(
+                    label,
+                    "Provider not detected. Configure it with `omaspeak setup runtime` first.",
+                )
+            }
+        })
+        .collect::<Vec<_>>();
+    let preferred_runtime = runtimes
+        .iter()
+        .position(|runtime| *runtime == recommendation.runtime)
+        .unwrap_or(0);
+    let report = omaspeak::audio_devices::inventory("output", &current.audio.device);
+    let audio = report["devices"]
+        .as_array()
+        .context("device inventory has no devices")?
+        .iter()
+        .map(|device| {
+            let selector = device["selector"].as_str().unwrap_or("default").to_owned();
+            (
+                selector.clone(),
+                MenuItem::available(
+                    device["label"].as_str().unwrap_or(&selector),
+                    selector.clone(),
+                ),
+            )
+        })
+        .collect::<Vec<_>>();
+    let models = omaspeak::catalog::models();
+    let picks = app_setup::tabbed::run(
+        &["Runtime", "Device", "Model", "Voice", "Output", "Accept"],
+        |tab, picks| {
+            let runtime = runtimes[picks[0].unwrap_or(preferred_runtime)];
+            let devices = device_items(runtime);
+            let device = devices[picks[1].unwrap_or(0)].0;
+            let candidate =
+                runtime_configuration_candidate(config_path, runtime, device, None, None)?;
+            let eligible = |model: &omaspeak::catalog::ModelSpec| {
+                model.compatible_with(model.backend, runtime, device)
+            };
+            Ok(match tab {
+                0 => app_setup::tabbed::Page::new(
+                    "Choose runtime",
+                    recommendation.detail.clone(),
+                    runtime_items.clone(),
+                    preferred_runtime,
+                ),
+                1 => app_setup::tabbed::Page::new(
+                    "Choose device",
+                    "Select a device for this runtime.",
+                    devices.iter().map(|(_, item)| item.clone()).collect(),
+                    devices
+                        .iter()
+                        .position(|(name, _)| *name == recommendation.device)
+                        .unwrap_or(0),
+                ),
+                2 => app_setup::tabbed::Page::new(
+                    "Choose model",
+                    "Compatible catalog models with available downloads or verified local files.",
+                    models
+                        .iter()
+                        .map(|model| {
+                            let ready = model.downloadable
+                                || app_setup::model::verify(paths, model).is_ok();
+                            let detail = format!(
+                                "{} · {} · ~{} MiB",
+                                model.description,
+                                model.license,
+                                model.download_size().div_ceil(1_048_576)
+                            );
+                            if ready && eligible(model) {
+                                MenuItem::available(model.display_name, detail)
+                            } else {
+                                MenuItem::unavailable(
+                                    model.display_name,
+                                    format!(
+                                        "{detail} · incompatible or needs a local model source"
+                                    ),
+                                )
+                            }
+                        })
+                        .collect(),
+                    models
+                        .iter()
+                        .position(|model| model.id == candidate.model.name)
+                        .unwrap_or(0),
+                ),
+                3 => {
+                    let model = &models[picks[2].context("select a model")?];
+                    let preferred = if current.model.name == model.name {
+                        let saved_voice = resolve_voice(&current, None).ok();
+                        model
+                            .voices
+                            .iter()
+                            .position(|voice| Some(voice.id) == saved_voice)
+                            .unwrap_or(0)
+                    } else {
+                        0
+                    };
+                    app_setup::tabbed::Page::new(
+                        "Choose voice",
+                        "Choose the default speaker. Preview is available after setup.",
+                        model
+                            .voices
+                            .iter()
+                            .map(|voice| {
+                                MenuItem::available(voice.name, format!("Speaker ID {}", voice.id))
+                            })
+                            .collect(),
+                        preferred,
+                    )
+                }
+                4 => app_setup::tabbed::Page::new(
+                    "Choose output",
+                    report["error"]
+                        .as_str()
+                        .unwrap_or("System defaults are unchanged."),
+                    audio.iter().map(|(_, item)| item.clone()).collect(),
+                    audio
+                        .iter()
+                        .position(|(selector, _)| *selector == current.audio.device)
+                        .unwrap_or(0),
+                ),
+                5 => {
+                    let model = &models[picks[2].context("select a model")?];
+                    let voice = &model.voices[picks[3].context("select a voice")?];
+                    let output = &audio[picks[4].context("select an output")?].0;
+                    let license = if model.requires_acceptance {
+                        format!(
+                            "\nLicense: {} · {}\nAccepting setup accepts this model license.",
+                            model.license, model.license_url
+                        )
+                    } else {
+                        String::new()
+                    };
+                    app_setup::tabbed::Page::new(
+                        "Accept setup",
+                        format!(
+                            "Runtime: {} · Device: {}\nModel: {} · Voice: {}\nOutput: {}{}\nDownloads and compilation start after Accept.",
+                            runtime.name(),
+                            device,
+                            model.display_name,
+                            voice.name,
+                            output,
+                            license
+                        ),
+                        vec![MenuItem::available(
+                            "Accept and apply",
+                            "Install and verify the model, then save settings",
+                        )],
+                        0,
+                    )
+                }
+                _ => unreachable!(),
+            })
+        },
+    )?;
+    let Some(picks) = picks else {
+        println!("Setup cancelled; no changes were made.");
+        return Ok(());
+    };
+    let runtime = runtimes[picks[0]];
+    let devices = device_items(runtime);
+    let device = devices[picks[1]].0;
+    let model = &models[picks[2]];
+    let mut candidate = runtime_configuration_candidate(config_path, runtime, device, None, None)?;
+    candidate.backend.kind = model.backend.into();
+    validate_runtime_configuration(&candidate, config_path, false)?;
+    candidate.audio.device = audio[picks[4]].0.clone();
+    setup_all_with_config(
+        candidate,
+        config_path,
+        paths,
+        &BuiltinModels,
+        model.id,
+        Some(model.voices[picks[3]].id),
+        None,
+        model.requires_acceptance.then_some(model.license),
+        ProgressFormat::Human,
+        app_setup::menu::install,
+        app_setup::systemd::is_active,
+        app_setup::systemd::reload_if_was_active,
+        |config, paths| app_setup::print_checks(config, paths, false),
+        app_setup::print_checks_event,
+    )
+}
+
+#[cfg(test)]
 fn guided_full_setup(
     config_path: &Path,
     paths: &AppPaths,
@@ -2526,6 +2753,7 @@ fn guided_full_setup(
     )
 }
 
+#[cfg(test)]
 fn guided_full_setup_with(
     config_path: &Path,
     paths: &AppPaths,
@@ -2550,6 +2778,7 @@ fn guided_full_setup_with(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[cfg(test)]
 fn guided_full_setup_with_validator(
     config_path: &Path,
     paths: &AppPaths,
