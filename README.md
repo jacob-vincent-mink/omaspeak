@@ -25,8 +25,10 @@ omaspeak setup
 ```
 
 The first page shows the detected hardware recommendation, runtime, model,
-speaker, and output device. Choose **Use recommended settings** to apply it,
-or **Customize** to choose each setting. The same recommendation is available
+speaker, and output device. Press Left or Right to select **Use recommended
+settings** or **Customize**, then Enter to continue. A separate **Accept setup**
+page starts model download and any NPU cache compilation only after acceptance.
+The same recommendation is available
 as `omaspeak setup --recommended --accept-license OpenRAIL-M` when the selected
 model requires that license and is not already installed. It detects accelerator hardware and considers CUDA GPU, Intel NPU,
 Intel GPU through OpenVINO, then a Vulkan-capable GPU. It recommends the first
@@ -51,6 +53,12 @@ exits.
 `setup all` installs the verified model and desktop settings launcher. It does
 not install or start a service. `say` starts inference on demand when no daemon
 is running.
+
+To repeat a full TUI Apply without changing your active configuration, run
+`python3 scripts/verify-setup-tui.py --binary ~/.local/bin/omaspeak --model-cache ~/.local/share/omaspeak/models/supertonic-3-openvino`.
+The script verifies the cached model first, then uses isolated XDG directories
+to check the final Accept page, model proof, NPU cache preparation when
+applicable, config, and launcher.
 
 Browse the same runtime and model catalog without changing the machine:
 

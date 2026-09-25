@@ -1,6 +1,35 @@
 use super::*;
 
 #[test]
+fn horizontal_setup_choice_requires_a_direction_before_enter() {
+    let items = [
+        MenuItem::available("Accept setup", "Begin model installation"),
+        MenuItem::available("Back", "Return without changes"),
+    ];
+    let mut keys =
+        std::collections::VecDeque::from([KeyCode::Enter, KeyCode::Left, KeyCode::Enter]);
+    let mut output = Vec::new();
+    let choice = run_choice(
+        &mut output,
+        "Accept setup",
+        "Model: Supertonic",
+        &items,
+        || {
+            Ok(Event::Key(KeyEvent::new(
+                keys.pop_front().unwrap(),
+                KeyModifiers::NONE,
+            )))
+        },
+    )
+    .unwrap();
+    assert_eq!(choice, Some(0));
+    assert!(keys.is_empty());
+    let rendered = String::from_utf8_lossy(&output);
+    assert!(rendered.contains("Choose an option to continue"));
+    assert!(rendered.contains("Model: Supertonic"));
+}
+
+#[test]
 fn rows_wrap_unicode_at_narrow_and_normal_widths() {
     use unicode_width::UnicodeWidthStr;
     for width in [24, 80] {
@@ -98,10 +127,10 @@ fn state_uses_available_preference_and_skips_disabled_rows() {
 
 #[test]
 fn keyboard_mapping_covers_navigation_selection_and_cancel() {
-    for code in [KeyCode::Up, KeyCode::Char('k')] {
+    for code in [KeyCode::Up, KeyCode::Left, KeyCode::Char('k')] {
         assert_eq!(action(KeyEvent::new(code, KeyModifiers::NONE)), Action::Up);
     }
-    for code in [KeyCode::Down, KeyCode::Char('j')] {
+    for code in [KeyCode::Down, KeyCode::Right, KeyCode::Char('j')] {
         assert_eq!(
             action(KeyEvent::new(code, KeyModifiers::NONE)),
             Action::Down
@@ -118,10 +147,6 @@ fn keyboard_mapping_covers_navigation_selection_and_cancel() {
     assert_eq!(
         action(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)),
         Action::Cancel
-    );
-    assert_eq!(
-        action(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE)),
-        Action::Ignore
     );
 }
 

@@ -393,6 +393,10 @@ impl SetupSelector for TerminalSetupSelector {
         items: &[MenuItem],
         preferred: usize,
     ) -> Result<Option<usize>> {
+        if title == "Accept setup" && items.len() == 2 {
+            let options = [items[0].clone(), items[1].clone()];
+            return app_setup::wizard::select_choice(title, help, &options);
+        }
         app_setup::wizard::select(title, help, items, preferred)
     }
 
@@ -1948,6 +1952,7 @@ fn apply_recommended_setup(
         false,
         &mut selector,
     )
+    .map(|_| ())
 }
 
 fn apply_recommended_plan(
@@ -1957,7 +1962,7 @@ fn apply_recommended_plan(
     accept_license: Option<&str>,
     prompt_license: bool,
     selector: &mut impl SetupSelector,
-) -> Result<()> {
+) -> Result<bool> {
     ensure!(
         plan.provider_detected,
         "recommended provider is missing; run `omaspeak setup` to customize its path"
@@ -1976,7 +1981,7 @@ fn apply_recommended_plan(
         } else if prompt_license {
             if !confirm_model_license(plan.model, installed, selector)? {
                 println!("Setup cancelled; the model license was not accepted.");
-                return Ok(());
+                return Ok(false);
             }
             Some(plan.model.license)
         } else {
@@ -2005,7 +2010,8 @@ fn apply_recommended_plan(
         app_setup::systemd::reload_if_was_active,
         |config, paths| app_setup::print_checks(config, paths, false),
         app_setup::print_checks_event,
-    )
+    )?;
+    Ok(true)
 }
 
 fn setup(command: Option<SetupCommand>, config_path: &Path, paths: &AppPaths) -> Result<()> {
@@ -2017,36 +2023,71 @@ fn setup(command: Option<SetupCommand>, config_path: &Path, paths: &AppPaths) ->
     let Some(command) = command else {
         if is_interactive_terminal() {
             let mut selector = TerminalSetupSelector;
-            let plan = recommended_setup_plan(config_path)?;
-            let items = [
-                if plan.provider_detected {
-                    MenuItem::available(
-                        "Use recommended settings",
-                        "Install the shown model and launcher, then verify synthesis",
-                    )
-                } else {
-                    MenuItem::unavailable(
-                        "Use recommended settings",
-                        "The recommended provider is missing; customize its path",
-                    )
-                },
-                MenuItem::available("Customize", "Choose runtime, model, voice, and output"),
-            ];
-            return match selector.select(
-                "Review recommended setup",
-                &plan.summary,
-                &items,
-                if plan.provider_detected { 0 } else { 1 },
-            )? {
-                Some(0) => {
-                    apply_recommended_plan(plan, config_path, paths, None, true, &mut selector)
+            loop {
+                let plan = recommended_setup_plan(config_path)?;
+                let items = [
+                    if plan.provider_detected {
+                        MenuItem::available(
+                            "Use recommended settings",
+                            "Continue to the final review",
+                        )
+                    } else {
+                        MenuItem::unavailable(
+                            "Use recommended settings",
+                            "Provider missing; choose Customize",
+                        )
+                    },
+                    MenuItem::available("Customize", "Choose runtime, model, voice, and output"),
+                ];
+                match app_setup::wizard::select_choice("Select setup", &plan.summary, &items)? {
+                    Some(0) => {
+                        let confirm = [
+                            MenuItem::available(
+                                "Accept setup",
+                                "Download and verify the model, then save settings",
+                            ),
+                            MenuItem::available(
+                                "Back",
+                                "Return to setup choices without changing anything",
+                            ),
+                        ];
+                        match app_setup::wizard::select_choice(
+                            "Accept setup",
+                            &plan.summary,
+                            &confirm,
+                        )? {
+                            Some(0) => {
+                                let applied = apply_recommended_plan(
+                                    plan,
+                                    config_path,
+                                    paths,
+                                    None,
+                                    true,
+                                    &mut selector,
+                                )?;
+                                if applied {
+                                    println!("Setup complete.");
+                                }
+                                return Ok(());
+                            }
+                            Some(1) | None => continue,
+                            _ => unreachable!(),
+                        }
+                    }
+                    Some(1) => {
+                        return guided_full_setup(
+                            config_path,
+                            paths,
+                            &BuiltinModels,
+                            &mut selector,
+                        );
+                    }
+                    _ => {
+                        println!("Setup cancelled.");
+                        return Ok(());
+                    }
                 }
-                Some(1) => guided_full_setup(config_path, paths, &BuiltinModels, &mut selector),
-                _ => {
-                    println!("Setup cancelled.");
-                    Ok(())
-                }
-            };
+            }
         }
         eprintln!(
             "Run `omaspeak setup` in a terminal for guided setup, or use `omaspeak setup all --accept-license OpenRAIL-M` for an unattended install."
@@ -2549,7 +2590,8 @@ fn guided_full_setup_with_validator(
     };
     let spec = operations.resolve(&model)?;
     let installed = operations.verify(paths, spec).is_ok();
-    let Some(voice) = choose_voice_for_config(&candidate, paths, spec, installed, selector)? else {
+    let Some(voice) = choose_voice_for_config(&candidate, paths, spec, installed, false, selector)?
+    else {
         println!("Setup cancelled.");
         return Ok(());
     };
@@ -2564,10 +2606,10 @@ fn guided_full_setup_with_validator(
     candidate.audio.device = audio_device;
     let confirmation = [
         MenuItem::available(
-            "Apply setup",
+            "Accept setup",
             "Download and activate the model, then install the desktop launcher. An active daemon restarts; an inactive service remains inactive.",
         ),
-        MenuItem::available("Cancel", "Leave the current configuration unchanged."),
+        MenuItem::available("Back", "Leave the current configuration unchanged."),
     ];
     let summary = format!(
         "Runtime: {} · Device: {} · Model: {} · Voice: {} (ID {}) · Output: {} · Service unit: unchanged (`omaspeak setup systemd` installs it)",
@@ -2578,7 +2620,7 @@ fn guided_full_setup_with_validator(
         voice.id,
         candidate.audio.device,
     );
-    if selector.select("Apply Omaspeak setup", &summary, &confirmation, 0)? != Some(0) {
+    if selector.select("Accept setup", &summary, &confirmation, 0)? != Some(0) {
         println!("Setup cancelled; no changes were made.");
         return Ok(());
     }
@@ -3301,7 +3343,7 @@ fn choose_voice(
     selector: &mut impl SetupSelector,
 ) -> Result<Option<omaspeak::voices::Voice>> {
     let current = app_setup::load_config(config_path)?;
-    choose_voice_for_config(&current, paths, spec, installed, selector)
+    choose_voice_for_config(&current, paths, spec, installed, true, selector)
 }
 
 fn choose_voice_for_config(
@@ -3309,6 +3351,7 @@ fn choose_voice_for_config(
     paths: &AppPaths,
     spec: &omaspeak::catalog::ModelSpec,
     installed: bool,
+    allow_preview: bool,
     selector: &mut impl SetupSelector,
 ) -> Result<Option<omaspeak::voices::Voice>> {
     let mut candidate = current.clone();
@@ -3339,8 +3382,16 @@ fn choose_voice_for_config(
             )
         })
         .collect::<Vec<_>>();
-    let selected =
-        selector.select_voice(&items, preferred, &candidate, paths, &voices, installed)?;
+    let selected = if allow_preview {
+        selector.select_voice(&items, preferred, &candidate, paths, &voices, installed)?
+    } else {
+        selector.select(
+            "Omaspeak voice",
+            "Choose the default speaker. Preview is available after setup.",
+            &items,
+            preferred,
+        )?
+    };
     Ok(selected.map(|index| voices[index].clone()))
 }
 
@@ -3423,7 +3474,7 @@ fn choose_model(
         .unwrap_or_default();
     let Some(selected) = selector.select(
         "Omaspeak model",
-        "Choose a catalog model. Downloads begin only after any required license acceptance.",
+        "Choose a catalog model. Download and NPU cache compilation begin after Accept setup.",
         &items,
         preferred,
     )?

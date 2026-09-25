@@ -735,13 +735,11 @@ fn no_text_on_a_terminal_fails_immediately_while_piped_text_remains_supported() 
 }
 
 #[cfg(unix)]
-#[test]
-fn guided_setup_cancels_before_install_in_a_real_pty() {
+fn run_setup_pty(root: &Path, keys: &[&[u8]]) -> (std::process::ExitStatus, String) {
     assert!(
         Command::new("script").arg("--version").output().is_ok(),
         "the real-PTY setup regression test requires util-linux script(1)"
     );
-    let root = sandbox();
     let binary = env!("CARGO_BIN_EXE_omaspeak");
     assert!(!binary.contains(['\'', '"', ' ']));
     let mut child = Command::new("script")
@@ -758,10 +756,12 @@ fn guided_setup_cancels_before_install_in_a_real_pty() {
         .spawn()
         .unwrap();
     let mut input = child.stdin.take().unwrap();
-    // Cancel on the recommendation page before Apply.
     thread::sleep(Duration::from_millis(750));
-    input.write_all(b"q").unwrap();
-    input.flush().unwrap();
+    for keys in keys {
+        input.write_all(keys).unwrap();
+        input.flush().unwrap();
+        thread::sleep(Duration::from_millis(200));
+    }
     drop(input);
     let deadline = Instant::now() + Duration::from_secs(5);
     while child.try_wait().unwrap().is_none() {
@@ -772,14 +772,37 @@ fn guided_setup_cancels_before_install_in_a_real_pty() {
         thread::sleep(Duration::from_millis(25));
     }
     let output = child.wait_with_output().unwrap();
-    let terminal = stdout(&output);
-    assert!(terminal.contains("Review recommended setup"));
+    (output.status, stdout(&output))
+}
+
+#[cfg(unix)]
+#[test]
+fn guided_setup_cancels_before_install_in_a_real_pty() {
+    let root = sandbox();
+    let (status, terminal) = run_setup_pty(&root, &[b"\r", b"q"]);
+    assert!(status.success(), "{terminal}");
+    assert!(terminal.contains("Select setup"), "{terminal}");
     assert!(terminal.contains("Runtime:"));
     assert!(terminal.contains("Model:"));
     assert!(terminal.contains("Output:"));
     assert!(terminal.contains("Use recommended settings"));
     assert!(terminal.contains("Customize"));
+    assert!(terminal.contains("Choose an option to continue"));
+    assert!(!terminal.contains("Accept setup"));
     assert!(!root.join("config/omaspeak/config.toml").exists());
+    assert!(!root.join("data/omaspeak").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn setup_menu_opens_customize_without_installing_in_a_real_pty() {
+    let root = sandbox();
+    let (status, terminal) = run_setup_pty(&root, &[b"\x1b[C", b"\r", b"q"]);
+    assert!(status.success(), "{terminal}");
+    assert!(terminal.contains("Select setup"), "{terminal}");
+    assert!(terminal.contains("Omaspeak runtime"), "{terminal}");
+    assert!(!root.join("config/omaspeak/config.toml").exists());
+    assert!(!root.join("data/omaspeak").exists());
 }
 
 fn serve_once(root: &Path, result: ResultPayload) -> Option<thread::JoinHandle<Request>> {

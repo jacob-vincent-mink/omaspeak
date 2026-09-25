@@ -2330,8 +2330,8 @@ fn full_setup_confirmation_cancel_leaves_configuration_untouched() {
 
     assert_eq!(selector.calls[3].0, "Omaspeak voice");
     assert_eq!(selector.calls[4].0, "Model license");
-    assert_eq!(selector.calls[5].0, "Apply Omaspeak setup");
-    assert_eq!(selector.calls[5].1[0].label, "Apply setup");
+    assert_eq!(selector.calls[5].0, "Accept setup");
+    assert_eq!(selector.calls[5].1[0].label, "Accept setup");
     assert!(!paths.config_file.exists());
 }
 
@@ -4701,6 +4701,72 @@ fn recommended_setup_requires_license_before_installing() {
     .unwrap_err();
     assert!(error.to_string().contains("--accept-license OpenRAIL-M"));
     assert!(!app_paths.config_file.exists());
+}
+
+#[test]
+fn cancelling_recommended_model_license_does_not_report_an_apply() {
+    let root = sandbox();
+    let app_paths = paths(&root);
+    let model = omaspeak::catalog::default_model("audiocpp", Runtime::Default, "cpu").unwrap();
+    let plan = RecommendedSetupPlan {
+        candidate: Config::default(),
+        model,
+        provider_detected: true,
+        summary: String::new(),
+    };
+    let mut selector = ScriptedSelector::new([Some(1)]);
+    let applied = apply_recommended_plan(
+        plan,
+        &app_paths.config_file,
+        &app_paths,
+        None,
+        true,
+        &mut selector,
+    )
+    .unwrap();
+    assert!(!applied);
+    assert!(!app_paths.config_file.exists());
+}
+
+#[test]
+fn full_setup_voice_selection_does_not_preview_before_acceptance() {
+    struct NoPreview;
+    impl SetupSelector for NoPreview {
+        fn select(
+            &mut self,
+            _: &str,
+            _: &str,
+            _: &[MenuItem],
+            preferred: usize,
+        ) -> Result<Option<usize>> {
+            Ok(Some(preferred))
+        }
+        fn select_voice(
+            &mut self,
+            _: &[MenuItem],
+            _: usize,
+            _: &Config,
+            _: &AppPaths,
+            _: &[omaspeak::voices::Voice],
+            _: bool,
+        ) -> Result<Option<usize>> {
+            panic!("voice preview must not run during setup selection")
+        }
+    }
+    let root = sandbox();
+    let app_paths = paths(&root);
+    let model = omaspeak::catalog::default_model("audiocpp", Runtime::Default, "cpu").unwrap();
+    let voice = choose_voice_for_config(
+        &Config::default(),
+        &app_paths,
+        model,
+        false,
+        false,
+        &mut NoPreview,
+    )
+    .unwrap();
+    assert!(voice.is_some());
+    assert!(!app_paths.data_dir.exists());
 }
 
 #[test]
