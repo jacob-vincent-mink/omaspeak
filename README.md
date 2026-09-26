@@ -27,7 +27,8 @@ omaspeak setup
 Setup opens one menu with Runtime, Device, Model, Voice, Output, and Apply tabs.
 The detected recommendation is selected by default. Use Left/Right to move
 between tabs, Up/Down to highlight another option, and Space to select it.
-Enter advances to the next tab or applies from the final review. Changing an
+Press `r` to restore all recommended choices and jump to the final review;
+Enter there applies them. Enter also advances between tabs. Changing an
 earlier choice updates dependent defaults. Model download and NPU cache
 compilation start only after Apply. Esc or `q` cancels without applying.
 The same recommendation is available

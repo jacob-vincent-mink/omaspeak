@@ -787,13 +787,14 @@ fn run_setup_pty(root: &Path, keys: &[&[u8]]) -> (std::process::ExitStatus, Stri
 #[test]
 fn guided_setup_cancels_before_install_in_a_real_pty() {
     let root = sandbox();
-    let (status, terminal) = run_setup_pty(&root, &[b"q"]);
+    let (status, terminal) = run_setup_pty(&root, &[b"r", b"", b"q"]);
     assert!(status.success(), "{terminal}");
     assert!(terminal.contains("Choose runtime"), "{terminal}");
     assert!(terminal.contains("Runtime:"));
     assert!(terminal.contains("Model:"));
     assert!(terminal.contains("Output:"));
     assert!(terminal.contains("Space select"));
+    assert!(terminal.contains("R review defaults"));
     assert!(!root.join("config/omaspeak/config.toml").exists());
     assert!(!root.join("data/omaspeak").exists());
 }
