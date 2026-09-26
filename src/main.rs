@@ -3299,7 +3299,7 @@ fn validate_runtime_configuration(
     _explicit_directory: bool,
 ) -> Result<()> {
     if config.backend.kind == "audiocpp" {
-        omaspeak::audio_cpp::discover_provider_library(config, config_path)?
+        omaspeak::audio_cpp::probe_provider(config, config_path)
             .context("audio.cpp provider is not configured")?;
         return Ok(());
     }

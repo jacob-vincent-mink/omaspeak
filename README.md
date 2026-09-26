@@ -31,6 +31,15 @@ Press `r` to restore all recommended choices and jump to the final review;
 Enter there applies them. Enter also advances between tabs. Changing an
 earlier choice updates dependent defaults. Model download and NPU cache
 compilation start only after Apply. Esc or `q` cancels without applying.
+The repeatable terminal E2E suite saves screen frames and JSON results. CI runs
+navigation, backtracking, cancellation, the `r` shortcut, and missing-provider
+rejection; the full suite also exercises setup with cached models:
+
+```bash
+python3 scripts/verify-setup-tui.py --binary target/debug/omaspeak --suite smoke --artifacts /tmp/omaspeak-setup-e2e
+python3 scripts/verify-setup-tui.py --binary ~/.local/bin/omaspeak --suite full --model-cache ~/.local/share/omaspeak/models/supertonic-3-openvino --custom-model-cache ~/.local/share/omaspeak/models/kokoro-82m-gguf --model-down 1 --artifacts /tmp/omaspeak-setup-e2e-full
+```
+
 The same recommendation is available
 as `omaspeak setup --recommended --accept-license OpenRAIL-M` when the selected
 model requires that license and is not already installed. It detects accelerator hardware and considers CUDA GPU, Intel NPU,

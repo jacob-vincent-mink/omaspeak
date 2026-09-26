@@ -26,7 +26,7 @@ jobs:
       - name: Install native build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends cmake ninja-build g++ git binutils libgomp1 util-linux python3
+          sudo apt-get install -y --no-install-recommends cmake ninja-build g++ git binutils libgomp1 util-linux python3 tmux
       - name: Build the pinned default audio.cpp provider
         run: |
           set -euo pipefail
@@ -52,3 +52,12 @@ jobs:
           test -s licenses/POCKETFFT-LICENSE
       - name: Coverage
         run: cargo llvm-cov --all-targets --locked --fail-under-lines 90.01 -- --test-threads=1
+      - name: Setup terminal E2E
+        run: |
+          cargo build --locked
+          python3 scripts/verify-setup-tui.py --binary target/debug/omaspeak --suite smoke --artifacts "$RUNNER_TEMP/setup-e2e"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: omaspeak-setup-e2e
+          path: ${{ runner.temp }}/setup-e2e
