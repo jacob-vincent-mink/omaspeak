@@ -735,37 +735,41 @@ fn no_text_on_a_terminal_fails_immediately_while_piped_text_remains_supported() 
 }
 
 #[cfg(unix)]
-#[test]
-fn guided_setup_accepts_arrow_keys_and_enter_in_a_real_pty() {
+fn run_setup_pty(root: &Path, keys: &[&[u8]]) -> (std::process::ExitStatus, String) {
     assert!(
         Command::new("script").arg("--version").output().is_ok(),
         "the real-PTY setup regression test requires util-linux script(1)"
     );
-    let root = sandbox();
     let binary = env!("CARGO_BIN_EXE_omaspeak");
     assert!(!binary.contains(['\'', '"', ' ']));
     let mut child = Command::new("script")
-        .args(["-qec", &format!("{binary} setup"), "/dev/null"])
+        .args([
+            "-qec",
+            &format!("stty rows 24 cols 100 && {binary} setup"),
+            "/dev/null",
+        ])
         .env("XDG_CONFIG_HOME", root.join("config"))
         .env("XDG_DATA_HOME", root.join("data"))
         .env("XDG_STATE_HOME", root.join("state"))
         .env("XDG_RUNTIME_DIR", root.join("run"))
         .env("TERM", "xterm-256color")
         .env("OMASPEAK_LIBRARY_PATH", root.join("missing-runtime"))
+        .env(
+            "OMASPEAK_OPENVINO_LIBRARY",
+            root.join("missing-openvino.so"),
+        )
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
     let mut input = child.stdin.take().unwrap();
-    // Wait until the child enables raw mode, choose Runtime from the setup
-    // screen with an arrow and Enter, then cancel its runtime screen. This
-    // remains deterministic on CPU-only and accelerator hosts.
     thread::sleep(Duration::from_millis(750));
-    input.write_all(b"\x1b[B\r").unwrap();
-    input.flush().unwrap();
-    thread::sleep(Duration::from_millis(150));
-    let _ = input.write_all(b"q");
+    for keys in keys {
+        input.write_all(keys).unwrap();
+        input.flush().unwrap();
+        thread::sleep(Duration::from_millis(200));
+    }
     drop(input);
     let deadline = Instant::now() + Duration::from_secs(5);
     while child.try_wait().unwrap().is_none() {
@@ -776,10 +780,112 @@ fn guided_setup_accepts_arrow_keys_and_enter_in_a_real_pty() {
         thread::sleep(Duration::from_millis(25));
     }
     let output = child.wait_with_output().unwrap();
-    let terminal = stdout(&output);
-    assert!(terminal.contains("Omaspeak setup"));
-    assert!(terminal.contains("Omaspeak runtime"));
+    (output.status, stdout(&output))
+}
+
+#[cfg(unix)]
+#[test]
+fn guided_setup_cancels_before_install_in_a_real_pty() {
+    let root = sandbox();
+    let (status, terminal) = run_setup_pty(&root, &[b"r", b"", b"q"]);
+    assert!(status.success(), "{terminal}");
+    assert!(terminal.contains("Choose runtime"), "{terminal}");
+    assert!(terminal.contains("Runtime:"));
+    assert!(terminal.contains("Model:"));
+    assert!(terminal.contains("Output:"));
+    assert!(terminal.contains("Space select"));
+    assert!(terminal.contains("R review defaults"));
     assert!(!root.join("config/omaspeak/config.toml").exists());
+    assert!(!root.join("data/omaspeak").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn setup_menu_opens_customize_without_installing_in_a_real_pty() {
+    let root = sandbox();
+    let (status, terminal) = run_setup_pty(&root, &[b"\x1b[C", b"", b"q"]);
+    assert!(status.success(), "{terminal}");
+    assert!(terminal.contains("✓ Device"), "{terminal}");
+    assert!(terminal.contains("Space select"), "{terminal}");
+    assert!(terminal.contains("AUTO"), "{terminal}");
+    assert!(!root.join("config/omaspeak/config.toml").exists());
+    assert!(!root.join("data/omaspeak").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn setup_customize_reaches_accept_then_cancels_without_installing() {
+    let root = sandbox();
+    let (status, terminal) = run_setup_pty(
+        &root,
+        &[
+            b"\x1b[C", b"", b"\x1b[C", b"", b"\x1b[C", b"", b"\x1b[C", b"", b"\x1b[C", b"", b"q",
+        ],
+    );
+    assert!(status.success(), "{terminal}");
+    assert!(terminal.contains("✓ Output"), "{terminal}");
+    assert!(terminal.contains("Setup cancelled"), "{terminal}");
+    assert!(!root.join("config/omaspeak/config.toml").exists());
+    assert!(!root.join("data/omaspeak").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn setup_customize_can_review_cpu_kokoro_without_license_or_install() {
+    let root = sandbox();
+    let (status, terminal) = run_setup_pty(
+        &root,
+        &[
+            b"\x1b[H", b" ", b"\x1b[C", b"", b"\x1b[C", b"", b"\x1b[B", b" ", b"\x1b[C", b"",
+            b"\x1b[C", b"", b"\x1b[C", b"", b"q",
+        ],
+    );
+    assert!(status.success(), "{terminal}");
+    assert!(terminal.contains("Kokoro"), "{terminal}");
+    assert!(terminal.contains("✓ Output"), "{terminal}");
+    assert!(terminal.contains("Setup cancelled"), "{terminal}");
+    assert!(!root.join("config/omaspeak/config.toml").exists());
+    assert!(!root.join("data/omaspeak").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn setup_apply_checks_provider_before_download() {
+    let root = sandbox();
+    let (status, terminal) = run_setup_pty(
+        &root,
+        &[
+            b"\x1b[C", b"", b"\x1b[C", b"", b"\x1b[C", b"", b"\x1b[C", b"", b"\x1b[C", b"", b"\r",
+        ],
+    );
+    assert!(!status.success(), "{terminal}");
+    assert!(
+        terminal.contains("required OpenVINO C library missing")
+            || terminal.contains("audio.cpp provider is not configured"),
+        "{terminal}"
+    );
+    assert!(!root.join("config/omaspeak/config.toml").exists());
+    assert!(!root.join("data/omaspeak").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn setup_apply_after_changing_runtime_checks_provider_before_download() {
+    let root = sandbox();
+    let (status, terminal) = run_setup_pty(
+        &root,
+        &[
+            b"\x1b[H", b" ", b"\x1b[C", b"", b"\x1b[C", b"", b"\x1b[C", b"", b"\x1b[C", b"",
+            b"\x1b[C", b"", b"\r",
+        ],
+    );
+    assert!(!status.success(), "{terminal}");
+    assert!(
+        terminal.contains("audio.cpp provider is not configured"),
+        "{terminal}"
+    );
+    assert!(!root.join("config/omaspeak/config.toml").exists());
+    assert!(!root.join("data/omaspeak").exists());
 }
 
 fn serve_once(root: &Path, result: ResultPayload) -> Option<thread::JoinHandle<Request>> {

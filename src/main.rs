@@ -18,7 +18,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context, Result, anyhow, bail, ensure};
 use clap::{Args, Parser, Subcommand};
 use omaspeak::backend::{
     BackendConfig, Fallback, Runtime, canonical_device, supported_capabilities,
@@ -108,6 +108,12 @@ enum TopCommand {
     },
     /// Configure runtimes and models through a guided terminal or scriptable commands.
     Setup {
+        /// Apply the detected hardware recommendation without prompts.
+        #[arg(long)]
+        recommended: bool,
+        /// Accept the recommended model's license when installation requires it.
+        #[arg(long, value_name = "LICENSE", requires = "recommended")]
+        accept_license: Option<String>,
         #[command(subcommand)]
         command: Option<SetupCommand>,
     },
@@ -306,6 +312,7 @@ enum SetupCommand {
 }
 
 trait SetupSelector {
+    #[cfg(test)]
     fn audio_device(&mut self, current: &str) -> Result<Option<String>> {
         Ok(Some(current.into()))
     }
@@ -364,8 +371,11 @@ struct RuntimeSelection {
 struct TerminalSetupSelector;
 
 impl SetupSelector for TerminalSetupSelector {
+    #[cfg(test)]
     fn audio_device(&mut self, current: &str) -> Result<Option<String>> {
-        choose_audio_device(current)
+        app_setup::audio::choose_horizontal(current, |selected| {
+            omaspeak::audio_devices::inventory("output", selected)
+        })
     }
     fn probe_runtime(
         &mut self,
@@ -387,7 +397,11 @@ impl SetupSelector for TerminalSetupSelector {
         items: &[MenuItem],
         preferred: usize,
     ) -> Result<Option<usize>> {
-        app_setup::wizard::select(title, help, items, preferred)
+        if title == "Accept setup" && items.len() == 2 {
+            let options = [items[0].clone(), items[1].clone()];
+            return app_setup::wizard::select_choice(title, help, &options);
+        }
+        app_setup::wizard::select_horizontal(title, help, items, preferred)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -579,7 +593,21 @@ fn run_with_paths_and_prepare(
         TopCommand::Stop => stop(paths),
         TopCommand::Voices { json } => voices(&config_path, paths, json),
         TopCommand::Config { command } => config_command(command, &config_path, paths),
-        TopCommand::Setup { command } => setup(command, &config_path, paths),
+        TopCommand::Setup {
+            command,
+            recommended,
+            accept_license,
+        } => {
+            if recommended {
+                ensure!(
+                    command.is_none(),
+                    "--recommended cannot be combined with a setup subcommand"
+                );
+                apply_recommended_setup(&config_path, paths, accept_license.as_deref())
+            } else {
+                setup(command, &config_path, paths)
+            }
+        }
     }
 }
 
@@ -1869,6 +1897,127 @@ fn human_schema_lines(schema: &Value) -> Result<Vec<String>> {
         .collect()
 }
 
+struct RecommendedSetupPlan {
+    candidate: Config,
+    model: &'static omaspeak::catalog::ModelSpec,
+    provider_detected: bool,
+    summary: String,
+}
+
+fn recommended_setup_plan(config_path: &Path) -> Result<RecommendedSetupPlan> {
+    let current = app_setup::load_config(config_path)?;
+    let locations = omaspeak::runtime::discover(&current.backend, config_path);
+    let providers = omaspeak::hardware::provider_availability(&current.backend, &locations);
+    let recommendation = omaspeak::hardware::recommend(&detected_setup_hardware(), providers);
+    let candidate = runtime_configuration_candidate(
+        config_path,
+        recommendation.runtime,
+        &recommendation.device,
+        None,
+        None,
+    )?;
+    let model = omaspeak::catalog::setup_model(&candidate)?;
+    let voice = model.voices.first().map_or("default", |voice| voice.name);
+    let summary = format!(
+        "Detected: {}\nRuntime: {} · Device: {}\nModel: {} · Voice: {}\nOutput: {}\nLicense: {}{}\nService unit: unchanged\n{}\n\nThe model and provider are verified before configuration is saved.",
+        recommendation.label,
+        recommendation.runtime.name(),
+        recommendation.device,
+        model.display_name,
+        voice,
+        candidate.audio.device,
+        model.license,
+        if model.requires_acceptance {
+            " (acceptance required for download)"
+        } else {
+            ""
+        },
+        recommendation.detail,
+    );
+    Ok(RecommendedSetupPlan {
+        candidate,
+        model,
+        provider_detected: recommendation.provider_detected,
+        summary,
+    })
+}
+
+fn apply_recommended_setup(
+    config_path: &Path,
+    paths: &AppPaths,
+    accept_license: Option<&str>,
+) -> Result<()> {
+    let mut selector = TerminalSetupSelector;
+    apply_recommended_plan(
+        recommended_setup_plan(config_path)?,
+        config_path,
+        paths,
+        accept_license,
+        false,
+        &mut selector,
+    )
+    .map(|_| ())
+}
+
+fn apply_recommended_plan(
+    plan: RecommendedSetupPlan,
+    config_path: &Path,
+    paths: &AppPaths,
+    accept_license: Option<&str>,
+    prompt_license: bool,
+    selector: &mut impl SetupSelector,
+) -> Result<bool> {
+    ensure!(
+        plan.provider_detected,
+        "recommended provider is missing; run `omaspeak setup` to customize its path"
+    );
+    let operations = BuiltinModels;
+    let installed = operations.verify(paths, plan.model).is_ok();
+    let accepted_license = if plan.model.requires_acceptance && !installed {
+        if let Some(license) = accept_license {
+            ensure!(
+                license == plan.model.license,
+                "recommended model {} requires --accept-license {}",
+                plan.model.id,
+                plan.model.license
+            );
+            Some(license)
+        } else if prompt_license {
+            if !confirm_model_license(plan.model, installed, selector)? {
+                println!("Setup cancelled; the model license was not accepted.");
+                return Ok(false);
+            }
+            Some(plan.model.license)
+        } else {
+            bail!(
+                "recommended model {} requires --accept-license {}",
+                plan.model.id,
+                plan.model.license
+            );
+        }
+    } else {
+        accept_license
+    };
+    validate_runtime_configuration(&plan.candidate, config_path, false)?;
+    setup_all_with_config(
+        plan.candidate,
+        config_path,
+        paths,
+        &operations,
+        plan.model.id,
+        plan.model.voices.first().map(|voice| voice.id),
+        None,
+        accepted_license,
+        ProgressFormat::Human,
+        app_setup::menu::install,
+        app_setup::systemd::is_active,
+        app_setup::systemd::reload_if_was_active,
+        |config, paths| app_setup::print_checks(config, paths, false),
+        app_setup::print_checks_event,
+    )?;
+    Ok(true)
+}
+
 fn setup(command: Option<SetupCommand>, config_path: &Path, paths: &AppPaths) -> Result<()> {
     if let Some(error) = app_setup::config_recovery(config_path)? {
         eprintln!(
@@ -1877,12 +2026,7 @@ fn setup(command: Option<SetupCommand>, config_path: &Path, paths: &AppPaths) ->
     }
     let Some(command) = command else {
         if is_interactive_terminal() {
-            return guided_setup(
-                config_path,
-                paths,
-                &BuiltinModels,
-                &mut TerminalSetupSelector,
-            );
+            return guided_tabbed_setup(config_path, paths);
         }
         eprintln!(
             "Run `omaspeak setup` in a terminal for guided setup, or use `omaspeak setup all --accept-license OpenRAIL-M` for an unattended install."
@@ -2288,7 +2432,7 @@ fn apply_runtime_selection_with_provider_probe(
         save_and_reload_active(candidate.clone(), config_path, paths)?;
     }
     let next = (!model_installed).then_some(
-        "provider ABI is valid; run `omaspeak setup` and choose Full setup, or install a compatible model to complete the model-backed provider proof",
+        "provider ABI is valid; run `omaspeak setup` or install a compatible model to complete the model-backed provider proof",
     );
     println!(
         "{}",
@@ -2303,54 +2447,236 @@ fn is_interactive_terminal() -> bool {
     std::io::stdin().is_terminal() && std::io::stdout().is_terminal()
 }
 
-fn guided_setup(
-    config_path: &Path,
-    paths: &AppPaths,
-    operations: &impl ModelSetupOperations,
-    selector: &mut impl SetupSelector,
-) -> Result<()> {
-    let actions = [
-        MenuItem::available(
-            "Full setup",
-            "Choose a runtime, device, and model, then install the desktop launcher. This never installs or starts a service; an active daemon restarts after Apply.",
-        ),
-        MenuItem::available(
-            "Runtime",
-            "Choose and save an inference runtime and device.",
-        ),
-        MenuItem::available(
-            "Model",
-            "Browse, download, verify, and activate a catalog model.",
-        ),
-        MenuItem::available(
-            "Check",
-            "Check the current model, runtime, audio, launcher, and optional service.",
-        ),
-        MenuItem::available(
-            "Audio",
-            "Select or test the output device without loading a model.",
-        ),
+fn guided_tabbed_setup(config_path: &Path, paths: &AppPaths) -> Result<()> {
+    let plan = recommended_setup_plan(config_path)?;
+    let current = app_setup::load_config(config_path)?;
+    let locations = omaspeak::runtime::discover(&current.backend, config_path);
+    let providers = omaspeak::hardware::provider_availability(&current.backend, &locations);
+    let recommendation = omaspeak::hardware::recommend(&detected_setup_hardware(), providers);
+    let runtimes = [
+        Runtime::Default,
+        Runtime::Openvino,
+        Runtime::Cuda,
+        Runtime::Vulkan,
+        Runtime::Hip,
     ];
-    let Some(selected) = selector.select(
-        "Omaspeak setup",
-        "Choose the part of Omaspeak you want to configure.",
-        &actions,
-        0,
-    )?
-    else {
-        println!("Setup cancelled.");
+    let runtime_items = runtimes
+        .iter()
+        .map(|runtime| {
+            let detected = match runtime {
+                Runtime::Default => providers.packaged_cpu,
+                Runtime::Openvino => providers.openvino,
+                Runtime::Cuda => providers.cuda,
+                Runtime::Vulkan => providers.vulkan,
+                Runtime::Hip => {
+                    current.backend.runtime == Runtime::Hip
+                        && omaspeak::audio_cpp::discover_provider_library(&current, config_path)
+                            .ok()
+                            .flatten()
+                            .is_some()
+                }
+            };
+            let label = format!(
+                "{}{}",
+                runtime.name(),
+                if *runtime == recommendation.runtime {
+                    " · recommended"
+                } else {
+                    ""
+                }
+            );
+            if detected {
+                MenuItem::available(label, "Provider detected")
+            } else {
+                MenuItem::available(
+                    label,
+                    "Provider not detected. Configure it with `omaspeak setup runtime` first.",
+                )
+            }
+        })
+        .collect::<Vec<_>>();
+    let preferred_runtime = runtimes
+        .iter()
+        .position(|runtime| *runtime == recommendation.runtime)
+        .unwrap_or(0);
+    let report = omaspeak::audio_devices::inventory("output", &current.audio.device);
+    let audio = report["devices"]
+        .as_array()
+        .context("device inventory has no devices")?
+        .iter()
+        .map(|device| {
+            let selector = device["selector"].as_str().unwrap_or("default").to_owned();
+            (
+                selector.clone(),
+                MenuItem::available(
+                    device["label"].as_str().unwrap_or(&selector),
+                    selector.clone(),
+                ),
+            )
+        })
+        .collect::<Vec<_>>();
+    let models = omaspeak::catalog::models();
+    let picks = app_setup::tabbed::run(
+        &["Runtime", "Device", "Model", "Voice", "Output", "Apply"],
+        |tab, picks| {
+            let runtime = runtimes[picks[0].unwrap_or(preferred_runtime)];
+            let devices = device_items(runtime);
+            let device = devices[picks[1].unwrap_or(0)].0;
+            let candidate =
+                runtime_configuration_candidate(config_path, runtime, device, None, None)?;
+            let eligible = |model: &omaspeak::catalog::ModelSpec| {
+                model.compatible_with(model.backend, runtime, device)
+            };
+            Ok(match tab {
+                0 => app_setup::tabbed::Page::new(
+                    "Choose runtime",
+                    plan.summary.clone(),
+                    runtime_items.clone(),
+                    preferred_runtime,
+                ),
+                1 => app_setup::tabbed::Page::new(
+                    "Choose device",
+                    "Select a device for this runtime.",
+                    devices.iter().map(|(_, item)| item.clone()).collect(),
+                    devices
+                        .iter()
+                        .position(|(name, _)| *name == recommendation.device)
+                        .unwrap_or(0),
+                ),
+                2 => app_setup::tabbed::Page::new(
+                    "Choose model",
+                    "Compatible catalog models with available downloads or verified local files.",
+                    models
+                        .iter()
+                        .map(|model| {
+                            let ready = model.downloadable
+                                || app_setup::model::verify(paths, model).is_ok();
+                            let detail = format!(
+                                "{} · {} · ~{} MiB",
+                                model.description,
+                                model.license,
+                                model.download_size().div_ceil(1_048_576)
+                            );
+                            if ready && eligible(model) {
+                                MenuItem::available(model.display_name, detail)
+                            } else {
+                                MenuItem::unavailable(
+                                    model.display_name,
+                                    format!(
+                                        "{detail} · incompatible or needs a local model source"
+                                    ),
+                                )
+                            }
+                        })
+                        .collect(),
+                    models
+                        .iter()
+                        .position(|model| model.id == candidate.model.name)
+                        .unwrap_or(0),
+                ),
+                3 => {
+                    let model = &models[picks[2].context("select a model")?];
+                    let preferred = if current.model.name == model.name {
+                        let saved_voice = resolve_voice(&current, None).ok();
+                        model
+                            .voices
+                            .iter()
+                            .position(|voice| Some(voice.id) == saved_voice)
+                            .unwrap_or(0)
+                    } else {
+                        0
+                    };
+                    app_setup::tabbed::Page::new(
+                        "Choose voice",
+                        "Choose the default speaker. Preview is available after setup.",
+                        model
+                            .voices
+                            .iter()
+                            .map(|voice| {
+                                MenuItem::available(voice.name, format!("Speaker ID {}", voice.id))
+                            })
+                            .collect(),
+                        preferred,
+                    )
+                }
+                4 => app_setup::tabbed::Page::new(
+                    "Choose output",
+                    report["error"]
+                        .as_str()
+                        .unwrap_or("System defaults are unchanged."),
+                    audio.iter().map(|(_, item)| item.clone()).collect(),
+                    audio
+                        .iter()
+                        .position(|(selector, _)| *selector == current.audio.device)
+                        .unwrap_or(0),
+                ),
+                5 => {
+                    let model = &models[picks[2].context("select a model")?];
+                    let voice = &model.voices[picks[3].context("select a voice")?];
+                    let output = &audio[picks[4].context("select an output")?].0;
+                    let license = if model.requires_acceptance {
+                        format!(
+                            "\nLicense: {} · {}\nAccepting setup accepts this model license.",
+                            model.license, model.license_url
+                        )
+                    } else {
+                        String::new()
+                    };
+                    app_setup::tabbed::Page::new(
+                        "Review and apply",
+                        format!(
+                            "Runtime: {} · Device: {}\nModel: {} · Voice: {}\nOutput: {}{}\nDownloads and compilation start after Apply.",
+                            runtime.name(),
+                            device,
+                            model.display_name,
+                            voice.name,
+                            output,
+                            license
+                        ),
+                        vec![MenuItem::available(
+                            "Apply setup",
+                            "Install and verify the model, then save settings",
+                        )],
+                        0,
+                    )
+                }
+                _ => unreachable!(),
+            })
+        },
+    )?;
+    let Some(picks) = picks else {
+        println!("Setup cancelled; no changes were made.");
         return Ok(());
     };
-    match selected {
-        0 => guided_full_setup(config_path, paths, operations, selector),
-        1 => guided_runtime(config_path, paths, selector).map(|_| ()),
-        2 => guided_model(config_path, paths, operations, selector).map(|_| ()),
-        3 => app_setup::print_checks(config_path, paths, false),
-        4 => setup_audio(config_path, paths, None, false, false),
-        _ => bail!("interactive setup returned an invalid choice"),
-    }
+    let runtime = runtimes[picks[0]];
+    let devices = device_items(runtime);
+    let device = devices[picks[1]].0;
+    let model = &models[picks[2]];
+    let mut candidate = runtime_configuration_candidate(config_path, runtime, device, None, None)?;
+    candidate.backend.kind = model.backend.into();
+    validate_runtime_configuration(&candidate, config_path, false)?;
+    candidate.audio.device = audio[picks[4]].0.clone();
+    setup_all_with_config(
+        candidate,
+        config_path,
+        paths,
+        &BuiltinModels,
+        model.id,
+        Some(model.voices[picks[3]].id),
+        None,
+        model.requires_acceptance.then_some(model.license),
+        ProgressFormat::Human,
+        app_setup::menu::install,
+        app_setup::systemd::is_active,
+        app_setup::systemd::reload_if_was_active,
+        |config, paths| app_setup::print_checks(config, paths, false),
+        app_setup::print_checks_event,
+    )?;
+    println!("Setup complete.");
+    Ok(())
 }
 
+#[cfg(test)]
 fn guided_full_setup(
     config_path: &Path,
     paths: &AppPaths,
@@ -2368,6 +2694,7 @@ fn guided_full_setup(
     )
 }
 
+#[cfg(test)]
 fn guided_full_setup_with(
     config_path: &Path,
     paths: &AppPaths,
@@ -2392,6 +2719,7 @@ fn guided_full_setup_with(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[cfg(test)]
 fn guided_full_setup_with_validator(
     config_path: &Path,
     paths: &AppPaths,
@@ -2433,7 +2761,8 @@ fn guided_full_setup_with_validator(
     };
     let spec = operations.resolve(&model)?;
     let installed = operations.verify(paths, spec).is_ok();
-    let Some(voice) = choose_voice_for_config(&candidate, paths, spec, installed, selector)? else {
+    let Some(voice) = choose_voice_for_config(&candidate, paths, spec, installed, false, selector)?
+    else {
         println!("Setup cancelled.");
         return Ok(());
     };
@@ -2448,10 +2777,10 @@ fn guided_full_setup_with_validator(
     candidate.audio.device = audio_device;
     let confirmation = [
         MenuItem::available(
-            "Apply setup",
+            "Accept setup",
             "Download and activate the model, then install the desktop launcher. An active daemon restarts; an inactive service remains inactive.",
         ),
-        MenuItem::available("Cancel", "Leave the current configuration unchanged."),
+        MenuItem::available("Back", "Leave the current configuration unchanged."),
     ];
     let summary = format!(
         "Runtime: {} · Device: {} · Model: {} · Voice: {} (ID {}) · Output: {} · Service unit: unchanged (`omaspeak setup systemd` installs it)",
@@ -2462,7 +2791,7 @@ fn guided_full_setup_with_validator(
         voice.id,
         candidate.audio.device,
     );
-    if selector.select("Apply Omaspeak setup", &summary, &confirmation, 0)? != Some(0) {
+    if selector.select("Accept setup", &summary, &confirmation, 0)? != Some(0) {
         println!("Setup cancelled; no changes were made.");
         return Ok(());
     }
@@ -2504,7 +2833,7 @@ fn guided_runtime(
             });
         if !compatible {
             bail!(
-                "model {} is not compatible with direct OpenVINO on {}; run `omaspeak setup` and choose Full setup to select a compatible Supertonic model",
+                "model {} is not compatible with direct OpenVINO on {}; run `omaspeak setup` to select a compatible Supertonic model",
                 config.model.name,
                 selection.device
             );
@@ -2970,7 +3299,7 @@ fn validate_runtime_configuration(
     _explicit_directory: bool,
 ) -> Result<()> {
     if config.backend.kind == "audiocpp" {
-        omaspeak::audio_cpp::discover_provider_library(config, config_path)?
+        omaspeak::audio_cpp::probe_provider(config, config_path)
             .context("audio.cpp provider is not configured")?;
         return Ok(());
     }
@@ -3185,7 +3514,7 @@ fn choose_voice(
     selector: &mut impl SetupSelector,
 ) -> Result<Option<omaspeak::voices::Voice>> {
     let current = app_setup::load_config(config_path)?;
-    choose_voice_for_config(&current, paths, spec, installed, selector)
+    choose_voice_for_config(&current, paths, spec, installed, true, selector)
 }
 
 fn choose_voice_for_config(
@@ -3193,6 +3522,7 @@ fn choose_voice_for_config(
     paths: &AppPaths,
     spec: &omaspeak::catalog::ModelSpec,
     installed: bool,
+    allow_preview: bool,
     selector: &mut impl SetupSelector,
 ) -> Result<Option<omaspeak::voices::Voice>> {
     let mut candidate = current.clone();
@@ -3223,8 +3553,16 @@ fn choose_voice_for_config(
             )
         })
         .collect::<Vec<_>>();
-    let selected =
-        selector.select_voice(&items, preferred, &candidate, paths, &voices, installed)?;
+    let selected = if allow_preview {
+        selector.select_voice(&items, preferred, &candidate, paths, &voices, installed)?
+    } else {
+        selector.select(
+            "Omaspeak voice",
+            "Choose the default speaker. Preview is available after setup.",
+            &items,
+            preferred,
+        )?
+    };
     Ok(selected.map(|index| voices[index].clone()))
 }
 
@@ -3307,7 +3645,7 @@ fn choose_model(
         .unwrap_or_default();
     let Some(selected) = selector.select(
         "Omaspeak model",
-        "Choose a catalog model. Downloads begin only after any required license acceptance.",
+        "Choose a catalog model. Download and NPU cache compilation begin after Accept setup.",
         &items,
         preferred,
     )?
