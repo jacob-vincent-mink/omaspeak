@@ -850,6 +850,8 @@ impl ModelSpec {
             }
         });
         config.backend.device = device;
+        let placement_compatible =
+            self.compatible_with(self.backend, config.backend.runtime, &config.backend.device);
         if !self.compatible_with(
             &config.backend.kind,
             config.backend.runtime,
@@ -862,12 +864,14 @@ impl ModelSpec {
             config.backend.options.clear();
             config.backend.device_id = 0;
             config.backend.fallback = Default::default();
-            config.backend.runtime = if matches!(self.backend, "supertonic" | "kokoro-genai") {
-                Runtime::Openvino
-            } else {
-                Runtime::Default
-            };
-            config.backend.device = "cpu".into();
+            if !placement_compatible {
+                config.backend.runtime = if matches!(self.backend, "supertonic" | "kokoro-genai") {
+                    Runtime::Openvino
+                } else {
+                    Runtime::Default
+                };
+                config.backend.device = "cpu".into();
+            }
         }
         config.backend.kind = self.backend.into();
         config.model.family = self.family.into();

@@ -25,20 +25,30 @@ omaspeak setup
 ```
 
 Setup opens one menu with Runtime, Device, Model, Voice, Output, and Apply tabs.
-The detected recommendation is selected by default. Use Left/Right to move
+On later runs, saved settings are selected by default; the first page also
+shows the hardware recommendation. Use Left/Right to move
 between tabs, Up/Down to highlight another option, and Space to select it.
 Press `r` to restore all recommended choices and jump to the final review;
 Enter there applies them. Enter also advances between tabs. Changing an
 earlier choice updates dependent defaults. Model download and NPU cache
 compilation start only after Apply. Esc or `q` cancels without applying.
+Kokoro on OpenVINO requires the optional native GenAI provider described in
+[its setup guide](docs/KOKORO-OPENVINO-2026.4.md); the menu disables that model
+with a reason when the provider or selected device is unavailable.
 The repeatable terminal E2E suite saves screen frames and JSON results. CI runs
 navigation, backtracking, cancellation, the `r` shortcut, and missing-provider
 rejection; the full suite also exercises setup with cached models:
 
 ```bash
 python3 scripts/verify-setup-tui.py --binary target/debug/omaspeak --suite smoke --artifacts /tmp/omaspeak-setup-e2e
-python3 scripts/verify-setup-tui.py --binary ~/.local/bin/omaspeak --suite full --model-cache ~/.local/share/omaspeak/models/supertonic-3-openvino --custom-model-cache ~/.local/share/omaspeak/models/kokoro-82m-gguf --model-down 1 --artifacts /tmp/omaspeak-setup-e2e-full
+python3 scripts/verify-setup-tui.py --binary ~/.local/bin/omaspeak --suite full --model-cache ~/.local/share/omaspeak/models/supertonic-3-openvino --custom-model-cache ~/.local/share/omaspeak/models/kokoro-82m-gguf --model-down 2 --artifacts /tmp/omaspeak-setup-e2e-full
 ```
+
+`scripts/verify-settings-e2e.py` checks every writable key and advertised enum
+choice with repeated set/unset operations in isolated profiles.
+`scripts/verify-voices-e2e.py` synthesizes and validates a WAV for every voice
+advertised by an active model. Use `--help` to see the required binary, profile,
+and artifact paths.
 
 The same recommendation is available
 as `omaspeak setup --recommended --accept-license OpenRAIL-M` when the selected
@@ -78,7 +88,18 @@ Use `python3 scripts/verify-setup-tui.py --binary ~/.local/bin/omaspeak --custom
 to navigate Customize through runtime and device, then cancel with no files changed.
 Use `--customize-review` to navigate every Customize tab through final Accept,
 revisit the previous tab, and cancel there. To test a full CPU Apply with a
-cached Kokoro model, use `--customize-apply --model-down 1 --model-cache ~/.local/share/omaspeak/models/kokoro-82m-gguf`.
+cached Kokoro model, use `--customize-apply --model-down 2 --model-cache ~/.local/share/omaspeak/models/kokoro-82m-gguf`.
+
+For Kokoro OpenVINO on NPU, run the focused real-terminal case after building
+the optional native bridge and installing the pinned IR:
+
+```bash
+python3 scripts/verify-setup-tui.py --binary target/debug/omaspeak \
+  --scenario openvino-kokoro-apply \
+  --model-cache ~/.local/share/omaspeak/models/kokoro-82m-openvino \
+  --kokoro-library ~/.local/lib/omaspeak/libomaspeak_kokoro_openvino.so \
+  --artifacts /tmp/omaspeak-kokoro-npu-e2e
+```
 
 Browse the same runtime and model catalog without changing the machine:
 

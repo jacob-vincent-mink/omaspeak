@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- Reopen setup with the saved runtime, device, model, and voice selected; keep
+  `r` as the shortcut to the hardware recommendations.
+- Replace Kokoro OpenVINO's Python worker with an optional native C++ GenAI
+  provider. Check that provider before offering the model or downloading files.
+- Discover native providers in user and system install paths, register split
+  OpenVINO device plugins for GenAI, and retain NPU selection when switching
+  between compatible OpenVINO speech models.
+- Preserve an active Kokoro GenAI model when changing OpenVINO devices, and
+  add repeatable settings and every-voice synthesis E2E drivers.
+
 ## 0.1.1-rc.1 - 2026-09-27
 
 - Replace guided setup with one tabbed terminal menu for runtime, device,

@@ -2499,6 +2499,28 @@ fn guided_tabbed_setup(config_path: &Path, paths: &AppPaths) -> Result<()> {
         .iter()
         .position(|runtime| *runtime == recommendation.runtime)
         .unwrap_or(0);
+    let saved = config_path.exists();
+    let initial_runtime = if saved {
+        runtimes
+            .iter()
+            .position(|runtime| *runtime == current.backend.runtime)
+            .unwrap_or(preferred_runtime)
+    } else {
+        preferred_runtime
+    };
+    let summary = if saved {
+        format!(
+            "Current: {} · {} · {}\nRecommended: {} · {} · {}\nPress r to use recommendations, or review your saved choices.",
+            current.backend.runtime.name(),
+            current.backend.device,
+            current.model.name,
+            recommendation.runtime.name(),
+            recommendation.device,
+            plan.model.name,
+        )
+    } else {
+        plan.summary.clone()
+    };
     let report = omaspeak::audio_devices::inventory("output", &current.audio.device);
     let audio = report["devices"]
         .as_array()
@@ -2519,7 +2541,7 @@ fn guided_tabbed_setup(config_path: &Path, paths: &AppPaths) -> Result<()> {
     let picks = app_setup::tabbed::run(
         &["Runtime", "Device", "Model", "Voice", "Output", "Apply"],
         |tab, picks| {
-            let runtime = runtimes[picks[0].unwrap_or(preferred_runtime)];
+            let runtime = runtimes[picks[0].unwrap_or(initial_runtime)];
             let devices = device_items(runtime);
             let device = devices[picks[1].unwrap_or(0)].0;
             let candidate =
@@ -2530,23 +2552,68 @@ fn guided_tabbed_setup(config_path: &Path, paths: &AppPaths) -> Result<()> {
             Ok(match tab {
                 0 => app_setup::tabbed::Page::new(
                     "Choose runtime",
-                    plan.summary.clone(),
+                    summary.clone(),
                     runtime_items.clone(),
-                    preferred_runtime,
-                ),
+                    initial_runtime,
+                )
+                .with_recommended(preferred_runtime),
                 1 => app_setup::tabbed::Page::new(
                     "Choose device",
                     "Select a device for this runtime.",
                     devices.iter().map(|(_, item)| item.clone()).collect(),
                     devices
                         .iter()
+                        .position(|(name, _)| {
+                            *name
+                                == if saved && runtime == current.backend.runtime {
+                                    current.backend.device.as_str()
+                                } else if runtime == recommendation.runtime {
+                                    recommendation.device.as_str()
+                                } else {
+                                    ""
+                                }
+                        })
+                        .unwrap_or(0),
+                )
+                .with_recommended(
+                    devices
+                        .iter()
                         .position(|(name, _)| *name == recommendation.device)
                         .unwrap_or(0),
                 ),
-                2 => app_setup::tabbed::Page::new(
-                    "Choose model",
-                    "Compatible catalog models with available downloads or verified local files.",
-                    models
+                2 => {
+                    let kokoro_provider = if runtime == Runtime::Openvino {
+                        let mut backend = candidate.backend.clone();
+                        backend.kind = "kokoro-genai".into();
+                        Some(omaspeak::kokoro_genai::probe(&backend))
+                    } else {
+                        None
+                    };
+                    let recommended = models
+                        .iter()
+                        .position(|model| {
+                            model.id
+                                == if runtime == recommendation.runtime
+                                    && device == recommendation.device
+                                {
+                                    plan.model.id
+                                } else {
+                                    candidate.model.name.as_str()
+                                }
+                        })
+                        .unwrap_or(0);
+                    let preferred = if saved && runtime == current.backend.runtime {
+                        models
+                            .iter()
+                            .position(|model| model.id == current.model.name)
+                            .unwrap_or(recommended)
+                    } else {
+                        recommended
+                    };
+                    app_setup::tabbed::Page::new(
+                        "Choose model",
+                        "Compatible catalog models with available downloads or verified local files.",
+                        models
                         .iter()
                         .map(|model| {
                             let ready = model.downloadable
@@ -2557,6 +2624,15 @@ fn guided_tabbed_setup(config_path: &Path, paths: &AppPaths) -> Result<()> {
                                 model.license,
                                 model.download_size().div_ceil(1_048_576)
                             );
+                            if model.backend == "kokoro-genai" && eligible(model)
+                                && let Some(probe) = &kokoro_provider
+                                && !probe.ready
+                            {
+                                return MenuItem::unavailable(
+                                    model.display_name,
+                                    format!("{detail} · {}", probe.errors.join("; ")),
+                                );
+                            }
                             if ready && eligible(model) {
                                 MenuItem::available(model.display_name, detail)
                             } else {
@@ -2569,11 +2645,10 @@ fn guided_tabbed_setup(config_path: &Path, paths: &AppPaths) -> Result<()> {
                             }
                         })
                         .collect(),
-                    models
-                        .iter()
-                        .position(|model| model.id == candidate.model.name)
-                        .unwrap_or(0),
-                ),
+                        preferred,
+                    )
+                    .with_recommended(recommended)
+                }
                 3 => {
                     let model = &models[picks[2].context("select a model")?];
                     let preferred = if current.model.name == model.name {
@@ -2598,6 +2673,7 @@ fn guided_tabbed_setup(config_path: &Path, paths: &AppPaths) -> Result<()> {
                             .collect(),
                         preferred,
                     )
+                    .with_recommended(0)
                 }
                 4 => app_setup::tabbed::Page::new(
                     "Choose output",
@@ -3235,7 +3311,14 @@ fn runtime_configuration_candidate(
 ) -> Result<Config> {
     let mut config = app_setup::load_config(config_path)?;
     let backend_kind = if runtime == Runtime::Openvino {
-        "supertonic"
+        if config.backend.kind == "kokoro-genai"
+            && omaspeak::catalog::model(&config.model.name)
+                .is_some_and(|model| model.compatible_with("kokoro-genai", runtime, device))
+        {
+            "kokoro-genai"
+        } else {
+            "supertonic"
+        }
     } else {
         "audiocpp"
     };
@@ -3449,6 +3532,11 @@ fn guided_model(
     if !confirm_model_license(spec, installed, selector)? {
         println!("Model setup cancelled; the model license was not accepted.");
         return Ok(None);
+    }
+    if spec.backend == "kokoro-genai" {
+        let mut candidate = current.clone();
+        activate_model_for_setup(spec, &mut candidate)?;
+        validate_runtime_configuration(&candidate, config_path, false)?;
     }
     let directory = if installed {
         app_setup::model::model_directory(paths, spec)
@@ -4097,6 +4185,11 @@ fn setup_model(
     };
     if let Some(id) = selected {
         let spec = operations.resolve(&id)?;
+        if !no_activate && spec.backend == "kokoro-genai" {
+            let mut candidate = app_setup::load_config(config_path)?;
+            activate_model_for_setup(spec, &mut candidate)?;
+            validate_runtime_configuration(&candidate, config_path, false)?;
+        }
         let directory = operations.install(
             paths,
             spec,

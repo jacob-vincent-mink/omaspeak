@@ -209,6 +209,21 @@ fn model_activation_resets_foreign_runtime_state_but_preserves_compatible_provid
 }
 
 #[test]
+fn switching_openvino_speech_models_keeps_selected_npu() {
+    let mut config = Config::default();
+    model(OPENVINO_MODEL_ID).unwrap().activate(&mut config);
+    config.backend.device = "npu".into();
+    config.backend.openvino_library = Some("/opt/libopenvino_c.so".into());
+    model(KOKORO_OPENVINO_MODEL_ID)
+        .unwrap()
+        .activate(&mut config);
+    assert_eq!(config.backend.kind, "kokoro-genai");
+    assert_eq!(config.backend.runtime, Runtime::Openvino);
+    assert_eq!(config.backend.device, "npu");
+    assert!(config.backend.openvino_library.is_none());
+}
+
+#[test]
 fn kokoro_model_is_pinned_and_audiocpp_compatible() {
     let spec = crate::catalog::model(KOKORO_MODEL_ID).expect("kokoro in catalog");
     assert_eq!(spec.backend, "audiocpp");
