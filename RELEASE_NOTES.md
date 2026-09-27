@@ -1,4 +1,19 @@
-# Omaspeak 0.1.0
+# Omaspeak 0.1.1-rc.1
+
+This release candidate introduces a single tabbed setup menu. Left and Right
+move between runtime, device, model, voice, output, and final review; Up and
+Down highlight choices, Space selects, and Enter advances or applies. Press
+`r` to restore detected recommendations and jump to review. Model downloads,
+NPU cache compilation, config changes, and the optional launcher install start
+only after Apply. `omaspeak setup --recommended` remains available for
+one-command setup.
+
+Setup probes the audio.cpp provider before downloading a model, so a missing
+provider fails without an incomplete download. The terminal E2E suite
+exercises navigation, cancellation, provider failures, and full Apply using
+isolated homes; CI saves the smoke-suite screen frames as an artifact.
+
+## Omaspeak 0.1.0
 
 The new `kokoro-82m-openvino` catalog profile uses OpenVINO GenAI 2026.4 or
 newer on Intel NPU, GPU, and CPU. It pins the INT8 IR, phonemizer data, and

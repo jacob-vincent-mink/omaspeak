@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.1.1-rc.1 - 2026-09-27
+
+- Replace guided setup with one tabbed terminal menu for runtime, device,
+  model, voice, and output choices. Choices can be revisited before Apply, and
+  `r` restores the detected recommendations.
+- Delay model download, NPU cache compilation, and configuration changes until
+  Apply. Keep a one-command recommended setup path.
+- Probe the audio.cpp provider before model download so a missing provider
+  cannot begin an incomplete setup.
+- Add repeatable real-terminal E2E coverage and CI artifacts for setup
+  navigation, cancellation, missing-provider rejection, and Apply paths.
+
 ## 0.1.0 - 2026-09-24
 
 - Add the pinned `kokoro-82m-openvino` catalog profile with two American English
