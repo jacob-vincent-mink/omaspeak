@@ -77,6 +77,36 @@ fn kokoro_inventory_comes_from_the_catalog() {
 }
 
 #[test]
+fn installed_kokoro_voices_require_every_openvino_embedding() {
+    let (mut config, paths) = fixture("kokoro-openvino-installed");
+    let spec = crate::catalog::model(crate::catalog::KOKORO_OPENVINO_MODEL_ID).unwrap();
+    spec.activate(&mut config);
+    let directory = config.model_directory(&paths);
+    fs::create_dir_all(directory.join("voices")).unwrap();
+    fs::write(directory.join(&config.model.file), b"model").unwrap();
+    let missing = installed(&config, &paths).unwrap_err().to_string();
+    assert!(missing.contains("embedding"), "{missing}");
+    for voice in spec.voices {
+        fs::write(
+            directory.join(format!("voices/{}.bin", voice.name)),
+            b"embedding",
+        )
+        .unwrap();
+    }
+    assert_eq!(installed(&config, &paths).unwrap(), from_catalog(spec));
+    config.model.name = "unknown-kokoro".into();
+    let unknown = config.model_directory(&paths);
+    fs::create_dir_all(&unknown).unwrap();
+    fs::write(unknown.join(&config.model.file), b"model").unwrap();
+    assert!(
+        installed(&config, &paths)
+            .unwrap_err()
+            .to_string()
+            .contains("no catalog voice metadata")
+    );
+}
+
+#[test]
 fn catalog_inventory_is_available_before_download() {
     let (mut config, paths) = fixture("catalog");
     assert_eq!(

@@ -24,8 +24,25 @@ Download the archive for your architecture from Releases, extract it, and put
 omaspeak setup
 ```
 
-The guided terminal uses arrow keys and Enter to choose a runtime, model, and
-speaker. It detects accelerator hardware and considers CUDA GPU, Intel NPU,
+Setup opens one menu with Runtime, Device, Model, Voice, Output, and Apply tabs.
+The detected recommendation is selected by default. Use Left/Right to move
+between tabs, Up/Down to highlight another option, and Space to select it.
+Press `r` to restore all recommended choices and jump to the final review;
+Enter there applies them. Enter also advances between tabs. Changing an
+earlier choice updates dependent defaults. Model download and NPU cache
+compilation start only after Apply. Esc or `q` cancels without applying.
+The repeatable terminal E2E suite saves screen frames and JSON results. CI runs
+navigation, backtracking, cancellation, the `r` shortcut, and missing-provider
+rejection; the full suite also exercises setup with cached models:
+
+```bash
+python3 scripts/verify-setup-tui.py --binary target/debug/omaspeak --suite smoke --artifacts /tmp/omaspeak-setup-e2e
+python3 scripts/verify-setup-tui.py --binary ~/.local/bin/omaspeak --suite full --model-cache ~/.local/share/omaspeak/models/supertonic-3-openvino --custom-model-cache ~/.local/share/omaspeak/models/kokoro-82m-gguf --model-down 1 --artifacts /tmp/omaspeak-setup-e2e-full
+```
+
+The same recommendation is available
+as `omaspeak setup --recommended --accept-license OpenRAIL-M` when the selected
+model requires that license and is not already installed. It detects accelerator hardware and considers CUDA GPU, Intel NPU,
 Intel GPU through OpenVINO, then a Vulkan-capable GPU. It recommends the first
 candidate with a complete provider, or the packaged CPU fallback. If no provider
 is present, it highlights the best hardware candidate and explains what is
@@ -48,6 +65,20 @@ exits.
 `setup all` installs the verified model and desktop settings launcher. It does
 not install or start a service. `say` starts inference on demand when no daemon
 is running.
+
+To repeat a full TUI Apply without changing your active configuration, run
+`python3 scripts/verify-setup-tui.py --binary ~/.local/bin/omaspeak --model-cache ~/.local/share/omaspeak/models/supertonic-3-openvino`.
+The script verifies the cached model first, then uses isolated XDG directories
+to check the final Accept page, model proof, NPU cache preparation when
+applicable, config, and launcher.
+Use `python3 scripts/verify-setup-tui.py --binary ~/.local/bin/omaspeak --cancel-before-accept`
+to confirm that backing out of the final page creates no config, model,
+launcher, or compiled cache files.
+Use `python3 scripts/verify-setup-tui.py --binary ~/.local/bin/omaspeak --customize`
+to navigate Customize through runtime and device, then cancel with no files changed.
+Use `--customize-review` to navigate every Customize tab through final Accept,
+revisit the previous tab, and cancel there. To test a full CPU Apply with a
+cached Kokoro model, use `--customize-apply --model-down 1 --model-cache ~/.local/share/omaspeak/models/kokoro-82m-gguf`.
 
 Browse the same runtime and model catalog without changing the machine:
 
