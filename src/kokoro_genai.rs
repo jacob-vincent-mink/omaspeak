@@ -398,6 +398,37 @@ mod tests {
         let result = probe(&config);
         assert!(!result.ready);
         assert!(result.errors[0].contains("native provider is missing"));
+        config
+            .options
+            .insert("kokoro_library".into(), "relative/kokoro.so".into());
+        assert!(probe(&config).errors[0].contains("must be absolute"));
+    }
+
+    #[test]
+    fn rejects_corrupt_voice_embeddings_before_loading_native_code() {
+        let root =
+            std::env::temp_dir().join(format!("omaspeak-voice-validation-{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        let voice = root.join("voice.bin");
+        fs::write(&voice, []).unwrap();
+        assert!(read_voice(&voice).unwrap_err().to_string().contains("size"));
+        fs::write(&voice, [0u8; 3]).unwrap();
+        assert!(read_voice(&voice).unwrap_err().to_string().contains("size"));
+        fs::write(&voice, f32::NAN.to_le_bytes()).unwrap();
+        assert!(
+            read_voice(&voice)
+                .unwrap_err()
+                .to_string()
+                .contains("non-finite")
+        );
+        fs::remove_file(&voice).unwrap();
+        assert!(
+            read_voice(&voice)
+                .unwrap_err()
+                .to_string()
+                .contains("read Kokoro voice")
+        );
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -422,12 +453,20 @@ mod tests {
 unsigned omaspeak_kokoro_abi_version(void) { return 2; }
 int omaspeak_kokoro_probe(const char* device, const char* plugin, char* error, size_t capacity) {
     if (capacity) error[0] = 0;
+    if (strcmp(device, "GPU") == 0) {
+        if (capacity > 12) strcpy(error, "GPU rejected");
+        return 1;
+    }
     return strcmp(device, "NPU") == 0 && plugin && strstr(plugin, "npu_plugin.so") ? 0 : 1;
 }
 int omaspeak_kokoro_open(const char* model, const char* device, const char* plugin,
                          void** pipeline, char* error, size_t capacity) {
     if (capacity) error[0] = 0;
     if (!model || !device || !plugin) return 1;
+    if (strstr(model, "reject-open")) {
+        if (capacity > 13) strcpy(error, "open rejected");
+        return 1;
+    }
     *pipeline = malloc(1);
     return *pipeline ? 0 : 1;
 }
@@ -436,11 +475,20 @@ int omaspeak_kokoro_generate(void* pipeline, const char* text, const float* voic
                              unsigned* rate, char* error, size_t capacity) {
     if (capacity) error[0] = 0;
     if (!pipeline || !text || !voice || voice_count != 2) return 1;
+    if (strcmp(text, "reject") == 0) {
+        if (capacity > 18) strcpy(error, "synthesis rejected");
+        return 1;
+    }
+    if (strcmp(text, "empty") == 0) {
+        *output = NULL; *count = 0; *rate = 24000;
+        return 0;
+    }
     *output = malloc(4 * sizeof(float));
     if (!*output) return 1;
     (*output)[0] = voice[0]; (*output)[1] = voice[1];
     (*output)[2] = 0.25f; (*output)[3] = -0.25f;
-    *count = 4; *rate = 24000;
+    if (strcmp(text, "nonfinite") == 0) (*output)[2] = 0.0f / 0.0f;
+    *count = 4; *rate = strcmp(text, "wrong-rate") == 0 ? 16000 : 24000;
     return 0;
 }
 void omaspeak_kokoro_free_samples(float* samples) { free(samples); }
@@ -479,6 +527,13 @@ void omaspeak_kokoro_close(void* pipeline) { free(pipeline); }
             runtime_dir: root.join("run"),
         };
         let model = config.model_directory(&paths);
+        assert!(
+            KokoroGenAiBackend::create(&config, &paths)
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("asset is missing")
+        );
         fs::create_dir_all(model.join("voices")).unwrap();
         for name in ["openvino_model.xml", "openvino_model.bin", "config.json"] {
             fs::write(model.join(name), b"fixture").unwrap();
@@ -491,14 +546,57 @@ void omaspeak_kokoro_close(void* pipeline) { free(pipeline); }
             .unwrap();
         }
         assert!(probe(&config.backend).ready);
+        assert_eq!(
+            device_plugin(&config.backend, &CString::new("NPU").unwrap())
+                .unwrap()
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            plugins
+                .join("libopenvino_intel_npu_plugin.so")
+                .to_str()
+                .unwrap()
+        );
+        let mut rejected_probe = config.backend.clone();
+        rejected_probe.device = "gpu".into();
+        let rejected = probe(&rejected_probe);
+        assert!(!rejected.ready);
+        assert!(rejected.errors[0].contains("GPU rejected"));
         let backend = KokoroGenAiBackend::create(&config, &paths).unwrap();
+        assert_eq!(backend.kind(), "kokoro-genai");
+        assert_eq!(backend.sample_rate(), 24_000);
+        assert_eq!(backend.num_voices(), 2);
         assert_eq!(
             backend.generate("hello", 1.0, 0).unwrap(),
             [0.5, -0.5, 0.25, -0.25]
         );
         assert!(backend.generate("hello", 1.1, 0).is_err());
         assert!(backend.generate("hello", 1.0, 9).is_err());
+        assert!(backend.generate("nul\0byte", 1.0, 0).is_err());
+        for (input, expected) in [
+            ("reject", "synthesis rejected"),
+            ("empty", "invalid audio"),
+            ("wrong-rate", "invalid audio"),
+            ("nonfinite", "non-finite audio"),
+        ] {
+            let error = backend.generate(input, 1.0, 0).unwrap_err();
+            assert!(
+                format!("{error:#}").contains(expected),
+                "{input}: {error:#}"
+            );
+        }
         drop(backend);
+        let rejected_model = root.join("reject-open");
+        fs::rename(&model, &rejected_model).unwrap();
+        // A valid asset set can still be rejected by the native pipeline.
+        config.model.directory = rejected_model.display().to_string();
+        assert!(
+            format!(
+                "{:#}",
+                KokoroGenAiBackend::create(&config, &paths).err().unwrap()
+            )
+            .contains("open rejected")
+        );
         fs::remove_dir_all(root).unwrap();
     }
 }
