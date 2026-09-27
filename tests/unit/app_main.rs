@@ -4357,7 +4357,7 @@ fn runtime_picker_visibly_preselects_detected_npu_without_claiming_readiness() {
 }
 
 #[test]
-fn fresh_runtime_picker_recommends_a_discoverable_external_cuda_provider() {
+fn fresh_runtime_picker_does_not_infer_cuda_from_a_library_path() {
     struct Selector {
         input_calls: usize,
     }
@@ -4403,10 +4403,10 @@ fn fresh_runtime_picker_recommends_a_discoverable_external_cuda_provider() {
     .unwrap()
     .unwrap();
 
-    assert_eq!(selected.runtime, Runtime::Cuda);
-    assert_eq!(selected.device, "gpu");
+    assert_eq!(selected.runtime, Runtime::Default);
+    assert_eq!(selected.device, "cpu");
     assert_eq!(selected.directory, None);
-    assert_eq!(selector.input_calls, 1, "only the GPU index is requested");
+    assert_eq!(selector.input_calls, 0);
 }
 
 #[test]
@@ -4660,6 +4660,24 @@ fn runtime_switch_resolves_model_format_and_retains_voice_on_same_backend() {
             ..
         }
     ));
+}
+
+#[test]
+fn openvino_device_change_keeps_active_kokoro_genai_model() {
+    let root = sandbox();
+    let paths = paths(&root);
+    let mut config = Config::default();
+    let kokoro = omaspeak::catalog::model("kokoro-82m-openvino").unwrap();
+    kokoro.activate(&mut config);
+    config.backend.device = "cpu".into();
+    config.save(&paths.config_file).unwrap();
+
+    let candidate =
+        runtime_configuration_candidate(&paths.config_file, Runtime::Openvino, "npu", None, None)
+            .unwrap();
+    assert_eq!(candidate.backend.kind, "kokoro-genai");
+    assert_eq!(candidate.backend.device, "npu");
+    assert_eq!(candidate.model.name, "kokoro-82m-openvino");
 }
 
 #[test]

@@ -43,25 +43,17 @@ pub fn provider_availability(
     locations: &LibraryPathReport,
 ) -> ProviderAvailability {
     let selected_audio = locations.audiocpp_library.as_deref();
-    let external_audio = selected_audio.is_some_and(|library| {
-        (config.runtime != Runtime::Default && config.library.is_some())
-            || (config.library.is_none()
-                && !locations
-                    .package_library_dirs
-                    .iter()
-                    .any(|directory| library.starts_with(directory)))
-    });
     let packaged_cpu =
         crate::runtime::find_versioned_library(&locations.package_library_dirs, "libaudiocpp.so")
             .is_some()
-            || (config.runtime == Runtime::Default && selected_audio.is_some() && !external_audio);
+            || (config.runtime == Runtime::Default && selected_audio.is_some());
     ProviderAvailability {
         packaged_cpu,
-        // The public audio.cpp ABI proves that the provider is complete, but
-        // only Apply with a model proves the compiled accelerator backend.
-        cuda: selected_audio.is_some() && (config.runtime == Runtime::Cuda || external_audio),
+        // A discovered library alone does not prove CUDA or Vulkan registration.
+        // Preserve an explicitly selected accelerator; Apply proves it with a model.
+        cuda: selected_audio.is_some() && config.runtime == Runtime::Cuda,
         openvino: locations.runtime_loadable.get("openvino") == Some(&true),
-        vulkan: selected_audio.is_some() && (config.runtime == Runtime::Vulkan || external_audio),
+        vulkan: selected_audio.is_some() && config.runtime == Runtime::Vulkan,
     }
 }
 

@@ -324,9 +324,16 @@ fn system_library_dirs() -> impl Iterator<Item = PathBuf> {
         "aarch64" => Some("aarch64-linux-gnu"),
         _ => None,
     };
-    ["/lib", "/usr/lib", "/lib64", "/usr/lib64", "/usr/local/lib"]
-        .into_iter()
+    let user_dirs = std::env::var_os("HOME")
         .map(PathBuf::from)
+        .into_iter()
+        .flat_map(|home| [home.join(".local/lib/omaspeak"), home.join(".local/lib")]);
+    user_dirs
+        .chain(
+            ["/lib", "/usr/lib", "/lib64", "/usr/lib64", "/usr/local/lib"]
+                .into_iter()
+                .map(PathBuf::from),
+        )
         .chain(
             architecture
                 .into_iter()

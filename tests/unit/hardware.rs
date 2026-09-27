@@ -129,7 +129,7 @@ fn missing_and_malformed_sysfs_are_advisory() {
 }
 
 #[test]
-fn fresh_config_recognizes_an_external_audio_provider_as_an_accelerator_candidate() {
+fn fresh_config_does_not_assume_a_discovered_audio_library_supports_accelerators() {
     let root = sandbox();
     let external = root.join("external/libaudiocpp.so.0");
     fs::create_dir_all(external.parent().unwrap()).unwrap();
@@ -147,8 +147,8 @@ fn fresh_config_recognizes_an_external_audio_provider_as_an_accelerator_candidat
         remediation: Vec::new(),
     };
     let providers = provider_availability(&BackendConfig::default(), &locations);
-    assert!(!providers.packaged_cpu);
-    assert!(providers.cuda);
-    assert!(providers.vulkan);
+    assert!(providers.packaged_cpu);
+    assert!(!providers.cuda);
+    assert!(!providers.vulkan);
     assert!(!providers.openvino);
 }
