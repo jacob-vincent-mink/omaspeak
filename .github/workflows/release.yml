@@ -40,7 +40,7 @@ jobs:
           set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            binutils ca-certificates cmake curl g++ git libgomp1 ninja-build xz-utils
+            binutils ca-certificates cmake curl g++ git libgomp1 ninja-build ocl-icd-libopencl1 xz-utils
 
       - uses: dtolnay/rust-toolchain@stable
       - uses: taiki-e/install-action@v2
