@@ -262,7 +262,10 @@ pub(super) fn serve(
 ) -> Result<()> {
     let config = Config::load(config_path)?;
     anyhow::ensure!(
-        matches!(config.backend.kind.as_str(), "audiocpp" | "supertonic"),
+        matches!(
+            config.backend.kind.as_str(),
+            "audiocpp" | "supertonic" | "kokoro-genai"
+        ),
         "unsupported TTS backend"
     );
     let (socket, _startup_lock) = prepare_daemon_socket(paths)?;

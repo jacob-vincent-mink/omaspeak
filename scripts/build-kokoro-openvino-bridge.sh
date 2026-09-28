@@ -20,8 +20,8 @@ ${CXX:-c++} -std=c++17 -O2 -fPIC -shared \
   -I "${GENAI_GENERATED_INCLUDE_DIR:-${genai_include}}" \
   -I "${OPENVINO_INCLUDE_DIR:-/usr/include}" \
   "${source_dir}/native/kokoro_openvino_bridge.cpp" \
-  -L "${genai_lib}" -lopenvino_genai -lopenvino \
-  -Wl,-rpath,'$ORIGIN' -Wl,-rpath,"${genai_lib}" \
+  -L "${genai_lib}" -lopenvino_genai -lopenvino -ldl \
+  -Wl,-rpath,'$ORIGIN' \
   -o "${output_library}"
 
 echo "${output_library}"

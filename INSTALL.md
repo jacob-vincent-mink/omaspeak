@@ -16,6 +16,10 @@ cp -a omaspeak-VERSION-linux-ARCH/lib/. ~/.local/lib/omaspeak/
 When the executable is installed in `~/.local/bin`, Omaspeak discovers the
 package provider in `~/.local/lib/omaspeak`. It also supports a `lib/` directory
 beside the executable, which makes the extracted archive runnable in place.
+The release also includes `libomaspeak_kokoro_openvino.so` for optional Kokoro
+synthesis through OpenVINO GenAI 2026.4. Install the matching OpenVINO and
+OpenVINO GenAI runtime libraries with Misaki C++ enabled to use it. No Python
+environment is needed.
 
 Run the keyboard-driven setup:
 

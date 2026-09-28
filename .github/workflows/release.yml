@@ -69,6 +69,14 @@ jobs:
           cargo test --locked -- --test-threads=1
           cargo build --release --locked
 
+      - name: Build the optional Kokoro OpenVINO bridge
+        run: |
+          set -euo pipefail
+          provider="${RUNNER_TEMP}/libomaspeak_kokoro_openvino.so"
+          ./scripts/build-release-kokoro-bridge.sh \
+            "${PACKAGE_ARCH}" "${provider}" "${RUNNER_TEMP}/openvino-genai-sdk"
+          echo "KOKORO_PROVIDER=${provider}" >> "${GITHUB_ENV}"
+
       - name: Stage the release
         id: package
         run: |
@@ -88,6 +96,7 @@ jobs:
           cargo about generate about.hbs > "${root}/licenses/RUST-DEPENDENCIES.txt"
           cp target/release/omaspeak "${root}/omaspeak"
           cp "${AUDIOCPP_PROVIDER}" "${root}/lib/libaudiocpp.so.0.1.0"
+          cp "${KOKORO_PROVIDER}" "${root}/lib/libomaspeak_kokoro_openvino.so"
           ln -s libaudiocpp.so.0.1.0 "${root}/lib/libaudiocpp.so.0"
           ln -s libaudiocpp.so.0 "${root}/lib/libaudiocpp.so"
           while IFS= read -r -d '' license; do
@@ -107,7 +116,7 @@ jobs:
           cp README.md INSTALL.md ACCELERATOR_SETUP.md RUNTIME.md CHANGELOG.md RELEASE_NOTES.md DEMO.md config.example.toml "${root}/"
           cp -a assets benchmarks packaging "${root}/"
           mkdir -p "${root}/docs"
-          cp docs/AUDIO-DEVICES.md "${root}/docs/"
+          cp docs/AUDIO-DEVICES.md docs/KOKORO-OPENVINO-2026.4.md "${root}/docs/"
           tar -C dist -cJf "dist/${package}.tar.xz" "${package}"
           (cd dist && sha256sum "${package}.tar.xz" > "${package}.sha256")
           echo "name=${package}" >> "${GITHUB_OUTPUT}"
@@ -119,11 +128,18 @@ jobs:
           root="dist/${package}"
           binary="${root}/omaspeak"
           provider="${root}/lib/libaudiocpp.so.0.1.0"
+          kokoro="${root}/lib/libomaspeak_kokoro_openvino.so"
           expected_version="${package#omaspeak-}"
           expected_version="${expected_version%-linux-${PACKAGE_ARCH}}"
           [[ "$("${binary}" --version)" == "omaspeak ${expected_version}" ]]
           [[ "$(readelf -d "${provider}" | sed -n 's/.*Library soname: \[\([^]]*\)\].*/\1/p')" == "libaudiocpp.so.0" ]]
-          test "$(find "${root}/lib" -maxdepth 1 -type f | wc -l)" -eq 1
+          test "$(find "${root}/lib" -maxdepth 1 -type f | wc -l)" -eq 2
+          test -s "${kokoro}"
+          for symbol in omaspeak_kokoro_abi_version omaspeak_kokoro_probe omaspeak_kokoro_open omaspeak_kokoro_generate omaspeak_kokoro_free_samples omaspeak_kokoro_close; do
+            nm -D --defined-only "${kokoro}" | grep "${symbol}" >/dev/null
+          done
+          readelf -d "${kokoro}" | grep -q 'Shared library: \[libopenvino_genai.so.2640\]'
+          readelf -d "${kokoro}" | grep -q 'Shared library: \[libopenvino.so.2640\]'
           test "$(find "${root}/lib" -maxdepth 1 -type l | wc -l)" -eq 2
           test -L "${root}/lib/libaudiocpp.so.0"
           test -L "${root}/lib/libaudiocpp.so"

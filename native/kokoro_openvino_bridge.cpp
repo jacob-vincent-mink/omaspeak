@@ -9,17 +9,26 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <dlfcn.h>
 #include <exception>
 #include <memory>
 #include <stdexcept>
 #include <string>
 #include <vector>
 
-// GenAI's TTS implementation uses this core. Registering on a separate
-// ov::Core would leave the pipeline unable to see distribution-split plugins.
-namespace ov::genai::utils { ov::Core& singleton_core(); }
-
 namespace {
+// Some GenAI builds export their shared core; official archives keep it private.
+// Use it when available so separately packaged device plugins are visible to
+// the pipeline. Otherwise probe with a local core and let GenAI discover its
+// bundled plugins when the pipeline opens.
+ov::Core& probe_core() {
+    using SingletonCore = ov::Core& (*)();
+    if (void* symbol = dlsym(RTLD_DEFAULT, "_ZN2ov5genai5utils14singleton_coreEv"))
+        return reinterpret_cast<SingletonCore>(symbol)();
+    static ov::Core fallback;
+    return fallback;
+}
+
 void require_2026_4(const char* label, const char* build) {
     int year = 0;
     int minor = 0;
@@ -35,7 +44,7 @@ void ensure_device(const char* device, const char* plugin) {
     const std::string requested(device);
     if (requested != "CPU" && requested != "GPU" && requested != "NPU")
         throw std::runtime_error("Kokoro requires CPU, GPU, or NPU");
-    auto& core = ov::genai::utils::singleton_core();
+    auto& core = probe_core();
     auto devices = core.get_available_devices();
     auto found = [&] {
         return std::any_of(devices.begin(), devices.end(), [&](const auto& name) {

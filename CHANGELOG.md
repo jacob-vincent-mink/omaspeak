@@ -1,6 +1,13 @@
 # Changelog
 
-## Unreleased
+## 0.1.1-rc.2 - 2026-09-27
+
+- Ship the optional Kokoro C++ bridge in both Linux release archives, built
+  against checksummed OpenVINO GenAI 2026.4 SDKs.
+- Accept native Kokoro GenAI in the daemon and verify NPU synthesis through
+  the normal request path.
+- Load with official GenAI builds that keep their internal core symbol private.
+
 
 - Reopen setup with the saved runtime, device, model, and voice selected; keep
   `r` as the shortcut to the hardware recommendations.

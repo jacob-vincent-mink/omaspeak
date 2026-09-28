@@ -1,4 +1,13 @@
-# Omaspeak 0.1.1-rc.1
+# Omaspeak 0.1.1-rc.2
+
+This candidate replaces the Kokoro Python worker with a native C++ bridge and
+ships that bridge in `lib/` for both Linux architectures. The daemon accepts
+Kokoro GenAI requests; setup probes the bridge and the selected device before
+activating the model. Kokoro needs OpenVINO and OpenVINO GenAI 2026.4 runtime
+libraries built with Misaki C++ support. The Omarchy `openvino-genai` package
+needs `ENABLE_MISAKI_CPP=ON` for this path; no Python runtime is required.
+
+## Omaspeak 0.1.1-rc.1
 
 This release candidate introduces a single tabbed setup menu. Left and Right
 move between runtime, device, model, voice, output, and final review; Up and

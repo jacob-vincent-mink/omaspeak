@@ -4806,7 +4806,14 @@ fn recommended_apply_validates_runtime_after_license_choice_and_before_install()
         candidate.backend.runtime = Runtime::Openvino;
         candidate.backend.device = "npu".into();
         model.activate(&mut candidate);
-        candidate.backend.library_dirs = vec![PathBuf::from("relative-invalid-runtime")];
+        if model.backend == "kokoro-genai" {
+            candidate
+                .backend
+                .options
+                .insert("kokoro_library".into(), "relative-invalid-runtime".into());
+        } else {
+            candidate.backend.library_dirs = vec![PathBuf::from("relative-invalid-runtime")];
+        }
         RecommendedSetupPlan {
             candidate,
             model,
