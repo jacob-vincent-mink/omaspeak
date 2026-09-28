@@ -48,7 +48,9 @@ test -f "${lib}/libopenvino_genai.so"
 strip --strip-unneeded "${output_library}"
 readelf -d "${output_library}" | grep -q 'Shared library: \[libopenvino_genai.so.2640\]'
 readelf -d "${output_library}" | grep -q 'Shared library: \[libopenvino.so.2640\]'
-if LD_LIBRARY_PATH="${lib}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" ldd -r "${output_library}" | grep -E 'not found|undefined symbol'; then
+tbb_lib="${sdk}/3rdparty/tbb/lib"
+test -f "${tbb_lib}/libtbb.so.12"
+if LD_LIBRARY_PATH="${lib}:${tbb_lib}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" ldd -r "${output_library}" | grep -E 'not found|undefined symbol'; then
   echo 'Kokoro bridge has unresolved SDK dependencies' >&2
   exit 1
 fi
