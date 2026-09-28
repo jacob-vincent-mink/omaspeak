@@ -3,7 +3,11 @@
 Omaspeak uses OpenVINO GenAI's C++ `Text2SpeechPipeline` through a small C ABI
 bridge. The application downloads the pinned model with Rust and does not run
 Python. The bridge is an optional provider; setup checks that it loads and can
-see the selected device before downloading the model.
+see the selected device before downloading the model. Linux release archives
+include the bridge in `lib/`; copy that directory beside the executable or to
+`~/.local/lib/omaspeak`. OpenVINO and OpenVINO GenAI 2026.4 runtime libraries
+must be installed separately with `ENABLE_MISAKI_CPP=ON`; a runtime built
+without Misaki can detect NPU but cannot load Kokoro.
 
 ## Build the native provider
 

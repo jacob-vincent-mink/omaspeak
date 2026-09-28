@@ -19,6 +19,13 @@ licenses collected during the pinned build and conservatively includes
 llama.cpp's MIT license as `LLAMA-CPP-LICENSE`. Native model management is
 disabled, so cpp-httplib is neither compiled into nor shipped with the provider.
 
+## Kokoro OpenVINO bridge
+
+Linux releases include Omaspeak's optional C++ bridge for OpenVINO GenAI
+2026.4. The bridge is built against Intel's checksummed 2026.4 SDK and links
+to, but does not bundle, the OpenVINO or OpenVINO GenAI runtime libraries.
+Those runtimes are separately installed under Intel's Apache-2.0 license.
+
 ## Supertonic reference code
 
 Parts of the direct OpenVINO frontend are derived from Supertone's MIT-licensed
