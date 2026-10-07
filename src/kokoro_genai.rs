@@ -355,6 +355,18 @@ impl TtsBackend for KokoroGenAiBackend {
         );
         Ok(output)
     }
+    fn generate_stream(
+        &self,
+        text: &str,
+        speed: f32,
+        voice: i32,
+        sink: &mut dyn FnMut(&[f32]) -> Result<()>,
+    ) -> Result<()> {
+        for chunk in crate::supertonic::chunk_text(text, 240) {
+            sink(&self.generate(&chunk, speed, voice)?)?;
+        }
+        Ok(())
+    }
 }
 
 impl Drop for KokoroGenAiBackend {

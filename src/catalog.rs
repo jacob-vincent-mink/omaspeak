@@ -6,6 +6,7 @@ use crate::config::Config;
 pub const DEFAULT_MODEL_ID: &str = "supertonic-3-gguf";
 pub const OPENVINO_MODEL_ID: &str = "supertonic-3-openvino";
 pub const KOKORO_MODEL_ID: &str = "kokoro-82m-gguf";
+pub const PARADEE_MODEL_ID: &str = "paradee-8m-openvino";
 pub const KOKORO_OPENVINO_MODEL_ID: &str = "kokoro-82m-openvino";
 
 pub const SUPERTONIC_VOICE_NAMES: [&str; 10] =
@@ -392,6 +393,11 @@ const BACKENDS: &[BackendSpec] = &[
         name: "OpenVINO GenAI Kokoro",
         description: "Kokoro INT8 synthesis through OpenVINO GenAI 2026.4 or newer",
     },
+    BackendSpec {
+        kind: "paradee-openvino",
+        name: "Paradee OpenVINO",
+        description: "Paradee FP32 on OpenVINO CPU with native eSpeak NG/Misaki fallback frontend",
+    },
 ];
 
 const GGUF_FILES: &[ModelFile] = &[ModelFile {
@@ -617,6 +623,21 @@ const KOKORO_OPENVINO_FILES: &[ModelFile] = &[
     },
 ];
 
+const PARADEE_FILES: &[ModelFile] = &[
+    ModelFile {
+        path: "paradee.onnx",
+        url: "https://huggingface.co/sahilmahendrakar/Paradee-8M-v1.0/resolve/8f34b01ef8adcb0bec470b89bf2fd62a7b2369e6/onnx/paradee.onnx?download=true",
+        size: 36_986_117,
+        sha256: "77b8bb28caf3dddda0cc61d16b700febc187ee6336c695d7865b1e77e452ee11",
+    },
+    ModelFile {
+        path: "config.json",
+        url: "https://huggingface.co/sahilmahendrakar/Paradee-8M-v1.0/resolve/8f34b01ef8adcb0bec470b89bf2fd62a7b2369e6/config.json?download=true",
+        size: 1_774,
+        sha256: "f24046974a3a8c747affefb45c7c504263a99d5081787908b16abe8f5ac94fcd",
+    },
+];
+
 const MODELS: &[ModelSpec] = &[
     ModelSpec {
         id: DEFAULT_MODEL_ID,
@@ -758,6 +779,44 @@ const MODELS: &[ModelSpec] = &[
         min_openvino_version: "2026.4.0",
         files: KOKORO_OPENVINO_FILES,
     },
+    ModelSpec {
+        id: PARADEE_MODEL_ID,
+        backend: "paradee-openvino",
+        family: "paradee",
+        name: PARADEE_MODEL_ID,
+        display_name: "Paradee 8M · OpenVINO CPU",
+        description: "Experimental English af_heart single-voice FP32 model; requires native espeak-ng",
+        license: "Apache-2.0",
+        license_url: "https://huggingface.co/sahilmahendrakar/Paradee-8M-v1.0/blob/8f34b01ef8adcb0bec470b89bf2fd62a7b2369e6/LICENSE",
+        license_status: "Apache-2.0 official model; native eSpeak NG frontend separately GPL-3.0",
+        downloadable: true,
+        requires_acceptance: false,
+        source_revision: "8f34b01ef8adcb0bec470b89bf2fd62a7b2369e6",
+        artifact_source: "https://huggingface.co/sahilmahendrakar/Paradee-8M-v1.0",
+        artifact_revision: "8f34b01ef8adcb0bec470b89bf2fd62a7b2369e6",
+        original_model_source: "https://huggingface.co/sahilmahendrakar/Paradee-8M-v1.0",
+        original_model_revision: "8f34b01ef8adcb0bec470b89bf2fd62a7b2369e6",
+        license_file: "MODEL-LICENSE",
+        license_sha256: "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+        model_file: "paradee.onnx",
+        duration_predictor: "",
+        text_encoder: "",
+        vector_estimator: "",
+        vocoder: "",
+        tts_json: "config.json",
+        unicode_indexer: "",
+        voice_style: "",
+        language: "en-us",
+        steps: 0,
+        voices: &[VoiceSpec {
+            id: 0,
+            name: "af_heart",
+        }],
+        openvino_capable: true,
+        npu_capable: false,
+        min_openvino_version: "2026.4.0",
+        files: PARADEE_FILES,
+    },
 ];
 
 pub fn backends() -> &'static [BackendSpec] {
@@ -771,6 +830,9 @@ pub fn model(id: &str) -> Option<&'static ModelSpec> {
 }
 
 pub fn model_license_text(spec: &ModelSpec) -> Option<&'static str> {
+    if spec.family == "paradee" {
+        return Some(include_str!("../licenses/PARADEE-8M-MODEL-LICENSE"));
+    }
     match spec.license {
         "OpenRAIL-M" => Some(include_str!("../licenses/SUPERTONIC-3-MODEL-LICENSE")),
         "Apache-2.0" => Some(include_str!("../licenses/KOKORO-82M-MODEL-LICENSE")),
@@ -788,6 +850,7 @@ pub fn default_model(
         "audiocpp" => DEFAULT_MODEL_ID,
         "supertonic" => OPENVINO_MODEL_ID,
         "kokoro-genai" => KOKORO_OPENVINO_MODEL_ID,
+        "paradee-openvino" => PARADEE_MODEL_ID,
         _ => anyhow::bail!("no catalog default for backend {backend:?}"),
     };
     let spec = model(id).expect("catalog default exists");
@@ -825,6 +888,9 @@ impl ModelSpec {
                 runtime,
                 Runtime::Default | Runtime::Cuda | Runtime::Vulkan | Runtime::Hip
             ),
+            "paradee-openvino" => {
+                runtime == Runtime::Openvino && device.trim().eq_ignore_ascii_case("cpu")
+            }
             "supertonic" | "kokoro-genai" => {
                 runtime == Runtime::Openvino
                     && self.openvino_capable
@@ -865,7 +931,10 @@ impl ModelSpec {
             config.backend.device_id = 0;
             config.backend.fallback = Default::default();
             if !placement_compatible {
-                config.backend.runtime = if matches!(self.backend, "supertonic" | "kokoro-genai") {
+                config.backend.runtime = if matches!(
+                    self.backend,
+                    "supertonic" | "kokoro-genai" | "paradee-openvino"
+                ) {
                     Runtime::Openvino
                 } else {
                     Runtime::Default

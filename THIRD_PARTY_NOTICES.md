@@ -44,3 +44,10 @@ official `supertone-oss-archive/supertonic-3` archive; the default GGUF is an
 audio.cpp conversion. Both remain under BigScience OpenRAIL-M. Setup requires
 explicit acceptance, verifies each pinned file, and atomically stores the model
 license and canonical provenance manifest beside the installed weights.
+
+The optional Paradee profile downloads the pinned official `sahilmahendrakar/Paradee-8M-v1.0`
+FP32 graph and vocabulary metadata under Apache-2.0. Its model license is retained
+in `licenses/PARADEE-8M-MODEL-LICENSE` and beside downloaded model assets. Paradee
+uses a separately installed native eSpeak NG executable and English data; eSpeak
+NG is GPL-3.0 and is not bundled in these archives. See `docs/PARADEE.md` for
+frontend and pronunciation limitations.

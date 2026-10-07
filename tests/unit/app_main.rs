@@ -679,7 +679,10 @@ fn config_helpers_cover_supported_values_defaults_and_schema() {
         .iter()
         .find(|item| item["key"] == "model.family")
         .unwrap();
-    assert_eq!(family["choices"], json!(["supertonic", "kokoro"]));
+    assert_eq!(
+        family["choices"],
+        json!(["supertonic", "kokoro", "paradee"])
+    );
     assert!(
         description["keys"]
             .as_array()
@@ -708,7 +711,11 @@ fn config_helpers_cover_supported_values_defaults_and_schema() {
             .iter()
             .filter_map(|entry| entry["prefix"].as_str())
             .collect::<Vec<_>>(),
-        ["backend.options.", "model.options."]
+        [
+            "backend.cloud.voices.",
+            "backend.options.",
+            "model.options."
+        ]
     );
 
     let external_provider = root.join("libaudiocpp-external.so");
@@ -3007,7 +3014,7 @@ fn builtin_model_boundaries_and_offline_command_validation_are_actionable() {
     let root = sandbox();
     let paths = paths(&root);
     let spec = BuiltinModels.resolve("supertonic-3-openvino").unwrap();
-    assert_eq!(BuiltinModels.models().len(), 4);
+    assert_eq!(BuiltinModels.models().len(), 5);
     assert!(BuiltinModels.verify(&paths, spec).is_err());
     assert!(
         BuiltinModels
@@ -4956,6 +4963,69 @@ fn model_picker_prefers_compatible_row_and_rejects_disabled_selection() {
                 &operations,
                 Some((Runtime::Openvino, "npu")),
                 &mut selector
+            )
+            .is_err()
+        );
+    }
+}
+
+#[test]
+fn cloud_configuration_setters_reset_and_serialize_environment_references() {
+    let mut config = Config::default();
+    for (key, value) in [
+        ("backend.cloud.base_url", "http://localhost:1234/v1"),
+        ("backend.cloud.api_key_env", "TEST_API_KEY"),
+        ("backend.cloud.model", "custom-model"),
+        ("backend.cloud.voice", "custom-voice"),
+        ("backend.cloud.timeout_seconds", "15"),
+        ("backend.cloud.max_audio_seconds", "30"),
+    ] {
+        set_config(&mut config, key, value).unwrap();
+    }
+    set_config(&mut config, "backend.cloud.voices.reader", "voice-id").unwrap();
+    assert_eq!(config.backend.cloud.voices["reader"], "voice-id");
+    unset_config(&mut config, "backend.cloud.voices.reader").unwrap();
+    assert!(config.backend.cloud.voices.is_empty());
+    for key in [
+        "backend.cloud.base_url",
+        "backend.cloud.api_key_env",
+        "backend.cloud.model",
+        "backend.cloud.voice",
+        "backend.cloud.timeout_seconds",
+        "backend.cloud.max_audio_seconds",
+    ] {
+        unset_config(&mut config, key).unwrap();
+    }
+    assert_eq!(config.backend.cloud, Config::default().backend.cloud);
+    for key in [
+        "backend.cloud.timeout_seconds",
+        "backend.cloud.max_audio_seconds",
+    ] {
+        assert!(set_config(&mut config, key, "invalid").is_err());
+    }
+}
+
+#[test]
+fn paradee_runtime_selection_stays_on_cpu_and_preserves_the_backend() {
+    let root = sandbox();
+    let paths = paths(&root);
+    let mut config = Config::default();
+    omaspeak::catalog::model("paradee-8m-openvino")
+        .unwrap()
+        .activate(&mut config);
+    config.save(&paths.config_file).unwrap();
+    let candidate =
+        runtime_configuration_candidate(&paths.config_file, Runtime::Openvino, "cpu", None, None)
+            .unwrap();
+    assert_eq!(candidate.backend.kind, "paradee-openvino");
+    for device in ["gpu", "npu"] {
+        assert!(
+            runtime_configuration_candidate(
+                &paths.config_file,
+                Runtime::Openvino,
+                device,
+                None,
+                None
             )
             .is_err()
         );

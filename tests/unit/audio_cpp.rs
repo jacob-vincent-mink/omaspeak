@@ -65,7 +65,9 @@ fn framed_control_protocol_round_trips_and_is_bounded() {
             assert_eq!(speed, 1.25);
             assert_eq!(voice, 7);
         }
-        WorkerRequest::Shutdown => panic!("wrong request variant"),
+        WorkerRequest::Shutdown | WorkerRequest::GenerateStream { .. } => {
+            panic!("wrong request variant")
+        }
     }
 
     let oversized = ((MAX_CONTROL_FRAME as u32) + 1).to_le_bytes();
@@ -395,4 +397,321 @@ fn kokoro_engine_voice_ids_and_request_languages_cover_every_prefix() {
     }
     assert_eq!(kokoro_voice_language("q_unknown"), None);
     assert_eq!(kokoro_voice_language(""), None);
+}
+
+#[test]
+fn native_stream_contract_handles_cancellation_and_provider_failures() {
+    let root = temp("native-stream-contract");
+    let library = root.join("provider.so");
+    assert!(
+        std::process::Command::new("cc")
+            .args([
+                "-shared",
+                "-fPIC",
+                "-DOMASPEAK_TEST_STREAMING",
+                "tests/fixtures/audiocpp_stub.c",
+                "-o"
+            ])
+            .arg(&library)
+            .status()
+            .unwrap()
+            .success()
+    );
+    let mut spec = WorkerSpec {
+        library,
+        library_dirs: vec![],
+        model: root.join("valid"),
+        backend: "cpu".into(),
+        family: "supertonic".into(),
+        device: 0,
+        threads: 1,
+        language: "en".into(),
+        steps: 4,
+        load_options: Default::default(),
+        session_options: Default::default(),
+        request_options: Default::default(),
+    };
+    let mut native = NativeEngine::load(&spec).unwrap();
+    let mut pcm = Vec::new();
+    let audio = native
+        .generate_with_sink(
+            "hello",
+            1.0,
+            0,
+            Some(&mut |samples| {
+                pcm.extend_from_slice(samples);
+                Ok(())
+            }),
+        )
+        .unwrap();
+    assert!(!pcm.is_empty());
+    assert!(audio.pcm.is_empty());
+    assert_eq!(
+        pcm.len(),
+        native.generate("hello", 1.0, 0).unwrap().pcm.len()
+    );
+    assert_eq!(audio.sample_rate, SUPERTONIC_SAMPLE_RATE);
+    let mut calls = 0;
+    assert!(
+        native
+            .generate_with_sink(
+                "hello",
+                1.0,
+                0,
+                Some(&mut |_| {
+                    calls += 1;
+                    bail!("cancel")
+                })
+            )
+            .is_err()
+    );
+    assert_eq!(calls, 1);
+    assert!(
+        native
+            .generate_with_sink("stream-fail", 1.0, 0, Some(&mut |_| Ok(())))
+            .is_err()
+    );
+    assert!(native.generate("hello", 1.0, 0).is_ok());
+    assert!(native.generate("bad\0text", 1.0, 0).is_err());
+    assert!(native.generate("hello", 1.0, -1).is_err());
+    drop(native);
+    for mode in [
+        "null-request",
+        "fail-voice",
+        "fail-steps",
+        "null-result",
+        "fail-result",
+        "null-samples",
+        "huge-audio",
+    ] {
+        spec.model = root.join(mode);
+        let mut native = NativeEngine::load(&spec).unwrap();
+        assert!(
+            native
+                .generate_with_sink("hello", 1.0, 0, Some(&mut |_| Ok(())))
+                .is_err(),
+            "{mode}"
+        );
+    }
+    spec.model = root.join("valid");
+    spec.request_options.insert("extra".into(), "value".into());
+    let mut native = NativeEngine::load(&spec).unwrap();
+    assert!(native.generate("fail-text", 1.0, 0).is_err());
+    drop(native);
+    for mode in [
+        "fail-load",
+        "null-model",
+        "unsupported",
+        "fail-session",
+        "null-session",
+    ] {
+        spec.model = root.join(mode);
+        assert!(NativeEngine::load(&spec).is_err(), "{mode}");
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn native_worker_protocol_orders_chunks_reports_errors_and_shuts_down() {
+    let root = temp("worker-stream-protocol");
+    for streaming in [false, true] {
+        let library = root.join(format!("provider-{streaming}.so"));
+        let mut compiler = std::process::Command::new("cc");
+        compiler.args(["-shared", "-fPIC"]);
+        if streaming {
+            compiler.arg("-DOMASPEAK_TEST_STREAMING");
+        }
+        assert!(
+            compiler
+                .arg("tests/fixtures/audiocpp_stub.c")
+                .arg("-o")
+                .arg(&library)
+                .status()
+                .unwrap()
+                .success()
+        );
+        let spec = WorkerSpec {
+            library,
+            library_dirs: vec![],
+            model: root.join("valid"),
+            backend: "cpu".into(),
+            family: "supertonic".into(),
+            device: 0,
+            threads: 1,
+            language: "en".into(),
+            steps: 4,
+            load_options: Default::default(),
+            session_options: Default::default(),
+            request_options: Default::default(),
+        };
+        let mut input = Vec::new();
+        for request in [
+            WorkerRequest::GenerateStream {
+                text: "hello".into(),
+                speed: 1.0,
+                voice: 0,
+            },
+            WorkerRequest::Generate {
+                text: "hello".into(),
+                speed: 1.0,
+                voice: 0,
+            },
+            WorkerRequest::GenerateStream {
+                text: "fail-text".into(),
+                speed: 1.0,
+                voice: 0,
+            },
+            WorkerRequest::Generate {
+                text: "fail-text".into(),
+                speed: 1.0,
+                voice: 0,
+            },
+            WorkerRequest::Shutdown,
+        ] {
+            write_json_frame(&mut input, &request).unwrap();
+        }
+        let mut output = Vec::new();
+        run_worker_io(
+            &serde_json::to_string(&spec).unwrap(),
+            input.as_slice(),
+            &mut output,
+        )
+        .unwrap();
+        let mut frames = output.as_slice();
+        assert!(matches!(
+            read_json_frame::<_, WorkerResponse>(&mut frames).unwrap(),
+            WorkerResponse::Ready { .. }
+        ));
+        let mut chunks = 0;
+        loop {
+            match read_json_frame::<_, WorkerResponse>(&mut frames).unwrap() {
+                WorkerResponse::AudioChunk {
+                    sample_rate,
+                    samples,
+                } => {
+                    assert_eq!(sample_rate, SUPERTONIC_SAMPLE_RATE);
+                    assert!(!read_pcm(&mut frames, samples).unwrap().is_empty());
+                    chunks += 1;
+                }
+                WorkerResponse::StreamEnd => break,
+                other => panic!("unexpected {other:?}"),
+            }
+        }
+        assert_eq!(chunks, if streaming { 2 } else { 1 });
+        match read_json_frame::<_, WorkerResponse>(&mut frames).unwrap() {
+            WorkerResponse::Audio { samples, .. } => {
+                read_pcm(&mut frames, samples).unwrap();
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+        for _ in 0..2 {
+            assert!(matches!(
+                read_json_frame::<_, WorkerResponse>(&mut frames).unwrap(),
+                WorkerResponse::Error { .. }
+            ));
+        }
+        assert!(matches!(
+            read_json_frame::<_, WorkerResponse>(&mut frames).unwrap(),
+            WorkerResponse::Shutdown
+        ));
+        assert!(frames.is_empty());
+    }
+    assert!(run_worker_io("invalid", &b""[..], Vec::new()).is_err());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn streaming_client_validates_framing_and_stops_after_sink_error() {
+    let root = temp("client-stream-framing");
+    for case in ["valid", "rate", "empty", "error", "unexpected", "cancel"] {
+        let mut bytes = Vec::new();
+        let rate = if case == "rate" {
+            16000
+        } else {
+            SUPERTONIC_SAMPLE_RATE
+        };
+        match case {
+            "empty" => write_json_frame(&mut bytes, &WorkerResponse::StreamEnd).unwrap(),
+            "error" => write_json_frame(
+                &mut bytes,
+                &WorkerResponse::Error {
+                    message: "fixture failure".into(),
+                },
+            )
+            .unwrap(),
+            "unexpected" => write_json_frame(&mut bytes, &WorkerResponse::Shutdown).unwrap(),
+            _ => {
+                write_json_frame(
+                    &mut bytes,
+                    &WorkerResponse::AudioChunk {
+                        sample_rate: rate,
+                        samples: 2,
+                    },
+                )
+                .unwrap();
+                write_pcm(&mut bytes, &[0.25, -0.25]).unwrap();
+                write_json_frame(&mut bytes, &WorkerResponse::StreamEnd).unwrap();
+            }
+        }
+        let path = root.join(case);
+        fs::write(&path, bytes).unwrap();
+        let mut child = Command::new("sh")
+            .args(["-c", "cat \"$1\"; cat >/dev/null", "fixture"])
+            .arg(&path)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let client = WorkerClient {
+            input: Some(TimedWriter {
+                writer: child.stdin.take().unwrap(),
+                timeout: Duration::from_secs(1),
+            }),
+            output: Some(TimedReader {
+                reader: child.stdout.take().unwrap(),
+                timeout: Duration::from_secs(1),
+            }),
+            diagnostics: WorkerDiagnostics::capture(child.stderr.take().unwrap()),
+            child,
+            stopped: false,
+            expected_rate: SUPERTONIC_SAMPLE_RATE,
+        };
+        let mut pcm = Vec::new();
+        let backend = AudioCppBackend {
+            spec: WorkerSpec {
+                library: root.join("unused"),
+                library_dirs: vec![],
+                model: root.join("valid"),
+                backend: "cpu".into(),
+                family: "supertonic".into(),
+                device: 0,
+                threads: 1,
+                language: "en".into(),
+                steps: 4,
+                load_options: Default::default(),
+                session_options: Default::default(),
+                request_options: Default::default(),
+            },
+            worker: Mutex::new(client),
+        };
+        let result = backend.generate_stream("hello", 1.0, 0, &mut |chunk| {
+            if case == "cancel" {
+                bail!("cancelled")
+            }
+            pcm.extend_from_slice(chunk);
+            Ok(())
+        });
+        if case == "valid" {
+            result.unwrap();
+            assert_eq!(pcm, vec![0.25, -0.25]);
+        } else {
+            assert!(result.is_err(), "{case}");
+        }
+        if case != "valid" {
+            assert!(backend.worker.lock().unwrap().stopped);
+        }
+        drop(backend);
+    }
+    fs::remove_dir_all(root).unwrap();
 }

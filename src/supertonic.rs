@@ -1274,6 +1274,23 @@ impl SupertonicFrontend {
         voice: i32,
         shapes: SynthesisShapes,
     ) -> Result<Vec<f32>> {
+        let mut output = Vec::new();
+        self.generate_stream_with_shapes(pipeline, text, speed, voice, shapes, &mut |chunk| {
+            output.extend_from_slice(chunk);
+            Ok(())
+        })?;
+        Ok(output)
+    }
+
+    fn generate_stream_with_shapes(
+        &self,
+        pipeline: &mut (impl ModelPipeline + ?Sized),
+        text: &str,
+        speed: f32,
+        voice: i32,
+        shapes: SynthesisShapes,
+        sink: &mut dyn FnMut(&[f32]) -> Result<()>,
+    ) -> Result<()> {
         let max_len = if shapes == SynthesisShapes::NpuStatic {
             if matches!(self.language.as_str(), "ko" | "ja") {
                 NPU_MAX_CJK_CHUNK_CHARS
@@ -1291,20 +1308,20 @@ impl SupertonicFrontend {
         }
         let seed = self.seed.unwrap_or_else(|| rand::thread_rng().r#gen());
         let mut rng = StdRng::seed_from_u64(seed);
-        let mut output = Vec::new();
+
         for (index, chunk) in chunks.iter().enumerate() {
             let audio =
                 self.generate_chunk(pipeline, chunk, speed, voice as usize, &mut rng, shapes)?;
             if index > 0 {
-                output.resize(
-                    output.len()
-                        + (self.silence_seconds * self.config.ae.sample_rate as f32) as usize,
-                    0.0,
-                );
+                let silence =
+                    vec![0.0; (self.silence_seconds * self.config.ae.sample_rate as f32) as usize];
+                if !silence.is_empty() {
+                    sink(&silence)?;
+                }
             }
-            output.extend(audio);
+            sink(&audio)?;
         }
-        Ok(output)
+        Ok(())
     }
 
     fn generate_chunk(
@@ -1536,6 +1553,25 @@ impl TtsBackend for DirectOpenvinoBackend {
         } else {
             self.frontend.generate(&mut **pipeline, text, speed, voice)
         }
+    }
+    fn generate_stream(
+        &self,
+        text: &str,
+        speed: f32,
+        voice: i32,
+        sink: &mut dyn FnMut(&[f32]) -> Result<()>,
+    ) -> Result<()> {
+        let mut pipeline = self
+            .pipeline
+            .lock()
+            .map_err(|_| anyhow!("OpenVINO model pipeline lock was poisoned"))?;
+        let shapes = if self.static_npu_shapes {
+            SynthesisShapes::NpuStatic
+        } else {
+            SynthesisShapes::Exact
+        };
+        self.frontend
+            .generate_stream_with_shapes(&mut **pipeline, text, speed, voice, shapes, sink)
     }
 }
 
@@ -1781,7 +1817,7 @@ const ABBREVIATIONS: &[&str] = &[
     "Inc.", "Ltd.", "Co.", "Corp.", "etc.", "vs.", "i.e.", "e.g.", "Ph.D.",
 ];
 
-fn chunk_text(text: &str, max_len: usize) -> Vec<String> {
+pub(crate) fn chunk_text(text: &str, max_len: usize) -> Vec<String> {
     let mut chunks = Vec::new();
     for paragraph in split_paragraphs(text) {
         if paragraph.chars().count() <= max_len {

@@ -162,6 +162,30 @@ fn checks_with(
         }
     };
 
+    if crate::cloud::is_cloud(&config.backend.kind) {
+        result.push(ok(
+            "backend",
+            format!("{} HTTP adapter is available", config.backend.kind),
+        ));
+        result.push(ok(
+            "model",
+            "remote model; local assets and native runtime are not required",
+        ));
+        match crate::cloud::CloudBackend::create(&config) {
+            Ok(_) => result.push(ok(
+                "cloud",
+                "configuration, voice and credential reference validated; no paid request made",
+            )),
+            Err(error) => result.push(fail(
+                "cloud",
+                format!("{error:#}"),
+                "configure backend.cloud and set the API-key environment variable",
+            )),
+        }
+        append_environment_checks(&mut result, paths, inspect_environment(paths));
+        return result;
+    }
+
     match catalog::backends()
         .iter()
         .find(|backend| backend.kind == config.backend.kind)

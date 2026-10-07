@@ -278,3 +278,16 @@ Pinned routing requires PipeWire’s `pw-dump` and `pw-record` (Omawake) or
 `pw-play` (Omaspeak), supplied by `pipewire` and `pipewire-audio` on Arch.
 See [Audio device selection](docs/AUDIO-DEVICES.md) for configuration,
 service restart behavior, discovery JSON, and disconnect recovery.
+
+## Streaming and provider roadmap
+
+Playback begins as local providers generate audio; file-only exports remain available.
+See [streaming support and cancellation](docs/STREAMING.md),
+[cloud backend shortlist and Paradee qualification](docs/CLOUD-BACKENDS-AND-PARADEE.md),
+and [hardware evidence](benchmarks/results/2026-10-07-streaming/RESULTS.md).
+
+Cloud inference is available as an explicit opt-in; see [cloud adapters](docs/CLOUD.md)
+for providers, configuration, credential references and qualification limits.
+
+The experimental [Paradee OpenVINO CPU profile](docs/PARADEE.md) uses the
+existing native runtime and a separately installed eSpeak NG frontend.

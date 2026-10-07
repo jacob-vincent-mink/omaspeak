@@ -303,11 +303,19 @@ fn ctrl_c_on_demand_say_does_not_orphan_its_player_or_worker() {
         .unwrap()
         .parse()
         .unwrap();
-    let children = fs::read_to_string(format!("/proc/{0}/task/{0}/children", client.id()))
-        .unwrap()
-        .split_whitespace()
-        .map(|pid| pid.parse::<i32>().unwrap())
-        .collect::<Vec<_>>();
+    fn descendants(pid: i32, all: &mut Vec<i32>) {
+        let children =
+            fs::read_to_string(format!("/proc/{pid}/task/{pid}/children")).unwrap_or_default();
+        for child in children
+            .split_whitespace()
+            .map(|pid| pid.parse::<i32>().unwrap())
+        {
+            all.push(child);
+            descendants(child, all);
+        }
+    }
+    let mut children = Vec::new();
+    descendants(client.id() as i32, &mut children);
     assert!(children.contains(&player_pid));
 
     assert_eq!(unsafe { libc::kill(client.id() as i32, libc::SIGINT) }, 0);
@@ -2031,7 +2039,7 @@ fn daemon_bounds_queue_and_cancels_stalled_synthesis_without_publishing_output()
 
 #[cfg(target_os = "linux")]
 #[test]
-fn synthesis_worker_rejects_control_and_playback_requests_and_exits_cleanly() {
+fn synthesis_worker_rejects_control_requests_and_exits_cleanly() {
     let root = sandbox();
     let library = build_audio_cpp_stub(&root);
     let config = audio_cpp_stub_config(&root, library, "supertonic.gguf");
@@ -2058,23 +2066,17 @@ fn synthesis_worker_rejects_control_and_playback_requests_and_exits_cleanly() {
     let mut read = || {
         let mut line = String::new();
         output.read_line(&mut line).unwrap();
-        serde_json::from_str::<Response>(&line).unwrap()
+        {
+            let value: serde_json::Value = serde_json::from_str(&line).unwrap();
+            assert_eq!(value["event"], "response");
+            serde_json::from_value::<Response>(value["response"].clone()).unwrap()
+        }
     };
     let ready = read();
     assert_eq!(ready.id, "ready");
     assert!(matches!(ready.result, ResultPayload::Status { .. }));
     for (id, command) in [
         ("control", omaspeak::protocol::Command::Status),
-        (
-            "playback",
-            omaspeak::protocol::Command::Say {
-                text: "should not play".into(),
-                voice: omaspeak::voices::VoiceSelection::Legacy(0),
-                speed: 1.0,
-                output: None,
-                no_play: false,
-            },
-        ),
         (
             "file",
             omaspeak::protocol::Command::Say {

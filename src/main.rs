@@ -624,7 +624,9 @@ fn prepare_native_library_path(command: &TopCommand, config_path: &Path) -> Resu
     // audio.cpp and its transitive libraries belong to the supervised worker.
     // Keep optional native code out of the CLI/daemon process and scope its
     // loader path to that worker's exec environment.
-    if matches!(config.backend.kind.as_str(), "audiocpp" | "kokoro-genai") {
+    if omaspeak::cloud::is_cloud(&config.backend.kind)
+        || matches!(config.backend.kind.as_str(), "audiocpp" | "kokoro-genai")
+    {
         return Ok(());
     }
     let report = omaspeak::runtime::discover(&config.backend, config_path);
@@ -657,8 +659,12 @@ fn say(config_path: &Path, paths: &AppPaths, args: SayArgs) -> Result<()> {
     let input_is_terminal = stdin.is_terminal();
     let request = build_say_request_with_terminal(&config, paths, args, stdin, input_is_terminal)?;
     let response = send_or_handle_locally(&paths.socket(), request, |request| {
-        let engine = Engine::load(&config, paths)?;
-        Ok(handle_request(&engine, &config, paths, request))
+        if matches!(request.command, Command::Say { no_play: false, .. }) {
+            request_service::say_locally(&config, paths, request)
+        } else {
+            let engine = Engine::load(&config, paths)?;
+            Ok(handle_request(&engine, &config, paths, request))
+        }
     })?;
     print_response(response)
 }
@@ -672,7 +678,9 @@ fn resolve_voice(config: &Config, requested: Option<&str>) -> Result<i32> {
 }
 
 fn resolve_selection(config: &Config, selection: &omaspeak::voices::VoiceSelection) -> Result<i32> {
-    let voices = if config.model.family == "supertonic" {
+    let voices = if omaspeak::cloud::is_cloud(&config.backend.kind) {
+        omaspeak::cloud::voices(config)?
+    } else if config.model.family == "supertonic" {
         omaspeak::voices::supertonic_presets()
     } else {
         omaspeak::catalog::model(&config.model.name)
@@ -862,10 +870,14 @@ fn benchmark_report(
             "model": engine.model_name(),
             "requested_runtime": config.backend.runtime,
             "requested_device": config.backend.canonical_device()?,
-            "effective_runtime": engine.effective_runtime(),
+            "effective_runtime": if omaspeak::cloud::is_cloud(engine.backend_kind()) { json!("remote") } else { json!(engine.effective_runtime()) },
             "fallback_used": engine.fallback_used(),
-            "placement_verified": matches!(engine.backend_kind(), "audiocpp" | "openvino" | "kokoro-genai"),
-            "placement_evidence": if engine.backend_kind() == "openvino" {
+            "placement_verified": matches!(engine.backend_kind(), "audiocpp" | "openvino" | "kokoro-genai" | "paradee-openvino"),
+            "placement_evidence": if omaspeak::cloud::is_cloud(engine.backend_kind()) {
+                "remote API; local accelerator placement does not apply"
+            } else if engine.backend_kind() == "paradee-openvino" {
+                "OpenVINO CPU execution devices validated for Paradee FP32"
+            } else if engine.backend_kind() == "openvino" {
                 "OpenVINO EXECUTION_DEVICES matched the requested device for every compiled graph"
             } else if engine.backend_kind() == "kokoro-genai" {
                 "OpenVINO GenAI initialized the Kokoro pipeline on the explicitly requested device"
@@ -1179,8 +1191,13 @@ fn write_response(stream: &mut impl Write, response: &Response) -> Result<()> {
 }
 
 fn read_request(stream: &mut impl Read, limit: usize) -> Result<Request> {
+    read_buffered_request(&mut BufReader::new(stream), limit)
+}
+
+fn read_buffered_request(stream: &mut impl BufRead, limit: usize) -> Result<Request> {
     let mut bytes = Vec::new();
-    BufReader::new(stream)
+    stream
+        .by_ref()
         .take(limit as u64 + 1)
         .read_until(b'\n', &mut bytes)?;
     if bytes.len() > limit {
@@ -1330,11 +1347,22 @@ fn synthesis_payload(engine: &impl SpeechEngine, synthesis: Synthesis) -> Result
 
 fn status_payload(engine: &impl SpeechEngine, config: &Config) -> ResultPayload {
     let effective_runtime = engine.effective_runtime();
+    let remote = omaspeak::cloud::is_cloud(engine.backend_kind());
     let (effective_provider, placement_verified, evidence) = match engine.backend_kind() {
+        "elevenlabs" | "openai-compatible" | "cartesia" | "deepgram" => (
+            "remote",
+            false,
+            vec!["remote API; local accelerator placement does not apply"],
+        ),
         "audiocpp" => (
             effective_runtime.capability(),
             true,
             vec!["audio.cpp accepted the requested backend while creating the model session"],
+        ),
+        "paradee-openvino" => (
+            "openvino",
+            true,
+            vec!["OpenVINO CPU execution devices validated for Paradee FP32"],
         ),
         "openvino" => (
             "openvino",
@@ -1362,8 +1390,8 @@ fn status_payload(engine: &impl SpeechEngine, config: &Config) -> ResultPayload 
         backend: json!({
             "kind": engine.backend_kind(),
             "requested": {"runtime": config.backend.runtime, "device": config.backend.canonical_device().unwrap_or_else(|_| config.backend.device.clone())},
-            "effective": {"runtime": effective_runtime, "device": if effective_runtime == Runtime::Default { "cpu" } else { config.backend.device.as_str() }, "provider": effective_provider},
-            "supported_capabilities": supported_capabilities(),
+            "effective": {"runtime": if remote { json!("remote") } else { json!(effective_runtime) }, "device": if remote { "remote" } else if effective_runtime == Runtime::Default { "cpu" } else { config.backend.device.as_str() }, "provider": effective_provider},
+            "supported_capabilities": if remote {json!(["remote"])} else {json!(supported_capabilities())},
             "fallback_policy": config.backend.fallback,
             "fallback_used": engine.fallback_used(),
             "placement_verified": placement_verified,
@@ -1478,8 +1506,8 @@ fn print_status(config_path: &Path, paths: &AppPaths, as_json: bool) -> Result<(
         serde_json::to_value(response.result)?
     } else {
         let config = Config::load(config_path)?;
-        json!({"type":"status","running":false,"pid":null,"model":config.model.name,"language":config.model.language,"sample_rate":null,"audio":omaspeak::audio_devices::status(&config.audio.device,None,None),
-            "backend":{"kind":config.backend.kind,"requested":{"runtime":config.backend.runtime,"device":config.backend.device},"effective":null,"supported_capabilities":supported_capabilities(),"fallback_policy":config.backend.fallback,"fallback_used":false,"placement_verified":false,"evidence":[],"requests":{"active":null,"queued":[],"capacity":request_service::QUEUE_CAPACITY,"loading":false,"worker_ready":false}}})
+        json!({"type":"status","running":false,"pid":null,"model":if omaspeak::cloud::is_cloud(&config.backend.kind) {omaspeak::cloud::model_name(&config)} else {config.model.name.clone()},"language":config.model.language,"sample_rate":null,"audio":omaspeak::audio_devices::status(&config.audio.device,None,None),
+            "backend":{"kind":config.backend.kind,"requested":{"runtime":config.backend.runtime,"device":config.backend.device},"effective":null,"supported_capabilities":if omaspeak::cloud::is_cloud(&config.backend.kind) {json!(["remote"])} else {json!(supported_capabilities())},"fallback_policy":config.backend.fallback,"fallback_used":false,"placement_verified":false,"evidence":[],"requests":{"active":null,"queued":[],"capacity":request_service::QUEUE_CAPACITY,"loading":false,"worker_ready":false}}})
     };
     let saved = Config::load(config_path)?.audio.device;
     status["audio"]["saved"] = json!(&saved);
@@ -1637,6 +1665,14 @@ fn clear_runtime_provider_configuration(backend: &mut BackendConfig) {
 }
 
 fn set_config(config: &mut Config, key: &str, value: &str) -> Result<()> {
+    if let Some(alias) = dynamic_option_name(key, "backend.cloud.voices.")? {
+        config
+            .backend
+            .cloud
+            .voices
+            .insert(alias.into(), value.into());
+        return Ok(());
+    }
     if let Some(option) = dynamic_option_name(key, "backend.options.")? {
         config.backend.options.insert(option.into(), value.into());
         return Ok(());
@@ -1649,6 +1685,14 @@ fn set_config(config: &mut Config, key: &str, value: &str) -> Result<()> {
         "audio.device" => {
             omaspeak::audio_devices::validate(value, "output")?;
             config.audio.device = value.into();
+        }
+        "backend.cloud.base_url" => config.backend.cloud.base_url = value.into(),
+        "backend.cloud.api_key_env" => config.backend.cloud.api_key_env = value.into(),
+        "backend.cloud.model" => config.backend.cloud.model = value.into(),
+        "backend.cloud.voice" => config.backend.cloud.voice = value.into(),
+        "backend.cloud.timeout_seconds" => config.backend.cloud.timeout_seconds = value.parse()?,
+        "backend.cloud.max_audio_seconds" => {
+            config.backend.cloud.max_audio_seconds = value.parse()?
         }
         "backend.kind" => config.backend.kind = value.into(),
         "backend.runtime" => config.backend.runtime = parse_runtime(value)?,
@@ -1683,6 +1727,10 @@ fn set_config(config: &mut Config, key: &str, value: &str) -> Result<()> {
 }
 
 fn unset_config(config: &mut Config, key: &str) -> Result<()> {
+    if let Some(alias) = dynamic_option_name(key, "backend.cloud.voices.")? {
+        config.backend.cloud.voices.remove(alias);
+        return Ok(());
+    }
     if let Some(option) = dynamic_option_name(key, "backend.options.")? {
         config.backend.options.remove(option);
         return Ok(());
@@ -1694,6 +1742,18 @@ fn unset_config(config: &mut Config, key: &str) -> Result<()> {
     let defaults = Config::default();
     match key {
         "audio.device" => config.audio.device = "default".into(),
+        "backend.cloud.base_url" => config.backend.cloud.base_url = defaults.backend.cloud.base_url,
+        "backend.cloud.api_key_env" => {
+            config.backend.cloud.api_key_env = defaults.backend.cloud.api_key_env
+        }
+        "backend.cloud.model" => config.backend.cloud.model = defaults.backend.cloud.model,
+        "backend.cloud.voice" => config.backend.cloud.voice = defaults.backend.cloud.voice,
+        "backend.cloud.timeout_seconds" => {
+            config.backend.cloud.timeout_seconds = defaults.backend.cloud.timeout_seconds
+        }
+        "backend.cloud.max_audio_seconds" => {
+            config.backend.cloud.max_audio_seconds = defaults.backend.cloud.max_audio_seconds
+        }
         "backend.kind" => config.backend.kind = defaults.backend.kind,
         "backend.runtime" => config.backend.runtime = defaults.backend.runtime,
         "backend.device" => config.backend.device = defaults.backend.device,
@@ -1823,7 +1883,13 @@ fn schema(path: &Path, paths: &AppPaths) -> Result<Value> {
     Ok(
         json!({"schema_version":1,"app":"omaspeak","app_version":env!("CARGO_PKG_VERSION"),"daemon_version":env!("CARGO_PKG_VERSION"),"config_path":path,
         "keys":[
-            {"key":"backend.kind","type":"enum","section":"Backend","label":"Backend","description":"Inference engine","value":config.backend.kind,"file_value":null,"compiled":true,"restart_required":true,"choices":["audiocpp","supertonic","kokoro-genai"]},
+            {"key":"backend.cloud.base_url","type":"string","section":"Cloud","label":"base_url","description":"Remote provider base_url","value":config.backend.cloud.base_url,"file_value":null,"compiled":true,"restart_required":true},
+            {"key":"backend.cloud.api_key_env","type":"string","section":"Cloud","label":"api_key_env","description":"Remote provider api_key_env","value":config.backend.cloud.api_key_env,"file_value":null,"compiled":true,"restart_required":true},
+            {"key":"backend.cloud.model","type":"string","section":"Cloud","label":"model","description":"Remote provider model","value":config.backend.cloud.model,"file_value":null,"compiled":true,"restart_required":true},
+            {"key":"backend.cloud.voice","type":"string","section":"Cloud","label":"voice","description":"Remote provider voice","value":config.backend.cloud.voice,"file_value":null,"compiled":true,"restart_required":true},
+            {"key":"backend.cloud.timeout_seconds","type":"integer","section":"Cloud","label":"timeout_seconds","description":"Remote provider timeout_seconds","value":config.backend.cloud.timeout_seconds,"file_value":null,"compiled":true,"restart_required":true},
+            {"key":"backend.cloud.max_audio_seconds","type":"integer","section":"Cloud","label":"max_audio_seconds","description":"Remote provider max_audio_seconds","value":config.backend.cloud.max_audio_seconds,"file_value":null,"compiled":true,"restart_required":true},
+            {"key":"backend.kind","type":"enum","section":"Backend","label":"Backend","description":"Inference engine","value":config.backend.kind,"file_value":null,"compiled":true,"restart_required":true,"choices":["audiocpp","supertonic","kokoro-genai","paradee-openvino","elevenlabs","openai-compatible","cartesia","deepgram"]},
             {"key":"backend.runtime","type":"enum","section":"Backend","label":"Runtime","description":"Inference runtime; availability means a matching provider was detected","value":config.backend.runtime,"file_value":null,"compiled":true,"restart_required":true,"choices":runtime_choices},
             {"key":"backend.device","type":"string","section":"Backend","label":"Device","description":"Runtime-specific device","value":config.backend.device,"file_value":null,"compiled":true,"restart_required":true},
             {"key":"backend.device_id","type":"integer","section":"Backend","label":"Device index","description":"Zero-based GPU index for CUDA, Vulkan, or HIP","value":config.backend.device_id,"file_value":null,"compiled":true,"restart_required":true,"min":0},
@@ -1833,7 +1899,7 @@ fn schema(path: &Path, paths: &AppPaths) -> Result<Value> {
             {"key":"backend.openvino_library","type":"path","section":"Backend","label":"OpenVINO library","description":"Exact OpenVINO C API library","value":config.backend.openvino_library,"file_value":null,"compiled":true,"restart_required":true},
             {"key":"backend.openvino_plugins","type":"path","section":"Backend","label":"OpenVINO plugins","description":"Exact OpenVINO plugins.xml","value":config.backend.openvino_plugins,"file_value":null,"compiled":true,"restart_required":true},
             {"key":"backend.threads","type":"integer","section":"Backend","label":"Threads","description":"Inference threads","value":config.backend.threads,"file_value":null,"compiled":true,"restart_required":true,"min":1,"max":64},
-            {"key":"model.family","type":"enum","section":"Model","label":"Family","description":"TTS model family","value":config.model.family,"file_value":null,"compiled":true,"restart_required":true,"choices":["supertonic","kokoro"]},
+            {"key":"model.family","type":"enum","section":"Model","label":"Family","description":"TTS model family","value":config.model.family,"file_value":null,"compiled":true,"restart_required":true,"choices":["supertonic","kokoro","paradee"]},
             {"key":"model.name","type":"string","section":"Model","label":"Model","description":"Active catalog or custom model name","value":config.model.name,"file_value":null,"compiled":true,"restart_required":true},
             {"key":"model.directory","type":"path","section":"Model","label":"Directory","description":"Model asset directory","value":config.model_directory(paths),"file_value":config.model.directory,"compiled":true,"restart_required":true},
             {"key":"model.file","type":"string","section":"Model","label":"Model file","description":"Single-file native model inside the model directory","value":config.model.file,"file_value":null,"compiled":true,"restart_required":true},
@@ -1850,9 +1916,10 @@ fn schema(path: &Path, paths: &AppPaths) -> Result<Value> {
             {"key":"audio.device","type":"enum","choices":audio_choices,"discovery_error":audio_inventory["error"],"section":"Audio","label":"Output device","description":"System default or pipewire:<node.name>","value":config.audio.device,"file_value":null,"compiled":true,"restart_required":true,"choices_command":["audio-devices","--detailed","--json"]},
             {"key":"daemon.max_text_bytes","type":"integer","section":"Daemon","label":"Maximum text bytes","description":"Largest accepted UTF-8 request payload","value":config.daemon.max_text_bytes,"file_value":null,"compiled":true,"restart_required":true,"min":1}],
         "collections":[
+            {"prefix":"backend.cloud.voices.","type":"string-map","section":"Cloud","label":"Voice aliases","description":"Local alias to provider voice ID","restart_required":true},
             {"prefix":"backend.options.","type":"string-map","section":"Backend","label":"Provider options","description":"audio.cpp load/session/request options or direct OpenVINO device properties","restart_required":true},
             {"prefix":"model.options.","type":"string-map","section":"Model","label":"Model options","description":"Model-specific string options","restart_required":true}],
-        "constraints":[{"kind":"matrix","keys":["backend.runtime","backend.device"],"rows":[{"backend.runtime":"default","backend.device":["auto","cpu"]},{"backend.runtime":"cuda","backend.device":["auto","gpu"]},{"backend.runtime":"vulkan","backend.device":["auto","gpu"]},{"backend.runtime":"hip","backend.device":["auto","gpu"]},{"backend.runtime":"openvino","backend.device":["auto","npu","gpu","cpu"]}]},{"kind":"runtime-only","key":"backend.device_id","runtimes":["cuda","vulkan","hip"]}]}),
+        "constraints":[{"kind":"matrix","keys":["backend.runtime","backend.device"],"rows":[{"backend.runtime":"default","backend.device":if omaspeak::cloud::is_cloud(&config.backend.kind) {json!(["remote","auto","cpu"])} else {json!(["auto","cpu"])}},{"backend.runtime":"cuda","backend.device":["auto","gpu"]},{"backend.runtime":"vulkan","backend.device":["auto","gpu"]},{"backend.runtime":"hip","backend.device":["auto","gpu"]},{"backend.runtime":"openvino","backend.device":if config.backend.kind == "paradee-openvino" {json!(["cpu"])} else {json!(["auto","npu","gpu","cpu"])}}]},{"kind":"runtime-only","key":"backend.device_id","runtimes":["cuda","vulkan","hip"]}]}),
     )
 }
 
@@ -1862,6 +1929,9 @@ fn runtime_schema_choices(
     external_audio: bool,
     openvino: bool,
 ) -> Vec<Value> {
+    if omaspeak::cloud::is_cloud(&config.backend.kind) {
+        return vec![json!({"value":"default","available":true,"capability":"remote"})];
+    }
     let audio_available = |runtime| config.backend.runtime == runtime && external_audio;
     vec![
         json!({"value":"default","available":packaged_cpu || audio_available(Runtime::Default),"capability":"cpu"}),
@@ -3311,7 +3381,13 @@ fn runtime_configuration_candidate(
 ) -> Result<Config> {
     let mut config = app_setup::load_config(config_path)?;
     let backend_kind = if runtime == Runtime::Openvino {
-        if config.backend.kind == "kokoro-genai"
+        if config.backend.kind == "paradee-openvino" {
+            anyhow::ensure!(
+                device.eq_ignore_ascii_case("cpu"),
+                "Paradee currently supports only CPU; select another model before choosing GPU/NPU"
+            );
+            "paradee-openvino"
+        } else if config.backend.kind == "kokoro-genai"
             && omaspeak::catalog::model(&config.model.name)
                 .is_some_and(|model| model.compatible_with("kokoro-genai", runtime, device))
         {
@@ -3533,7 +3609,7 @@ fn guided_model(
         println!("Model setup cancelled; the model license was not accepted.");
         return Ok(None);
     }
-    if spec.backend == "kokoro-genai" {
+    if matches!(spec.backend, "kokoro-genai" | "paradee-openvino") {
         let mut candidate = current.clone();
         activate_model_for_setup(spec, &mut candidate)?;
         validate_runtime_configuration(&candidate, config_path, false)?;
@@ -4185,7 +4261,7 @@ fn setup_model(
     };
     if let Some(id) = selected {
         let spec = operations.resolve(&id)?;
-        if !no_activate && spec.backend == "kokoro-genai" {
+        if !no_activate && matches!(spec.backend, "kokoro-genai" | "paradee-openvino") {
             let mut candidate = app_setup::load_config(config_path)?;
             activate_model_for_setup(spec, &mut candidate)?;
             validate_runtime_configuration(&candidate, config_path, false)?;

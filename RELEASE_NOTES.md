@@ -1,4 +1,26 @@
-# Omaspeak 0.1.1-rc.2
+# Omaspeak 0.1.1-rc.3
+
+This RC adds incremental playback for daemon and on-demand speech, cloud TTS
+through ElevenLabs, OpenAI-compatible speech APIs, Cartesia and Deepgram, and
+an experimental native Paradee OpenVINO CPU FP32 profile. Streaming starts
+with the first available PCM; cancellation terminates synthesis and playback,
+and successful WAV exports are published after playback drains. Local Kokoro
+streams bounded text segments, including its existing OpenVINO NPU path.
+
+Cloud adapters are opt-in and resolve API keys from environment variables.
+Provider request contracts were tested with local fixtures; paid accounts,
+voice availability and perceptual quality remain to be qualified. See
+`docs/CLOUD.md`, `docs/STREAMING.md` and `docs/PARADEE.md`.
+
+Paradee requires separately installed OpenVINO and native `espeak-ng`; neither
+model weights nor a new inference runtime are bundled. GPU/NPU Paradee support
+remains future work. No ONNX Runtime or Python inference dependency is delivered.
+The audio.cpp handoff is recorded in `docs/AUDIOCPP-PARADEE-FOLLOWUP.md`.
+
+This RC excludes the separate omarchy-voice consumer-events/D-Bus work and the
+pre-existing GPU precision experiment. Existing local defaults remain in place.
+
+## Omaspeak 0.1.1-rc.2
 
 This candidate replaces the Kokoro Python worker with a native C++ bridge and
 ships that bridge in `lib/` for both Linux architectures. The daemon accepts

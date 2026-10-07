@@ -101,7 +101,9 @@ fn synthesis_validates_inputs_and_backend_output() {
             .synthesize("x", 1.0, 0, &output)
             .is_err()
     );
-    assert!(save_wav(&output, -1, &[0.0]).is_err());
+    let mut invalid_rate = engine(Ok(vec![0.0]), 1);
+    invalid_rate.sample_rate = -1;
+    assert!(invalid_rate.synthesize("x", 1.0, 0, &output).is_err());
 }
 
 #[test]
@@ -275,4 +277,115 @@ fn output_parent_errors_are_actionable() {
         .err()
         .expect("a directory cannot be replaced with WAV output");
     assert!(error.to_string().contains("create WAV"));
+}
+
+#[test]
+fn streamed_chunks_reach_the_sink_before_later_generation_and_match_wav() {
+    use std::cell::Cell;
+    struct Incremental {
+        emitted: Cell<bool>,
+    }
+    impl TtsBackend for Incremental {
+        fn kind(&self) -> &'static str {
+            "incremental"
+        }
+        fn sample_rate(&self) -> i32 {
+            24_000
+        }
+        fn num_voices(&self) -> i32 {
+            1
+        }
+        fn generate(&self, _: &str, _: f32, _: i32) -> Result<Vec<f32>> {
+            panic!("streaming must not call complete-buffer generation")
+        }
+        fn generate_stream(
+            &self,
+            _: &str,
+            _: f32,
+            _: i32,
+            sink: &mut dyn FnMut(&[f32]) -> Result<()>,
+        ) -> Result<()> {
+            sink(&[0.5, -0.5])?;
+            self.emitted.set(true);
+            sink(&[1.0, -1.0])
+        }
+    }
+    let root = temp("streaming");
+    let engine = Engine {
+        backend: Box::new(Incremental {
+            emitted: Cell::new(false),
+        }),
+        backend_kind: "incremental",
+        model_name: "stream".into(),
+        sample_rate: 24_000,
+        load_time: Duration::ZERO,
+        effective_runtime: Runtime::Default,
+        fallback_used: false,
+    };
+    let mut chunks = Vec::new();
+    let output = root.join("stream.wav");
+    let result = engine
+        .synthesize_stream("hello", 1.0, 0, &output, &mut |chunk| {
+            chunks.push(chunk.to_vec());
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(chunks, vec![vec![0.5, -0.5], vec![1.0, -1.0]]);
+    assert_eq!(result.samples, 4);
+    let audio = hound::WavReader::open(output)
+        .unwrap()
+        .into_samples::<i16>()
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .unwrap();
+    assert_eq!(audio, vec![16383, -16383, 32767, -32767]);
+    let mut calls = 0;
+    let error = engine
+        .synthesize_stream("hello", 1.0, 0, &root.join("cancelled.wav"), &mut |_| {
+            calls += 1;
+            anyhow::bail!("sink closed")
+        })
+        .err()
+        .unwrap();
+    assert_eq!(calls, 1);
+    assert!(error.to_string().contains("sink closed"));
+}
+
+#[test]
+fn failed_offline_generation_does_not_truncate_existing_output() {
+    let path = temp("existing-offline").join("out.wav");
+    fs::write(&path, b"original audio").unwrap();
+    assert!(
+        engine(Err("generation failed"), 1)
+            .synthesize("hello", 1.0, 0, &path)
+            .is_err()
+    );
+    assert_eq!(fs::read(&path).unwrap(), b"original audio");
+}
+
+#[test]
+fn buffered_provider_stream_fallback_validates_pcm_and_propagates_sink_failure() {
+    let root = temp("buffered-stream-fallback");
+    let output = root.join("out.wav");
+    let mut delivered = Vec::new();
+    engine(Ok(vec![0.25; 5000]), 1)
+        .synthesize_stream("hello", 1.0, 0, &output, &mut |chunk| {
+            assert!(chunk.len() <= 4096);
+            delivered.extend_from_slice(chunk);
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(delivered, vec![0.25; 5000]);
+    for samples in [Ok(vec![]), Ok(vec![f32::NAN]), Err("provider failed")] {
+        assert!(
+            engine(samples, 1)
+                .synthesize_stream("hello", 1.0, 0, &output, &mut |_| Ok(()))
+                .is_err()
+        );
+    }
+    assert!(
+        engine(Ok(vec![0.25]), 1)
+            .synthesize_stream("hello", 1.0, 0, &output, &mut |_| bail!("sink closed"))
+            .is_err()
+    );
+    fs::remove_dir_all(root).unwrap();
 }

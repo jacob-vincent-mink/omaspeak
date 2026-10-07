@@ -280,6 +280,12 @@ pub fn probe(config: &BackendConfig, path: &Path) -> Probe {
     let exact = resolve(config, path);
     let attempt = (|| -> Result<Probe> {
         exact.validate_shape()?;
+        if exact.kind == "paradee-openvino" {
+            anyhow::ensure!(
+                exact.runtime == Runtime::Openvino && exact.canonical_device()? == "cpu",
+                "Paradee is qualified only on OpenVINO CPU"
+            );
+        }
         let missing = match exact.runtime {
             Runtime::Default | Runtime::Cuda | Runtime::Vulkan | Runtime::Hip
                 if !exact.library.as_deref().is_some_and(Path::is_file) =>

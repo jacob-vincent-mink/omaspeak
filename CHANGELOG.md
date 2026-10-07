@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.1-rc.3 - 2026-10-07
+
+- Add incremental local and cloud speech playback with supervised cancellation.
+- Add ElevenLabs, OpenAI-compatible, Cartesia and Deepgram TTS adapters.
+- Add experimental native Paradee OpenVINO CPU support and audio.cpp follow-up.
+- Keep consumer-events/D-Bus work separate; no delivered ONNX Runtime.
+
 ## 0.1.1-rc.2 - 2026-09-27
 
 - Ship the optional Kokoro C++ bridge in both Linux release archives, built
