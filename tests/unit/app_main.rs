@@ -4968,3 +4968,66 @@ fn model_picker_prefers_compatible_row_and_rejects_disabled_selection() {
         );
     }
 }
+
+#[test]
+fn cloud_configuration_setters_reset_and_serialize_environment_references() {
+    let mut config = Config::default();
+    for (key, value) in [
+        ("backend.cloud.base_url", "http://localhost:1234/v1"),
+        ("backend.cloud.api_key_env", "TEST_API_KEY"),
+        ("backend.cloud.model", "custom-model"),
+        ("backend.cloud.voice", "custom-voice"),
+        ("backend.cloud.timeout_seconds", "15"),
+        ("backend.cloud.max_audio_seconds", "30"),
+    ] {
+        set_config(&mut config, key, value).unwrap();
+    }
+    set_config(&mut config, "backend.cloud.voices.reader", "voice-id").unwrap();
+    assert_eq!(config.backend.cloud.voices["reader"], "voice-id");
+    unset_config(&mut config, "backend.cloud.voices.reader").unwrap();
+    assert!(config.backend.cloud.voices.is_empty());
+    for key in [
+        "backend.cloud.base_url",
+        "backend.cloud.api_key_env",
+        "backend.cloud.model",
+        "backend.cloud.voice",
+        "backend.cloud.timeout_seconds",
+        "backend.cloud.max_audio_seconds",
+    ] {
+        unset_config(&mut config, key).unwrap();
+    }
+    assert_eq!(config.backend.cloud, Config::default().backend.cloud);
+    for key in [
+        "backend.cloud.timeout_seconds",
+        "backend.cloud.max_audio_seconds",
+    ] {
+        assert!(set_config(&mut config, key, "invalid").is_err());
+    }
+}
+
+#[test]
+fn paradee_runtime_selection_stays_on_cpu_and_preserves_the_backend() {
+    let root = sandbox();
+    let paths = paths(&root);
+    let mut config = Config::default();
+    omaspeak::catalog::model("paradee-8m-openvino")
+        .unwrap()
+        .activate(&mut config);
+    config.save(&paths.config_file).unwrap();
+    let candidate =
+        runtime_configuration_candidate(&paths.config_file, Runtime::Openvino, "cpu", None, None)
+            .unwrap();
+    assert_eq!(candidate.backend.kind, "paradee-openvino");
+    for device in ["gpu", "npu"] {
+        assert!(
+            runtime_configuration_candidate(
+                &paths.config_file,
+                Runtime::Openvino,
+                device,
+                None,
+                None
+            )
+            .is_err()
+        );
+    }
+}

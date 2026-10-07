@@ -1191,8 +1191,13 @@ fn write_response(stream: &mut impl Write, response: &Response) -> Result<()> {
 }
 
 fn read_request(stream: &mut impl Read, limit: usize) -> Result<Request> {
+    read_buffered_request(&mut BufReader::new(stream), limit)
+}
+
+fn read_buffered_request(stream: &mut impl BufRead, limit: usize) -> Result<Request> {
     let mut bytes = Vec::new();
-    BufReader::new(stream)
+    stream
+        .by_ref()
         .take(limit as u64 + 1)
         .read_until(b'\n', &mut bytes)?;
     if bytes.len() > limit {

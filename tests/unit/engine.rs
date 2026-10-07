@@ -361,3 +361,31 @@ fn failed_offline_generation_does_not_truncate_existing_output() {
     );
     assert_eq!(fs::read(&path).unwrap(), b"original audio");
 }
+
+#[test]
+fn buffered_provider_stream_fallback_validates_pcm_and_propagates_sink_failure() {
+    let root = temp("buffered-stream-fallback");
+    let output = root.join("out.wav");
+    let mut delivered = Vec::new();
+    engine(Ok(vec![0.25; 5000]), 1)
+        .synthesize_stream("hello", 1.0, 0, &output, &mut |chunk| {
+            assert!(chunk.len() <= 4096);
+            delivered.extend_from_slice(chunk);
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(delivered, vec![0.25; 5000]);
+    for samples in [Ok(vec![]), Ok(vec![f32::NAN]), Err("provider failed")] {
+        assert!(
+            engine(samples, 1)
+                .synthesize_stream("hello", 1.0, 0, &output, &mut |_| Ok(()))
+                .is_err()
+        );
+    }
+    assert!(
+        engine(Ok(vec![0.25]), 1)
+            .synthesize_stream("hello", 1.0, 0, &output, &mut |_| bail!("sink closed"))
+            .is_err()
+    );
+    fs::remove_dir_all(root).unwrap();
+}

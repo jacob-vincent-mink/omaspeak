@@ -238,3 +238,20 @@ fn available_reports_missing_catalog_metadata_and_family_errors() {
     assert_eq!(available(&config, &paths).unwrap().len(), 10);
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn paradee_inventory_requires_installed_metadata_and_cloud_voices_need_no_model() {
+    let (mut config, paths) = fixture("paradee-cloud");
+    let model = crate::catalog::model("paradee-8m-openvino").unwrap();
+    model.activate(&mut config);
+    assert_eq!(available(&config, &paths).unwrap()[0].name, "af_heart");
+    assert!(installed(&config, &paths).is_err());
+    let directory = config.model_directory(&paths);
+    fs::create_dir_all(&directory).unwrap();
+    fs::write(directory.join(&config.model.file), b"model").unwrap();
+    fs::write(directory.join(&config.model.tts_json), b"{}").unwrap();
+    assert_eq!(installed(&config, &paths).unwrap()[0].name, "af_heart");
+    config.backend.kind = "openai-compatible".into();
+    assert_eq!(installed(&config, &paths).unwrap()[0].name, "alloy");
+    fs::remove_dir_all(paths.data_dir.parent().unwrap()).unwrap();
+}

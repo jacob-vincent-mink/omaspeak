@@ -244,12 +244,20 @@ fn stream_request(
 }
 
 pub(super) fn worker(spec: &str) -> Result<()> {
+    worker_io(
+        spec,
+        &mut std::io::stdin().lock(),
+        &mut std::io::stdout().lock(),
+    )
+}
+
+fn worker_io(spec: &str, input: impl Read, mut output: impl Write) -> Result<()> {
+    let mut input = BufReader::new(input);
     let spec: WorkerConfig =
         serde_json::from_str(spec).context("decode frozen worker configuration")?;
     let config = spec.config;
     let paths = &spec.paths;
     let engine = Engine::load(&config, paths)?;
-    let mut output = std::io::stdout().lock();
     write_worker_message(
         &mut output,
         &WorkerMessage::Response {
@@ -260,9 +268,8 @@ pub(super) fn worker(spec: &str) -> Result<()> {
             },
         },
     )?;
-    let mut input = std::io::stdin().lock();
     loop {
-        let request = read_request(&mut input, MAX_MESSAGE)?;
+        let request = read_buffered_request(&mut input, MAX_MESSAGE)?;
         let response = match request.command {
             Command::Say { no_play: true, .. } => handle_request(&engine, &config, paths, request),
             Command::Say { no_play: false, .. } => {
@@ -926,3 +933,7 @@ fn complete_synthesis(job: &mut Job, mut response: Response) -> Result<()> {
     job.reply(response.result);
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "../tests/unit/request_service.rs"]
+mod tests;

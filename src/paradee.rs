@@ -32,13 +32,21 @@ struct ModelMetadata {
 }
 
 pub struct ParadeeOpenvinoBackend {
-    compiled: RefCell<CompiledModel>,
+    compiled: RefCell<Box<dyn ParadeeGraph>>,
     vocab: BTreeMap<char, i64>,
     frontend: PathBuf,
 }
 
 impl ParadeeOpenvinoBackend {
     pub fn create(config: &Config, paths: &AppPaths) -> Result<Self> {
+        Self::create_with(config, paths, compile_native)
+    }
+
+    fn create_with(
+        config: &Config,
+        paths: &AppPaths,
+        compile: impl FnOnce(&Path, &Config, &AppPaths) -> Result<Box<dyn ParadeeGraph>>,
+    ) -> Result<Self> {
         ensure!(
             config.backend.runtime == Runtime::Openvino,
             "Paradee requires runtime=openvino"
@@ -81,34 +89,9 @@ impl ParadeeOpenvinoBackend {
         let frontend = frontend_path(config)?;
         // Exercise G2P data before declaring the backend usable.
         encode(&to_misaki(&phonemize(&frontend, "Hello.")?), &vocab)?;
-        let locations = crate::runtime::inspect(&config.backend, &paths.config_file);
-        let runtime = crate::runtime::resolve_openvino_runtime(
-            &config.backend,
-            &paths.config_file,
-            &locations,
-        )?;
-        openvino_sys::library::load_from(&runtime.library)
-            .map_err(anyhow::Error::msg)
-            .context("load Paradee OpenVINO runtime")?;
-        let mut core = Core::new_with_config(
-            runtime
-                .plugins
-                .to_str()
-                .context("non-UTF8 OpenVINO plugins path")?,
-        )?;
-        core.set_property(
-            &DeviceType::CPU,
-            &openvino::RwPropertyKey::InferenceNumThreads,
-            &config.backend.threads.to_string(),
-        )?;
-        let model = core
-            .read_model_from_file(graph.to_str().context("non-UTF8 Paradee model path")?, "")
-            .context("import Paradee FP32 graph")?;
-        let compiled = core
-            .compile_model(&model, DeviceType::CPU)
-            .context("compile Paradee on OpenVINO CPU")?;
+        let compiled = compile(&graph, config, paths)?;
         let execution = compiled
-            .get_property(&PropertyKey::Other(Cow::Borrowed("EXECUTION_DEVICES")))
+            .execution_devices()
             .context("verify Paradee OpenVINO execution placement")?;
         ensure!(
             cpu_execution(&execution),
@@ -126,29 +109,90 @@ impl ParadeeOpenvinoBackend {
             (3..=512).contains(&ids.len()),
             "invalid Paradee token length"
         );
-        let mut tokens = Tensor::new(ElementType::I64, &Shape::new(&[1, ids.len() as i64])?)?;
-        tokens.get_data_mut::<i64>()?.copy_from_slice(ids);
-        let mut pace = Tensor::new(ElementType::F32, &Shape::new(&[1])?)?;
-        pace.get_data_mut::<f32>()?[0] = speed;
-        let mut compiled = self.compiled.borrow_mut();
-        let mut request = compiled.create_infer_request()?;
-        request.set_tensor("input_ids", &tokens)?;
-        request.set_tensor("speed", &pace)?;
-        request.infer().context("generate Paradee audio")?;
-        let waveform = request.get_tensor("waveform")?;
-        let shape = waveform.get_shape()?;
+        let (shape, samples) = self.compiled.borrow_mut().infer(ids, speed)?;
         ensure!(
-            shape.get_dimensions().len() == 2 && shape.get_dimensions()[0] == 1,
-            "Paradee returned non-mono audio"
+            shape.len() == 2
+                && shape[0] == 1
+                && shape[1] >= 0
+                && usize::try_from(shape[1]).ok() == Some(samples.len()),
+            "Paradee returned non-mono or inconsistent audio shape"
         );
-        let samples = waveform.get_data::<f32>()?;
         ensure!(
             !samples.is_empty()
                 && samples.len() <= MAX_SAMPLES
                 && samples.iter().all(|sample| sample.is_finite()),
             "Paradee returned invalid or excessive audio"
         );
-        Ok(samples.to_vec())
+        Ok(samples)
+    }
+}
+
+/// The native graph boundary keeps metadata, frontend and PCM validation common
+/// to real OpenVINO execution and deterministic provider-contract fixtures.
+trait ParadeeGraph {
+    fn execution_devices(&self) -> Result<String>;
+    fn infer(&mut self, ids: &[i64], speed: f32) -> Result<(Vec<i64>, Vec<f32>)>;
+}
+
+struct NativeGraph(CompiledModel);
+
+fn compile_native(
+    graph: &Path,
+    config: &Config,
+    paths: &AppPaths,
+) -> Result<Box<dyn ParadeeGraph>> {
+    let locations = crate::runtime::inspect(&config.backend, &paths.config_file);
+    let runtime =
+        crate::runtime::resolve_openvino_runtime(&config.backend, &paths.config_file, &locations)?;
+    openvino_sys::library::load_from(&runtime.library)
+        .map_err(anyhow::Error::msg)
+        .context("load Paradee OpenVINO runtime")?;
+    let mut core = Core::new_with_config(
+        runtime
+            .plugins
+            .to_str()
+            .context("non-UTF8 OpenVINO plugins path")?,
+    )?;
+    core.set_property(
+        &DeviceType::CPU,
+        &openvino::RwPropertyKey::InferenceNumThreads,
+        &config.backend.threads.to_string(),
+    )?;
+    let model = core
+        .read_model_from_file(graph.to_str().context("non-UTF8 Paradee model path")?, "")
+        .context("import Paradee FP32 graph")?;
+    let compiled = core
+        .compile_model(&model, DeviceType::CPU)
+        .context("compile Paradee on OpenVINO CPU")?;
+    Ok(Box::new(NativeGraph(compiled)))
+}
+
+impl ParadeeGraph for NativeGraph {
+    fn execution_devices(&self) -> Result<String> {
+        self.0
+            .get_property(&PropertyKey::Other(Cow::Borrowed("EXECUTION_DEVICES")))
+            .map(Cow::into_owned)
+            .map_err(Into::into)
+    }
+
+    fn infer(&mut self, ids: &[i64], speed: f32) -> Result<(Vec<i64>, Vec<f32>)> {
+        let mut tokens = Tensor::new(ElementType::I64, &Shape::new(&[1, ids.len() as i64])?)?;
+        tokens.get_data_mut::<i64>()?.copy_from_slice(ids);
+        let mut pace = Tensor::new(ElementType::F32, &Shape::new(&[1])?)?;
+        pace.get_data_mut::<f32>()?[0] = speed;
+        let mut request = self.0.create_infer_request()?;
+        request.set_tensor("input_ids", &tokens)?;
+        request.set_tensor("speed", &pace)?;
+        request.infer().context("generate Paradee audio")?;
+        let waveform = request.get_tensor("waveform")?;
+        let shape = waveform.get_shape()?.get_dimensions().to_vec();
+        let samples = waveform.get_data::<f32>()?;
+        ensure!(
+            samples.len() <= MAX_SAMPLES,
+            "Paradee returned excessive audio"
+        );
+        let samples = samples.to_vec();
+        Ok((shape, samples))
     }
 }
 
@@ -221,6 +265,10 @@ fn model_asset(directory: &Path, value: &str) -> Result<PathBuf> {
 }
 
 fn frontend_path(config: &Config) -> Result<PathBuf> {
+    frontend_path_in(config, std::env::var_os("PATH").as_deref())
+}
+
+fn frontend_path_in(config: &Config, search_path: Option<&std::ffi::OsStr>) -> Result<PathBuf> {
     if let Some(value) = config.backend.options.get("g2p_executable") {
         let path = PathBuf::from(value);
         ensure!(
@@ -229,7 +277,7 @@ fn frontend_path(config: &Config) -> Result<PathBuf> {
         );
         return Ok(path);
     }
-    std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
+    std::env::split_paths(search_path.unwrap_or_default())
         .map(|directory| directory.join("espeak-ng"))
         .find(|path| path.is_file())
         .context("Paradee requires native espeak-ng and its English data; install espeak-ng or set backend.options.g2p_executable to its absolute path")

@@ -1406,6 +1406,10 @@ pub fn run_worker(spec_json: &str) -> Result<()> {
         );
         return Err(error);
     }
+    run_worker_io(spec_json, &mut input, &mut output)
+}
+
+fn run_worker_io(spec_json: &str, mut input: impl Read, mut output: impl Write) -> Result<()> {
     let spec: WorkerSpec =
         serde_json::from_str(spec_json).context("decode audio.cpp worker spec")?;
     let (expected_rate, expected_voices) = spec_rate_voices(&spec.family)?;
