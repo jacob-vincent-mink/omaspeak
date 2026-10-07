@@ -23,6 +23,7 @@ libc = "0.2"
 signal-hook = "0.3"
 thiserror = "2"
 toml = "0.9"
+url = "2"
 ureq = { version = "2.12", default-features = false, features = ["tls"] }
 unicode-normalization = "0.1"
 unicode-width = "0.2"

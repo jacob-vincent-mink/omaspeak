@@ -15,3 +15,8 @@ pub mod supertonic;
 pub mod voices;
 
 pub mod audio_devices;
+
+pub mod cloud;
+pub mod cloud_http;
+
+pub mod paradee;

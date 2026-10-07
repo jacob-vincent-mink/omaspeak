@@ -205,3 +205,42 @@ int audiocpp_result_audio(void *result, const float **samples, size_t *frames,
     return 0;
 }
 void audiocpp_result_free(void *result) { free(result); }
+
+#ifdef OMASPEAK_TEST_STREAMING
+/* Exact pinned pull ABI: Supertonic emits named chunk audio, then returns the
+ * merged final result. A delayed second chunk proves delivery is incremental. */
+static stub_request streaming_request;
+static int streaming_index;
+int audiocpp_stream_start(void *session, void *request) {
+    if (!session || !request) return 1;
+    streaming_request = *(stub_request *)request;
+    streaming_index = 0;
+    return 0;
+}
+int audiocpp_stream_next_event(void *session, void **event) {
+    *event = NULL;
+    if (streaming_index >= 2) return 0;
+    if (streaming_index == 1) {
+        const char *marker = getenv("OMASPEAK_STREAM_NEXT");
+        if (marker) { FILE *f = fopen(marker, "w"); if (f) { fputs("next", f); fclose(f); } }
+        if (strcmp(streaming_request.text, "stream-stall") == 0) sleep(30);
+        if (strcmp(streaming_request.text, "stream-test") == 0) sleep(2);
+        if (strcmp(streaming_request.text, "stream-fail") == 0) { usleep(100000); return 4; }
+    }
+    streaming_index++;
+    return audiocpp_session_run(session, &streaming_request, event);
+}
+int audiocpp_stream_finish(void *session, void **result) {
+    return audiocpp_session_run(session, &streaming_request, result);
+}
+int audiocpp_stream_reset(void *session) { (void)session; streaming_index = 0; return 0; }
+void audiocpp_event_free(void *event) { audiocpp_result_free(event); }
+void *audiocpp_event_as_result(void *event) { return event; }
+size_t audiocpp_result_named_audio_count(void *result) { return result ? 1 : 0; }
+int audiocpp_result_named_audio(void *result, size_t index, const char **id,
+    const float **samples, size_t *frames, int *rate, int *channels) {
+    if (index != 0) return 1;
+    if (id) *id = "chunk";
+    return audiocpp_result_audio(result, samples, frames, rate, channels);
+}
+#endif

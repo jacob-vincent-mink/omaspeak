@@ -17,6 +17,232 @@ struct WorkerConfig {
     paths: AppPaths,
 }
 
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(tag = "event", rename_all = "snake_case")]
+enum WorkerMessage {
+    Response {
+        response: Response,
+    },
+    Playing {
+        id: String,
+        first_audio_milliseconds: u64,
+    },
+}
+
+fn write_worker_message(output: &mut impl Write, message: &WorkerMessage) -> Result<()> {
+    serde_json::to_writer(&mut *output, message)?;
+    output.write_all(b"\n")?;
+    output.flush()?;
+    Ok(())
+}
+
+// Lives in the supervised worker's process group, alongside native synthesis.
+// Kernel pipe backpressure bounds pending PCM and daemon cancellation kills the
+// complete group, including the player and its inherited Omawake pause hold.
+struct StreamingPlayer {
+    child: Child,
+    input: Option<ChildStdin>,
+    pause: Option<wake_pause::WakePause>,
+}
+
+impl StreamingPlayer {
+    fn start(rate: i32, selected: &str) -> Result<Self> {
+        omaspeak::audio_devices::validate(selected, "output")?;
+        let pinned = !omaspeak::audio_devices::is_default(selected);
+        if pinned {
+            omaspeak::audio_devices::resolve(selected, "output")?;
+        }
+        let pause = wake_pause::WakePause::acquire(|| false)?;
+        let mut command = ProcessCommand::new("pw-play");
+        command.args([
+            "--raw",
+            "--format",
+            "s16",
+            "--rate",
+            &rate.to_string(),
+            "--channels",
+            "1",
+        ]);
+        if pinned {
+            command.args([
+                "--target",
+                selected
+                    .strip_prefix("pipewire:")
+                    .context("expected PipeWire output")?,
+                "--properties",
+                omaspeak::audio_devices::PINNED_PROPERTIES,
+            ]);
+        }
+        command
+            .arg("-")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::inherit());
+        configure_child_parent_death(&mut command);
+        if let Some(pause) = &pause {
+            pause.retain_in_player(&mut command);
+        }
+        let child = match command.spawn() {
+            Ok(child) => child,
+            Err(error) if !pinned && error.kind() == std::io::ErrorKind::NotFound => {
+                let mut fallback = ProcessCommand::new("aplay");
+                fallback
+                    .args([
+                        "-t",
+                        "raw",
+                        "-f",
+                        "S16_LE",
+                        "-r",
+                        &rate.to_string(),
+                        "-c",
+                        "1",
+                    ])
+                    .stdin(Stdio::piped())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::inherit());
+                configure_child_parent_death(&mut fallback);
+                if let Some(pause) = &pause {
+                    pause.retain_in_player(&mut fallback);
+                }
+                fallback.spawn().context("start raw ALSA playback")?
+            }
+            Err(error) => return Err(error).context("start raw PipeWire playback"),
+        };
+        let mut player = Self {
+            child,
+            input: None,
+            pause,
+        };
+        player.input = Some(
+            player
+                .child
+                .stdin
+                .take()
+                .context("missing raw playback stdin")?,
+        );
+        Ok(player)
+    }
+
+    fn push(&mut self, samples: &[f32]) -> Result<()> {
+        if self
+            .pause
+            .as_ref()
+            .is_some_and(wake_pause::WakePause::disconnected)
+        {
+            bail!("Omawake playback pause disconnected");
+        }
+        let mut bytes = Vec::with_capacity(samples.len() * 2);
+        for sample in samples {
+            bytes.extend_from_slice(
+                &((sample.clamp(-1.0, 1.0) * i16::MAX as f32) as i16).to_le_bytes(),
+            );
+        }
+        self.input
+            .as_mut()
+            .context("playback stdin closed")?
+            .write_all(&bytes)
+            .context("write streaming playback")
+    }
+
+    fn finish(mut self) -> Result<()> {
+        self.input.take(); // EOF drains the player; wait before releasing the hold.
+        let status = wait_for_playback(&mut self.child, || {
+            self.pause
+                .as_ref()
+                .is_some_and(wake_pause::WakePause::disconnected)
+        })?;
+        anyhow::ensure!(status.success(), "streaming playback exited: {status}");
+        Ok(())
+    }
+}
+
+impl Drop for StreamingPlayer {
+    fn drop(&mut self) {
+        self.input.take();
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+fn stream_request(
+    engine: &Engine,
+    config: &Config,
+    paths: &AppPaths,
+    request: Request,
+    output: &mut impl Write,
+) -> Response {
+    let id = request.id;
+    let result = (|| -> Result<ResultPayload> {
+        let Command::Say {
+            text,
+            speed,
+            voice,
+            output: destination,
+            ..
+        } = request.command
+        else {
+            bail!("not a speech request");
+        };
+        anyhow::ensure!(
+            text.len() <= config.daemon.max_text_bytes,
+            "text exceeds {} bytes",
+            config.daemon.max_text_bytes
+        );
+        let voice = resolve_selection(config, &voice)?;
+        let destination = destination
+            .map(PathBuf::from)
+            .unwrap_or_else(|| paths.state_dir.join("last.wav"));
+        let started = Instant::now();
+        let mut player: Option<StreamingPlayer> = None;
+        let synthesis =
+            engine.synthesize_stream(&text, speed, voice, &destination, &mut |chunk| {
+                let first = player.is_none();
+                if first {
+                    player = Some(
+                        StreamingPlayer::start(engine.sample_rate, &config.audio.device)
+                            .map_err(|error| PlaybackFailure(format!("{error:#}")))?,
+                    );
+                }
+                player
+                    .as_mut()
+                    .unwrap()
+                    .push(chunk)
+                    .map_err(|error| PlaybackFailure(format!("{error:#}")))?;
+                if first {
+                    write_worker_message(
+                        output,
+                        &WorkerMessage::Playing {
+                            id: id.clone(),
+                            first_audio_milliseconds: started.elapsed().as_millis() as u64,
+                        },
+                    )?;
+                }
+                Ok(())
+            })?;
+        player
+            .context("synthesis produced no playback")?
+            .finish()
+            .map_err(|error| PlaybackFailure(format!("{error:#}")))?;
+        Ok(synthesis_payload(engine, synthesis))
+    })();
+    match result {
+        Ok(result) => Response {
+            protocol: 1,
+            id,
+            result,
+        },
+        Err(error) => Response::error(
+            id,
+            if error.downcast_ref::<PlaybackFailure>().is_some() {
+                "audio"
+            } else {
+                "runtime"
+            },
+            error,
+        ),
+    }
+}
+
 pub(super) fn worker(spec: &str) -> Result<()> {
     let spec: WorkerConfig =
         serde_json::from_str(spec).context("decode frozen worker configuration")?;
@@ -24,20 +250,24 @@ pub(super) fn worker(spec: &str) -> Result<()> {
     let paths = &spec.paths;
     let engine = Engine::load(&config, paths)?;
     let mut output = std::io::stdout().lock();
-    write_response(
+    write_worker_message(
         &mut output,
-        &Response {
-            protocol: 1,
-            id: "ready".into(),
-            result: status_payload(&engine, &config),
+        &WorkerMessage::Response {
+            response: Response {
+                protocol: 1,
+                id: "ready".into(),
+                result: status_payload(&engine, &config),
+            },
         },
     )?;
-    output.flush()?;
     let mut input = std::io::stdin().lock();
     loop {
         let request = read_request(&mut input, MAX_MESSAGE)?;
         let response = match request.command {
             Command::Say { no_play: true, .. } => handle_request(&engine, &config, paths, request),
+            Command::Say { no_play: false, .. } => {
+                stream_request(&engine, &config, paths, request, &mut output)
+            }
             Command::Shutdown => return Ok(()),
             _ => Response::error(
                 request.id,
@@ -45,8 +275,7 @@ pub(super) fn worker(spec: &str) -> Result<()> {
                 "worker only accepts file synthesis",
             ),
         };
-        write_response(&mut output, &response)?;
-        output.flush()?;
+        write_worker_message(&mut output, &WorkerMessage::Response { response })?;
     }
 }
 
@@ -119,7 +348,7 @@ impl ProcessWorker {
         Ok(())
     }
 
-    fn poll(&mut self) -> Result<Option<Response>> {
+    fn poll(&mut self) -> Result<Option<WorkerMessage>> {
         if !self.ready && self.started.elapsed() > WORK_TIMEOUT {
             bail!("synthesis worker startup timed out");
         }
@@ -198,6 +427,112 @@ fn read_frame(
     Ok(None)
 }
 
+/// On-demand playback uses the same supervised streaming worker as the daemon.
+/// This keeps SIGINT responsive even while a provider or audio pipe is blocked.
+pub(super) fn say_locally(
+    config: &Config,
+    paths: &AppPaths,
+    mut request: Request,
+) -> Result<Response> {
+    let Command::Say { output, .. } = &mut request.command else {
+        bail!("not a speech request");
+    };
+    let destination = output
+        .as_ref()
+        .map(PathBuf::from)
+        .unwrap_or_else(|| paths.state_dir.join("last.wav"));
+    let stage = StagedOutput::create(&destination)?;
+    *output = Some(stage.0.to_string_lossy().into_owned());
+    let interrupted = Arc::new(AtomicBool::new(false));
+    let mut signals = SignalRegistrations(Vec::new());
+    for signal in [
+        signal_hook::consts::signal::SIGINT,
+        signal_hook::consts::signal::SIGTERM,
+    ] {
+        signals
+            .0
+            .push(signal_hook::flag::register(signal, interrupted.clone())?);
+    }
+    let mut worker = ProcessWorker::start(config, paths)?;
+    let started = Instant::now();
+    let mut submitted = false;
+    loop {
+        if interrupted.load(Ordering::Relaxed) || started.elapsed() > WORK_TIMEOUT {
+            return Ok(Response::error(
+                &request.id,
+                "cancelled",
+                "speech request cancelled or timed out",
+            ));
+        }
+        match worker.poll()? {
+            Some(WorkerMessage::Response { response }) if !worker.ready => {
+                anyhow::ensure!(
+                    response.id == "ready"
+                        && matches!(response.result, ResultPayload::Status { .. }),
+                    "invalid synthesis worker startup response"
+                );
+                worker.ready = true;
+            }
+            Some(WorkerMessage::Response { mut response }) => {
+                anyhow::ensure!(
+                    response.id == request.id,
+                    "synthesis worker response ID mismatch"
+                );
+                if let ResultPayload::Synthesis { output, .. } = &mut response.result {
+                    fs::rename(&stage.0, &destination)?;
+                    *output = destination.to_string_lossy().into_owned();
+                }
+                return Ok(response);
+            }
+            Some(WorkerMessage::Playing { id, .. }) => {
+                anyhow::ensure!(
+                    id == request.id && submitted,
+                    "invalid synthesis worker progress"
+                );
+            }
+            None => {}
+        }
+        if worker.ready && !submitted {
+            worker.submit(&request)?;
+            submitted = true;
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
+struct SignalRegistrations(Vec<signal_hook::SigId>);
+impl Drop for SignalRegistrations {
+    fn drop(&mut self) {
+        for id in self.0.drain(..) {
+            signal_hook::low_level::unregister(id);
+        }
+    }
+}
+
+struct StagedOutput(PathBuf);
+impl StagedOutput {
+    fn create(destination: &Path) -> Result<Self> {
+        let parent = destination
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        fs::create_dir_all(parent)?;
+        let stage = parent.join(format!(".omaspeak-{}.wav", request_id()));
+        use std::os::unix::fs::OpenOptionsExt;
+        fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .mode(0o600)
+            .open(&stage)?;
+        Ok(Self(stage))
+    }
+}
+impl Drop for StagedOutput {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.0);
+    }
+}
+
 struct Reading {
     stream: UnixStream,
     bytes: Vec<u8>,
@@ -209,8 +544,6 @@ struct Job {
     request: Request,
     stage: Option<PathBuf>,
     destination: Option<PathBuf>,
-    player: Option<Child>,
-    response: Option<Response>,
     started: Instant,
 }
 
@@ -221,8 +554,6 @@ impl Job {
             request,
             stage: None,
             destination: None,
-            player: None,
-            response: None,
             started: Instant::now(),
         }
     }
@@ -246,9 +577,6 @@ impl Job {
 
 impl Drop for Job {
     fn drop(&mut self) {
-        if let Some(mut player) = self.player.take() {
-            kill_group(&mut player);
-        }
         if let Some(stage) = &self.stage {
             let _ = fs::remove_file(stage);
         }
@@ -264,7 +592,14 @@ pub(super) fn serve(
     anyhow::ensure!(
         matches!(
             config.backend.kind.as_str(),
-            "audiocpp" | "supertonic" | "kokoro-genai"
+            "audiocpp"
+                | "supertonic"
+                | "kokoro-genai"
+                | "paradee-openvino"
+                | "elevenlabs"
+                | "openai-compatible"
+                | "cartesia"
+                | "deepgram"
         ),
         "unsupported TTS backend"
     );
@@ -409,9 +744,7 @@ fn serve_loop(
                                         target.as_ref().is_none_or(|id| id == &current.request.id)
                                     }) {
                                         let mut current = active.take().unwrap();
-                                        if current.player.is_none() {
-                                            worker.take();
-                                        }
+                                        worker.take();
                                         current.error("cancelled", "speech request cancelled");
                                         drop(current);
                                         count += 1;
@@ -448,28 +781,23 @@ fn serve_loop(
             socket_peer_disconnected(job.stream.as_raw_fd()) || job.started.elapsed() > WORK_TIMEOUT
         }) {
             let mut job = active.take().unwrap();
-            if job.player.is_none() {
-                worker.take();
-            }
+            worker.take();
             job.error("cancelled", "request disconnected or timed out");
-        }
-        if let Some(job) = &mut active
-            && let Some(player) = &mut job.player
-            && let Some(status) = player.try_wait()?
-        {
-            // Reaped player has exited; retain Job cleanup for any descendants.
-            if status.success() {
-                if let Some(response) = job.response.take() {
-                    job.reply(response.result);
-                }
-            } else {
-                job.error("playback", format!("playback worker exited: {status}"));
-            }
-            active.take();
         }
         let response = worker.as_mut().map(ProcessWorker::poll).transpose();
         match response {
-            Ok(Some(Some(response))) => {
+            Ok(Some(Some(WorkerMessage::Playing { id, .. }))) => {
+                if let Some(job) = &mut active {
+                    if job.request.id != id {
+                        job.error("runtime", "synthesis worker progress ID mismatch");
+                        worker.take();
+                        active.take();
+                    }
+                } else {
+                    bail!("unsolicited synthesis worker progress");
+                }
+            }
+            Ok(Some(Some(WorkerMessage::Response { response }))) => {
                 if !worker.as_ref().unwrap().ready {
                     if response.id != "ready"
                         || !matches!(response.result, ResultPayload::Status { .. })
@@ -491,10 +819,8 @@ fn serve_loop(
                         job.error("runtime", "synthesis worker response ID mismatch");
                         worker.take();
                     } else {
-                        match complete_synthesis(&mut job, response) {
-                            Ok(true) => active = Some(job),
-                            Ok(false) => {}
-                            Err(error) => job.error("runtime", error),
+                        if let Err(error) = complete_synthesis(&mut job, response) {
+                            job.error("runtime", error);
                         }
                     }
                 } else {
@@ -547,7 +873,7 @@ fn start_synthesis(job: &mut Job, paths: &AppPaths, worker: &mut ProcessWorker) 
         speed,
         voice,
         output,
-        ..
+        no_play,
     } = &job.request.command
     else {
         bail!("not a speech request");
@@ -579,12 +905,12 @@ fn start_synthesis(job: &mut Job, paths: &AppPaths, worker: &mut ProcessWorker) 
             speed: *speed,
             voice: voice.clone(),
             output: Some(stage.to_string_lossy().into_owned()),
-            no_play: true,
+            no_play: *no_play,
         },
     })
 }
 
-fn complete_synthesis(job: &mut Job, mut response: Response) -> Result<bool> {
+fn complete_synthesis(job: &mut Job, mut response: Response) -> Result<()> {
     if let ResultPayload::Synthesis { output, .. } = &mut response.result {
         let destination = job
             .destination
@@ -596,21 +922,7 @@ fn complete_synthesis(job: &mut Job, mut response: Response) -> Result<bool> {
         )?;
         job.stage = None;
         *output = destination.to_string_lossy().into_owned();
-        if matches!(job.request.command, Command::Say { no_play: false, .. }) {
-            let mut command = ProcessCommand::new(std::env::current_exe()?);
-            command
-                .arg("__voice-playback")
-                .arg(destination)
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::inherit())
-                .process_group(0);
-            configure_child_parent_death(&mut command);
-            job.player = Some(command.spawn()?);
-            job.response = Some(response);
-            return Ok(true);
-        }
     }
     job.reply(response.result);
-    Ok(false)
+    Ok(())
 }

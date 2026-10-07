@@ -39,6 +39,7 @@ const WORKER_STOP_TIMEOUT: Duration = Duration::from_secs(1);
 const PROVIDER_PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 
 type Status = c_int;
+type AudioSink<'a> = dyn FnMut(&[f32]) -> Result<()> + 'a;
 type Handle = *mut c_void;
 
 #[repr(C)]
@@ -87,7 +88,52 @@ type ResultAudio =
     unsafe extern "C" fn(Handle, *mut *const f32, *mut usize, *mut c_int, *mut c_int) -> Status;
 type ResultFree = unsafe extern "C" fn(Handle);
 
+type StreamStart = unsafe extern "C" fn(Handle, Handle) -> Status;
+type StreamNext = unsafe extern "C" fn(Handle, *mut Handle) -> Status;
+type StreamReset = unsafe extern "C" fn(Handle) -> Status;
+type EventResult = unsafe extern "C" fn(Handle) -> Handle;
+type NamedCount = unsafe extern "C" fn(Handle) -> usize;
+type NamedAudio = unsafe extern "C" fn(
+    Handle,
+    usize,
+    *mut *const c_char,
+    *mut *const f32,
+    *mut usize,
+    *mut c_int,
+    *mut c_int,
+) -> Status;
+
+struct StreamApi {
+    start: StreamStart,
+    next: StreamNext,
+    finish: SessionRunFinish,
+    reset: StreamReset,
+    free: ResultFree,
+    result: EventResult,
+    named_count: NamedCount,
+    named_audio: NamedAudio,
+}
+type SessionRunFinish = unsafe extern "C" fn(Handle, *mut Handle) -> Status;
+impl StreamApi {
+    unsafe fn load(library: &Library) -> Result<Self> {
+        // Optional as a group: older complete offline providers keep working.
+        unsafe {
+            Ok(Self {
+                start: load_symbol(library, b"audiocpp_stream_start\0")?,
+                next: load_symbol(library, b"audiocpp_stream_next_event\0")?,
+                finish: load_symbol(library, b"audiocpp_stream_finish\0")?,
+                reset: load_symbol(library, b"audiocpp_stream_reset\0")?,
+                free: load_symbol(library, b"audiocpp_event_free\0")?,
+                result: load_symbol(library, b"audiocpp_event_as_result\0")?,
+                named_count: load_symbol(library, b"audiocpp_result_named_audio_count\0")?,
+                named_audio: load_symbol(library, b"audiocpp_result_named_audio\0")?,
+            })
+        }
+    }
+}
+
 struct Api {
+    stream: Option<StreamApi>,
     abi_version: AbiVersion,
     last_error: LastError,
     options_create: OptionsCreate,
@@ -121,6 +167,7 @@ impl Api {
             .with_context(|| format!("load audio.cpp provider {}", path.display()))?;
         unsafe {
             let api = Self {
+                stream: StreamApi::load(&library).ok(),
                 abi_version: load_symbol(&library, b"audiocpp_abi_version\0")?,
                 last_error: load_symbol(&library, b"audiocpp_last_error\0")?,
                 options_create: load_symbol(&library, b"audiocpp_options_create\0")?,
@@ -266,6 +313,7 @@ struct NativeEngine {
     registry: Handle,
     model: Handle,
     session: Handle,
+    streaming: bool,
     family: String,
     steps: i32,
     language: String,
@@ -387,6 +435,11 @@ impl NativeEngine {
             bail!("model.file does not support offline TTS through audio.cpp");
         }
 
+        let streaming_mode = CString::new("streaming").expect("static string has no NUL");
+        let streaming = spec.family == "supertonic"
+            && api.stream.is_some()
+            && unsafe { (api.model_supports)(model, task.as_ptr(), streaming_mode.as_ptr()) } == 1;
+        let mode = if streaming { &streaming_mode } else { &mode };
         let native_config = NativeBackendConfig {
             backend: backend.as_ptr(),
             device: spec.device,
@@ -434,6 +487,7 @@ impl NativeEngine {
             registry,
             model,
             session,
+            streaming,
             family: spec.family.clone(),
             steps: spec.steps,
             language,
@@ -442,6 +496,16 @@ impl NativeEngine {
     }
 
     fn generate(&mut self, text: &str, speed: f32, voice: i32) -> Result<Audio> {
+        self.generate_with_sink(text, speed, voice, None)
+    }
+
+    fn generate_with_sink(
+        &mut self,
+        text: &str,
+        speed: f32,
+        voice: i32,
+        mut sink: Option<&mut AudioSink<'_>>,
+    ) -> Result<Audio> {
         let text = CString::new(text).context("synthesis text contains a NUL byte")?;
         let voice_id = engine_voice_id(&self.family, voice)?;
         let voice = CString::new(voice_id).context("engine voice ID contains a NUL byte")?;
@@ -496,6 +560,95 @@ impl NativeEngine {
                     "request option configuration",
                 )?;
             }
+            if self.streaming {
+                let stream = self.api.stream.as_ref().context("missing streaming API")?;
+                self.api.check(
+                    unsafe { (stream.start)(self.session, request) },
+                    "stream start",
+                )?;
+                let mut pcm = Vec::new();
+                let mut total = 0usize;
+                loop {
+                    let mut event = std::ptr::null_mut();
+                    self.api.check(
+                        unsafe { (stream.next)(self.session, &mut event) },
+                        "stream next",
+                    )?;
+                    if event.is_null() {
+                        break;
+                    }
+                    let emitted = (|| -> Result<()> {
+                        let result = unsafe { (stream.result)(event) };
+                        anyhow::ensure!(
+                            !result.is_null(),
+                            "audio.cpp returned a null event result"
+                        );
+                        // Supertonic uses named chunk audio rather than the primary output.
+                        let count = unsafe { (stream.named_count)(result) };
+                        anyhow::ensure!(count <= 1, "unexpected multi-output TTS event");
+                        let mut samples = std::ptr::null();
+                        let mut frames = 0;
+                        let mut rate = 0;
+                        let mut channels = 0;
+                        let status = if count == 1 {
+                            unsafe {
+                                (stream.named_audio)(
+                                    result,
+                                    0,
+                                    std::ptr::null_mut(),
+                                    &mut samples,
+                                    &mut frames,
+                                    &mut rate,
+                                    &mut channels,
+                                )
+                            }
+                        } else {
+                            unsafe {
+                                (self.api.result_audio)(
+                                    result,
+                                    &mut samples,
+                                    &mut frames,
+                                    &mut rate,
+                                    &mut channels,
+                                )
+                            }
+                        };
+                        self.api.check(status, "stream audio")?;
+                        let length =
+                            validate_audio_shape(&self.family, samples, frames, rate, channels)?;
+                        total = total
+                            .checked_add(length)
+                            .context("stream length overflow")?;
+                        anyhow::ensure!(
+                            total <= MAX_PCM_SAMPLES,
+                            "audio.cpp stream exceeds sample limit"
+                        );
+                        let chunk = unsafe { std::slice::from_raw_parts(samples, length) };
+                        anyhow::ensure!(
+                            chunk.iter().all(|x| x.is_finite()),
+                            "audio.cpp returned non-finite PCM"
+                        );
+                        if let Some(sink) = &mut sink {
+                            sink(chunk)?;
+                        } else {
+                            pcm.extend_from_slice(chunk);
+                        }
+                        Ok(())
+                    })();
+                    unsafe { (stream.free)(event) };
+                    emitted?;
+                }
+                anyhow::ensure!(total > 0, "audio.cpp returned empty stream");
+                self.api.check(
+                    unsafe { (stream.finish)(self.session, &mut result) },
+                    "stream finish",
+                )?;
+                // finish contains the merged waveform already emitted; never emit it twice.
+                return Ok(Audio {
+                    sample_rate: SUPERTONIC_SAMPLE_RATE,
+                    pcm,
+                });
+            }
             self.api.check(
                 unsafe { (self.api.session_run)(self.session, request, &mut result) },
                 "synthesis",
@@ -529,6 +682,12 @@ impl NativeEngine {
             Ok(Audio { sample_rate, pcm })
         })();
 
+        if self.streaming
+            && operation.is_err()
+            && let Some(stream) = &self.api.stream
+        {
+            unsafe { (stream.reset)(self.session) };
+        }
         if !result.is_null() {
             unsafe { (self.api.result_free)(result) };
         }
@@ -610,6 +769,11 @@ enum WorkerRequest {
         speed: f32,
         voice: i32,
     },
+    GenerateStream {
+        text: String,
+        speed: f32,
+        voice: i32,
+    },
     Shutdown,
 }
 
@@ -618,6 +782,8 @@ enum WorkerRequest {
 enum WorkerResponse {
     Ready { sample_rate: i32, voices: i32 },
     Audio { sample_rate: i32, samples: usize },
+    AudioChunk { sample_rate: i32, samples: usize },
+    StreamEnd,
     Error { message: String },
     Shutdown,
 }
@@ -933,6 +1099,48 @@ impl WorkerClient {
         )
     }
 
+    fn request_stream(
+        &mut self,
+        request: &WorkerRequest,
+        sink: &mut dyn FnMut(&[f32]) -> Result<()>,
+    ) -> Result<()> {
+        self.write_request(request)?;
+        let mut total = 0usize;
+        loop {
+            match self.read_response()? {
+                WorkerResponse::AudioChunk {
+                    sample_rate,
+                    samples,
+                } => {
+                    anyhow::ensure!(
+                        sample_rate == self.expected_rate,
+                        "unexpected stream sample rate"
+                    );
+                    total = total
+                        .checked_add(samples)
+                        .context("stream length overflow")?;
+                    anyhow::ensure!(
+                        samples > 0 && total <= MAX_PCM_SAMPLES,
+                        "invalid streaming PCM length"
+                    );
+                    let pcm = read_pcm(
+                        self.output.as_mut().context("worker output closed")?,
+                        samples,
+                    )?;
+                    sink(&pcm)?;
+                }
+                WorkerResponse::StreamEnd => {
+                    anyhow::ensure!(total > 0, "empty audio.cpp stream");
+                    return Ok(());
+                }
+                WorkerResponse::Error { message } => {
+                    bail!("audio.cpp streaming synthesis failed: {message}")
+                }
+                other => bail!("invalid streaming response {other:?}"),
+            }
+        }
+    }
+
     fn request(&mut self, request: &WorkerRequest) -> Result<std::result::Result<Audio, String>> {
         let result = (|| {
             self.write_request(request)?;
@@ -1155,6 +1363,33 @@ impl TtsBackend for AudioCppBackend {
             }
         }
     }
+    fn generate_stream(
+        &self,
+        text: &str,
+        speed: f32,
+        voice: i32,
+        sink: &mut dyn FnMut(&[f32]) -> Result<()>,
+    ) -> Result<()> {
+        let mut worker = self
+            .worker
+            .lock()
+            .map_err(|_| anyhow!("audio.cpp worker lock is poisoned"))?;
+        if worker.stopped {
+            *worker = WorkerClient::launch(&self.spec)?;
+        }
+        let request = WorkerRequest::GenerateStream {
+            text: text.into(),
+            speed,
+            voice,
+        };
+        if let Err(error) = worker.request_stream(&request, sink) {
+            // Sink errors can leave unread frames. Reset by discarding this worker;
+            // never replay a partially heard request.
+            worker.stop().context("stop failed streaming worker")?;
+            return Err(error).context("audio.cpp stream failed; request was not replayed");
+        }
+        Ok(())
+    }
 }
 
 pub fn run_worker(spec_json: &str) -> Result<()> {
@@ -1208,6 +1443,41 @@ pub fn run_worker(spec_json: &str) -> Result<()> {
                         )?;
                         write_pcm(&mut output, &audio.pcm)?;
                     }
+                    Err(error) => write_json_frame(
+                        &mut output,
+                        &WorkerResponse::Error {
+                            message: format!("{error:#}"),
+                        },
+                    )?,
+                }
+            }
+            WorkerRequest::GenerateStream { text, speed, voice } => {
+                let mut emit = |pcm: &[f32]| -> Result<()> {
+                    for chunk in pcm.chunks(4096) {
+                        write_json_frame(
+                            &mut output,
+                            &WorkerResponse::AudioChunk {
+                                sample_rate: expected_rate,
+                                samples: chunk.len(),
+                            },
+                        )?;
+                        write_pcm(&mut output, chunk)?;
+                    }
+                    Ok(())
+                };
+                let result = if engine.streaming {
+                    engine
+                        .generate_with_sink(&text, speed, voice, Some(&mut emit))
+                        .map(|_| ())
+                } else {
+                    // Kokoro in the pinned provider is offline-only. Bound text
+                    // segments and emit each before requesting the next one.
+                    crate::supertonic::chunk_text(&text, 240)
+                        .iter()
+                        .try_for_each(|chunk| emit(&engine.generate(chunk, speed, voice)?.pcm))
+                };
+                match result {
+                    Ok(()) => write_json_frame(&mut output, &WorkerResponse::StreamEnd)?,
                     Err(error) => write_json_frame(
                         &mut output,
                         &WorkerResponse::Error {

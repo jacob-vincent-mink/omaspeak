@@ -77,6 +77,20 @@ pub struct Voice {
 
 /// Inspect the installed active model and return its actual speaker inventory.
 pub fn installed(config: &Config, paths: &AppPaths) -> Result<Vec<Voice>> {
+    if crate::cloud::is_cloud(&config.backend.kind) {
+        return crate::cloud::voices(config);
+    }
+    if config.model.family == "paradee" {
+        let directory = config.model_directory(paths);
+        anyhow::ensure!(
+            directory.join(&config.model.file).is_file()
+                && directory.join(&config.model.tts_json).is_file(),
+            "Paradee model or vocabulary is missing; run setup model --download paradee-8m-openvino"
+        );
+        return crate::catalog::model(&config.model.name)
+            .map(from_catalog)
+            .context("Paradee catalog metadata missing");
+    }
     match config.model.family.as_str() {
         "supertonic" if config.backend.kind == "audiocpp" => Ok(supertonic_presets()),
         "supertonic" => supertonic_voices(config, paths),
@@ -118,6 +132,9 @@ pub fn installed(config: &Config, paths: &AppPaths) -> Result<Vec<Voice>> {
 
 /// Return installed metadata when present, otherwise the pinned catalog inventory.
 pub fn available(config: &Config, paths: &AppPaths) -> Result<Vec<Voice>> {
+    if crate::cloud::is_cloud(&config.backend.kind) {
+        return crate::cloud::voices(config);
+    }
     if config.model.family == "supertonic" && config.backend.kind == "audiocpp" {
         return Ok(supertonic_presets());
     }
@@ -129,6 +146,11 @@ pub fn available(config: &Config, paths: &AppPaths) -> Result<Vec<Voice>> {
             )
         })?;
         return Ok(from_catalog(spec));
+    }
+    if config.model.family == "paradee" {
+        return crate::catalog::model(&config.model.name)
+            .map(from_catalog)
+            .context("Paradee catalog metadata missing");
     }
     let directory = config.model_directory(paths);
     if directory.exists() {

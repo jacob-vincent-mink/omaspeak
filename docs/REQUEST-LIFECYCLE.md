@@ -38,11 +38,11 @@ Requests and worker startup have a five-minute deadline. Polling is every 10 ms;
 these are scheduling bounds, not hard real-time guarantees under host contention.
 
 Synthesis writes to an exclusively created, mode-0600 staging WAV beside the
-requested destination. Only successful synthesis publishes it by rename.
+requested destination. Only successful synthesis and, for playback requests, successful player drain publish it by rename.
 Cancellation and synthesis failure preserve an existing destination and remove
-owned staging. Once synthesis has succeeded, cancellation during playback keeps
-the completed export. Playback uses the existing owned-pause worker; cancellation
-stops/reaps that process group and releases its own wake hold. File-only requests
+owned staging, including cancellation during playback. Playback streams raw PCM
+from the supervised synthesis worker while recording the staged WAV; cancellation
+stops/reaps that process group and releases its acknowledged wake hold. File-only requests
 never pause wake detection or open an audio output device.
 
 SIGINT/SIGTERM shutdown closes requests and removes the daemon socket. Forced
@@ -61,7 +61,7 @@ survives, and the remaining queued requests finish. It also checks a slow partia
 client, invalid input, native crash without replay, recovery and config edits
 between cancellation and worker replacement, disconnect recovery, full read admission,
 failed publication, and shutdown with active and queued work. The internal worker
-protocol rejects control/playback requests and supports clean shutdown. Other tests cover playback client
+protocol rejects control requests, carries playback progress, and supports clean shutdown. Other tests cover playback client
 interruption and process cleanup.
 
 [Real OpenVINO CPU evidence](../benchmarks/results/2026-09-16-request-lifecycle/RESULTS.md)

@@ -1,0 +1,116 @@
+[
+  {
+    "provider": "audiocpp",
+    "exit_code": 0,
+    "total_seconds": 19.821695695995004,
+    "response": {
+      "type": "synthesis",
+      "output": "/tmp/omaspeak-real-stream/audiocpp.wav",
+      "sample_rate": 44100,
+      "samples": 1952698,
+      "audio_seconds": 44.27886621315193,
+      "load_milliseconds": 1334,
+      "synthesis_milliseconds": 18455
+    },
+    "first_pcm_seconds": 7.475828730996,
+    "samples": 1952698,
+    "rate": 44100,
+    "pcm_matches_wav": true
+  },
+  {
+    "provider": "openvino-cpu",
+    "exit_code": 0,
+    "total_seconds": 13.249745196997537,
+    "response": {
+      "type": "synthesis",
+      "output": "/tmp/omaspeak-real-stream/openvino-cpu.wav",
+      "sample_rate": 44100,
+      "samples": 2076792,
+      "audio_seconds": 47.092789115646255,
+      "load_milliseconds": 88,
+      "synthesis_milliseconds": 13071
+    },
+    "first_pcm_seconds": 4.586369859986007,
+    "samples": 2076792,
+    "rate": 44100,
+    "pcm_matches_wav": true,
+    "offline_exit_code": 0,
+    "seeded_wav_matches_offline": true
+  },
+  {
+    "provider": "openvino-gpu",
+    "exit_code": 0,
+    "total_seconds": 12.596325185004389,
+    "response": {
+      "type": "synthesis",
+      "output": "/tmp/omaspeak-real-stream/openvino-gpu.wav",
+      "sample_rate": 44100,
+      "samples": 2077219,
+      "audio_seconds": 47.1024716553288,
+      "load_milliseconds": 77,
+      "synthesis_milliseconds": 12410
+    },
+    "first_pcm_seconds": 4.907544903006055,
+    "samples": 2077219,
+    "rate": 44100,
+    "pcm_matches_wav": true,
+    "offline_exit_code": 0,
+    "seeded_wav_matches_offline": false
+  },
+  {
+    "provider": "openvino-npu",
+    "exit_code": 0,
+    "total_seconds": 7.539330721992883,
+    "response": {
+      "type": "synthesis",
+      "output": "/tmp/omaspeak-real-stream/openvino-npu.wav",
+      "sample_rate": 44100,
+      "samples": 2107332,
+      "audio_seconds": 47.78530612244898,
+      "load_milliseconds": 5359,
+      "synthesis_milliseconds": 2086
+    },
+    "first_pcm_seconds": 6.181712188001256,
+    "samples": 2107332,
+    "rate": 44100,
+    "pcm_matches_wav": true,
+    "offline_exit_code": 0,
+    "seeded_wav_matches_offline": true
+  },
+  {
+    "provider": "kokoro-cpu",
+    "exit_code": 0,
+    "total_seconds": 11.56280684399826,
+    "response": {
+      "type": "synthesis",
+      "output": "/tmp/omaspeak-real-stream/kokoro-cpu.wav",
+      "sample_rate": 24000,
+      "samples": 1058400,
+      "audio_seconds": 44.1,
+      "load_milliseconds": 1060,
+      "synthesis_milliseconds": 10441
+    },
+    "first_pcm_seconds": 4.814179959998,
+    "samples": 1058400,
+    "rate": 24000,
+    "pcm_matches_wav": true
+  },
+  {
+    "provider": "kokoro-npu",
+    "exit_code": 0,
+    "total_seconds": 6.358767911995528,
+    "response": {
+      "type": "synthesis",
+      "output": "/tmp/omaspeak-real-stream/kokoro-npu.wav",
+      "sample_rate": 24000,
+      "samples": 1057200,
+      "audio_seconds": 44.05,
+      "load_milliseconds": 971,
+      "synthesis_milliseconds": 5326
+    },
+    "first_pcm_seconds": 3.1692555289919255,
+    "samples": 1057200,
+    "rate": 24000,
+    "pcm_matches_wav": true
+  }
+]

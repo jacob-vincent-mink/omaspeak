@@ -38,6 +38,7 @@ pub enum Fallback {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct BackendConfig {
+    pub cloud: crate::cloud_http::CloudConfig,
     pub kind: String,
     pub runtime: Runtime,
     pub device: String,
@@ -60,6 +61,7 @@ pub struct BackendConfig {
 impl Default for BackendConfig {
     fn default() -> Self {
         Self {
+            cloud: Default::default(),
             kind: "audiocpp".into(),
             runtime: Runtime::Default,
             device: "auto".into(),
@@ -91,6 +93,15 @@ pub enum BackendError {
 
 impl BackendConfig {
     pub fn canonical_device(&self) -> Result<String, BackendError> {
+        if crate::cloud::is_cloud(&self.kind)
+            && self.runtime == Runtime::Default
+            && matches!(
+                self.device.to_ascii_lowercase().as_str(),
+                "auto" | "cpu" | "remote"
+            )
+        {
+            return Ok("remote".into());
+        }
         canonical_device(self.runtime, &self.device)
     }
 

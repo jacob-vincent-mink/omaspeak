@@ -65,7 +65,9 @@ fn framed_control_protocol_round_trips_and_is_bounded() {
             assert_eq!(speed, 1.25);
             assert_eq!(voice, 7);
         }
-        WorkerRequest::Shutdown => panic!("wrong request variant"),
+        WorkerRequest::Shutdown | WorkerRequest::GenerateStream { .. } => {
+            panic!("wrong request variant")
+        }
     }
 
     let oversized = ((MAX_CONTROL_FRAME as u32) + 1).to_le_bytes();

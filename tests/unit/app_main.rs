@@ -679,7 +679,10 @@ fn config_helpers_cover_supported_values_defaults_and_schema() {
         .iter()
         .find(|item| item["key"] == "model.family")
         .unwrap();
-    assert_eq!(family["choices"], json!(["supertonic", "kokoro"]));
+    assert_eq!(
+        family["choices"],
+        json!(["supertonic", "kokoro", "paradee"])
+    );
     assert!(
         description["keys"]
             .as_array()
@@ -708,7 +711,11 @@ fn config_helpers_cover_supported_values_defaults_and_schema() {
             .iter()
             .filter_map(|entry| entry["prefix"].as_str())
             .collect::<Vec<_>>(),
-        ["backend.options.", "model.options."]
+        [
+            "backend.cloud.voices.",
+            "backend.options.",
+            "model.options."
+        ]
     );
 
     let external_provider = root.join("libaudiocpp-external.so");
@@ -3007,7 +3014,7 @@ fn builtin_model_boundaries_and_offline_command_validation_are_actionable() {
     let root = sandbox();
     let paths = paths(&root);
     let spec = BuiltinModels.resolve("supertonic-3-openvino").unwrap();
-    assert_eq!(BuiltinModels.models().len(), 4);
+    assert_eq!(BuiltinModels.models().len(), 5);
     assert!(BuiltinModels.verify(&paths, spec).is_err());
     assert!(
         BuiltinModels

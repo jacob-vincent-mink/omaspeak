@@ -1994,3 +1994,54 @@ fn installed_runtime_adapters_initialize_and_reject_invalid_graphs() {
         assert!(backend.generate("hello", 1.0, 0).is_err());
     }
 }
+
+#[test]
+fn streaming_preserves_seeded_supertonic_audio_and_stops_at_sink_error() {
+    let frontend = frontend();
+    let text = format!(
+        "{}\n\n{}",
+        "First sentence. ".repeat(25),
+        "Second sentence. ".repeat(25)
+    );
+    let expected = frontend
+        .generate(&mut FakePipeline::successful(), &text, 1.0, 0)
+        .unwrap();
+    let mut actual = Vec::new();
+    let mut calls = 0;
+    frontend
+        .generate_stream_with_shapes(
+            &mut FakePipeline::successful(),
+            &text,
+            1.0,
+            0,
+            SynthesisShapes::Exact,
+            &mut |chunk| {
+                calls += 1;
+                actual.extend_from_slice(chunk);
+                Ok(())
+            },
+        )
+        .unwrap();
+    assert!(calls > 1);
+    assert_eq!(expected, actual);
+    let mut pipeline = FakePipeline::successful();
+    let error = frontend
+        .generate_stream_with_shapes(
+            &mut pipeline,
+            &text,
+            1.0,
+            0,
+            SynthesisShapes::Exact,
+            &mut |_| anyhow::bail!("stop playback"),
+        )
+        .unwrap_err();
+    assert!(error.to_string().contains("stop playback"));
+    assert_eq!(
+        pipeline
+            .calls
+            .iter()
+            .filter(|&&graph| graph == Graph::Vocoder)
+            .count(),
+        1
+    );
+}

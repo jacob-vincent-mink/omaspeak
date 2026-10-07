@@ -1,0 +1,18 @@
+[
+  {
+    "mode": "file",
+    "exit_code": 0,
+    "seconds": 1.0390028249967145,
+    "sample_rate": 24000,
+    "samples": 107400
+  },
+  {
+    "mode": "stream",
+    "exit_code": 0,
+    "seconds": 2.881446870000218,
+    "sample_rate": 24000,
+    "samples": 1132200,
+    "first_pcm_seconds": 1.3526415040105348,
+    "pcm_matches_wav": true
+  }
+]

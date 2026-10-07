@@ -1,0 +1,46 @@
+{
+  "status": "experimental native frontend sanity validation; not perceptual quality qualification",
+  "runtime": "OpenVINO 2026.4 CPU",
+  "frontend": "espeak-ng 1.52.0 CLI plus upstream American Misaki map",
+  "load_seconds": 0.639968685,
+  "measurements": [
+    {
+      "audio_seconds": 3.675,
+      "chunk_samples": [
+        88200
+      ],
+      "finite": true,
+      "first_audio_seconds": 0.194895736,
+      "peak": 0.2789572775363922,
+      "samples": 88200,
+      "text": "Hello world. This is Paradee speaking through OpenVINO.",
+      "total_seconds": 0.194920397
+    },
+    {
+      "audio_seconds": 5.7,
+      "chunk_samples": [
+        136800
+      ],
+      "finite": true,
+      "first_audio_seconds": 0.286385508,
+      "peak": 0.4587042033672333,
+      "samples": 136800,
+      "text": "Dr. Smith has twelve dollars and fifty cents. The time is 3:45 PM.",
+      "total_seconds": 0.286415643
+    },
+    {
+      "audio_seconds": 38.925,
+      "chunk_samples": [
+        311400,
+        311400,
+        311400
+      ],
+      "finite": true,
+      "first_audio_seconds": 0.585681482,
+      "peak": 0.3638114929199219,
+      "samples": 934200,
+      "text": "Streaming starts as soon as the first segment is ready. Streaming starts as soon as the first segment is ready. Streaming starts as soon as the first segment is ready. Streaming starts as soon as the first segment is ready. Streaming starts as soon as the first segment is ready. Streaming starts as soon as the first segment is ready. Streaming starts as soon as the first segment is ready. Streaming starts as soon as the first segment is ready. Streaming starts as soon as the first segment is ready. Streaming starts as soon as the first segment is ready. Streaming starts as soon as the first segment is ready. Streaming starts as soon as the first segment is ready. ",
+      "total_seconds": 1.6803192519999999
+    }
+  ]
+}
