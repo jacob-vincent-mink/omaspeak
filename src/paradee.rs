@@ -227,21 +227,210 @@ impl TtsBackend for ParadeeOpenvinoBackend {
             "Paradee speed must be between 0.5 and 2.0"
         );
         ensure!(!text.trim().is_empty(), "Paradee text must not be empty");
-        for segment in crate::supertonic::chunk_text(text, 240) {
+        let segments = speech_segments(text);
+        ensure!(
+            !segments.is_empty(),
+            "Paradee text contains no spoken words"
+        );
+        for (segment, punctuation) in segments {
             let mut phonemes = to_misaki(&phonemize(&self.frontend, &segment)?);
-            if let Some(last) = segment
-                .trim()
-                .chars()
-                .last()
-                .filter(|ch| ".!?;:".contains(*ch))
-            {
-                phonemes.push(last);
+            if let Some(punctuation) = punctuation {
+                phonemes.push(punctuation);
             }
             for ids in encode(&phonemes, &self.vocab)? {
                 sink(&self.infer(&ids, speed)?)?;
             }
         }
         Ok(())
+    }
+}
+
+/// Normalize only unambiguous US currency and common English titles. Preserve
+/// other forms for eSpeak rather than guessing units, names or non-US money.
+fn normalize_english(text: &str) -> String {
+    let mut normalized = String::new();
+    let mut offset = 0;
+    while offset < text.len() {
+        let remainder = &text[offset..];
+        let preceding_word = text[..offset]
+            .chars()
+            .next_back()
+            .is_some_and(|ch| ch.is_alphanumeric());
+        let mut title = None;
+        if !preceding_word {
+            for (short, spoken) in [
+                ("Dr.", "Doctor"),
+                ("Mr.", "Mister"),
+                ("Mrs.", "Missus"),
+                ("Ms.", "Miz"),
+                ("Prof.", "Professor"),
+            ] {
+                if remainder
+                    .get(..short.len())
+                    .is_some_and(|prefix| prefix.eq_ignore_ascii_case(short))
+                    && remainder[short.len()..]
+                        .chars()
+                        .next()
+                        .is_none_or(|ch| ch.is_whitespace())
+                {
+                    title = Some((short.len(), spoken));
+                    break;
+                }
+            }
+        }
+        if let Some((length, spoken)) = title {
+            normalized.push_str(spoken);
+            offset += length;
+            continue;
+        }
+        if remainder.starts_with('$')
+            && let Some((length, spoken)) = usd_amount(remainder)
+        {
+            normalized.push_str(&spoken);
+            offset += length;
+            continue;
+        }
+        let ch = remainder.chars().next().unwrap();
+        normalized.push(ch);
+        offset += ch.len_utf8();
+    }
+    normalized
+}
+
+fn usd_amount(text: &str) -> Option<(usize, String)> {
+    if !text.starts_with('$') {
+        return None;
+    }
+    let bytes = text.as_bytes();
+    let mut end = 1;
+    let negative = bytes.get(end) == Some(&b'-');
+    if negative {
+        end += 1;
+    }
+    let start = end;
+    while bytes.get(end).is_some_and(|ch| {
+        ch.is_ascii_digit() || (*ch == b',' && bytes.get(end + 1).is_some_and(u8::is_ascii_digit))
+    }) {
+        end += 1;
+    }
+    if bytes.get(end) == Some(&b',') && bytes.get(end + 1) == Some(&b',') {
+        return None;
+    }
+    let integer = &text[start..end];
+    if integer.is_empty() {
+        return None;
+    }
+    let groups = integer.split(',').collect::<Vec<_>>();
+    if groups.len() > 1
+        && (!(1..=3).contains(&groups[0].len())
+            || groups.iter().skip(1).any(|group| group.len() != 3))
+    {
+        return None;
+    }
+    let dollars = integer.replace(',', "").parse::<u64>().ok()?;
+    let mut cents = None;
+    if bytes.get(end) == Some(&b'.') && bytes.get(end + 1).is_some_and(u8::is_ascii_digit) {
+        let digits = text[end + 1..]
+            .bytes()
+            .take_while(u8::is_ascii_digit)
+            .count();
+        if digits != 2 {
+            return None;
+        }
+        cents = Some(text[end + 1..end + 3].parse::<u8>().ok()?);
+        end += 3;
+    }
+    if text[end..]
+        .chars()
+        .next()
+        .is_some_and(|ch| ch.is_alphanumeric())
+    {
+        return None;
+    }
+    let mut spoken = if dollars == 1 {
+        "1 dollar".into()
+    } else {
+        format!("{dollars} dollars")
+    };
+    if let Some(cents) = cents.filter(|cents| *cents > 0) {
+        spoken.push_str(&format!(
+            " and {cents} {}",
+            if cents == 1 { "cent" } else { "cents" }
+        ));
+    }
+    if negative {
+        spoken.insert_str(0, "minus ");
+    }
+    Some((end, spoken))
+}
+
+/// Keep prosody punctuation in the phoneme input while protecting decimal,
+/// thousands, clock notation and initials from being split into separate calls.
+fn speech_segments(text: &str) -> Vec<(String, Option<char>)> {
+    let normalized = normalize_english(text);
+    let chars = normalized.char_indices().collect::<Vec<_>>();
+    let mut result = Vec::new();
+    let mut start = 0;
+    for (index, &(offset, ch)) in chars.iter().enumerate() {
+        if !",.!?;:—…".contains(ch) {
+            continue;
+        }
+        let before = index.checked_sub(1).map(|index| chars[index].1);
+        let after = chars.get(index + 1).map(|(_, ch)| *ch);
+        if ",.:".contains(ch)
+            && before.is_some_and(|ch| ch.is_ascii_digit())
+            && after.is_some_and(|ch| ch.is_ascii_digit())
+        {
+            continue;
+        }
+        if ch == '.' {
+            if before.is_some_and(|ch| ch.is_ascii_alphabetic())
+                && after.is_some_and(|ch| ch.is_ascii_alphabetic())
+            {
+                continue;
+            }
+            let word = normalized[start..offset]
+                .split_whitespace()
+                .last()
+                .unwrap_or("");
+            let initial = word.rsplit('.').next().unwrap_or("");
+            if initial.len() == 1 && initial.as_bytes()[0].is_ascii_uppercase() {
+                continue;
+            }
+            if matches!(
+                word.to_ascii_lowercase().as_str(),
+                "e.g" | "i.e" | "vs" | "etc"
+            ) && after.is_some()
+            {
+                continue;
+            }
+        }
+        append_segments(&normalized[start..offset], Some(ch), &mut result);
+        start = offset + ch.len_utf8();
+    }
+    append_segments(&normalized[start..], None, &mut result);
+    result
+}
+
+fn append_segments(
+    text: &str,
+    punctuation: Option<char>,
+    result: &mut Vec<(String, Option<char>)>,
+) {
+    if !text.chars().any(char::is_alphanumeric) {
+        return;
+    }
+    let pieces = crate::supertonic::chunk_text(text, 240);
+    let count = pieces.len();
+    for (index, piece) in pieces.into_iter().enumerate() {
+        result.push((
+            piece,
+            if index + 1 == count {
+                punctuation
+            } else {
+                None
+            },
+        ));
     }
 }
 

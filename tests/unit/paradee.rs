@@ -655,3 +655,85 @@ fn native_openvino_abi_maps_named_tensors_speed_and_cpu_placement() {
         assert!(status.success(), "native ABI contract failed for {device}");
     }
 }
+
+#[test]
+fn english_currency_and_titles_are_normalized_without_guessing_other_forms() {
+    for (input, expected) in [
+        ("$1", "1 dollar"),
+        ("$12.00", "12 dollars"),
+        ("$0.01", "0 dollars and 1 cent"),
+        ("$1,234.56", "1234 dollars and 56 cents"),
+        ("$-3.50", "minus 3 dollars and 50 cents"),
+        ("$12, please", "12 dollars, please"),
+        ("$0.05", "0 dollars and 5 cents"),
+        ("$18446744073709551616", "$18446744073709551616"),
+        ("$1,23", "$1,23"),
+        ("$1.2", "$1.2"),
+        ("$1.234", "$1.234"),
+        ("$12M", "$12M"),
+        ("$", "$"),
+        ("USD 12 and €12", "USD 12 and €12"),
+        (
+            "Mr. Jones, Mrs. Smith, Ms. Chen and Prof. Díaz",
+            "Mister Jones, Missus Smith, Miz Chen and Professor Díaz",
+        ),
+        (
+            "wordDr. Mr.Smith dr. Smith",
+            "wordDr. Mr.Smith Doctor Smith",
+        ),
+    ] {
+        assert_eq!(normalize_english(input), expected, "{input}");
+    }
+    assert!(usd_amount("").is_none());
+    assert!(usd_amount("$1,,000").is_none());
+}
+
+#[test]
+fn native_quality_corpus_has_exact_prosody_frontend_plans() {
+    let corpus: serde_json::Value =
+        serde_json::from_str(include_str!("../../benchmarks/paradee/corpus.json")).unwrap();
+    for case in corpus["cases"].as_array().unwrap() {
+        let text = case["text"].as_str().unwrap();
+        let actual = speech_segments(text);
+        assert!(!actual.is_empty(), "{}", case["id"]);
+        assert!(actual.iter().all(|(text, _)| text.chars().count() <= 240));
+        if let Some(expected) = case["expected_segments"].as_array() {
+            let expected = expected
+                .iter()
+                .map(|segment| {
+                    (
+                        segment["text"].as_str().unwrap().to_owned(),
+                        segment["punctuation"]
+                            .as_str()
+                            .and_then(|text| text.chars().next()),
+                    )
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(actual, expected, "{}", case["id"]);
+        }
+    }
+}
+
+#[test]
+fn punctuation_survives_frontend_encoding_and_clauses_cancel_in_order() {
+    let fixture = ModelFixture::new();
+    let mut metadata: serde_json::Value =
+        serde_json::from_slice(&fs::read(fixture.directory.join("config.json")).unwrap()).unwrap();
+    metadata["vocab"][","] = serde_json::json!(3);
+    fixture.write_metadata(metadata);
+    let graph = FixtureGraph::new();
+    let calls = graph.calls.clone();
+    let backend = fixture.backend(graph).unwrap();
+    backend.generate("Hello, really? Yes!", 1.0, 0).unwrap();
+    assert_eq!(
+        calls
+            .borrow()
+            .iter()
+            .map(|(tokens, _)| tokens[tokens.len() - 2])
+            .collect::<Vec<_>>(),
+        vec![3, 6, 5]
+    );
+    calls.borrow_mut().clear();
+    assert!(backend.generate("“” ... ;!", 1.0, 0).is_err());
+    assert!(calls.borrow().is_empty());
+}

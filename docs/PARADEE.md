@@ -61,12 +61,16 @@ abbreviation expansion. This is the author's fallback frontend approach, not
 the complete Python Misaki lexicon, and unusual names/foreign words can differ.
 Unsupported phonemes cause an explicit error rather than silent omission.
 
-Text is segmented at the existing sentence/word boundaries, bounded to 240
-Unicode characters per frontend call. Encoded phonemes are further split into
-at most 510 symbols and padded with zero at both ends; long input is not
-truncated. The frontend restores a segment's final sentence punctuation; eSpeak
-NG's IPA output does not preserve all internal punctuation. That can affect
-prosody, particularly abbreviations and multiple clauses within one segment.
+Text is normalized narrowly for unambiguous US dollar amounts and common
+English titles, then segmented at prosody punctuation. Dollar amounts become
+whole dollars/cents; Dr./Mr./Mrs./Ms./Prof. become Doctor/Mister/Missus/Miz/Professor.
+Other or ambiguous monetary formats are left for eSpeak rather than guessed.
+Decimal/thousands separators, clock notation and initials are protected from
+clause splitting. Commas, questions, semicolons, dashes and sentence punctuation
+are restored to the model's phonemes instead of discarded with native IPA.
+Each frontend call is bounded to 240 Unicode characters, and encoded phonemes
+are further split into at most 510 symbols with zero pads. Long input is not
+truncated. A sentence ending after a lone initial remains inherently ambiguous.
 
 Only the distilled `af_heart` voice, American English, and speeds from 0.5 to 2.0
 are exposed. Audio is mono 24 kHz. Each completed segment is delivered to the
@@ -87,8 +91,12 @@ for a 648-character repeated passage emitted three chunks: first audio at about
 0.586 seconds, completion at 1.68 seconds, and about 38.9 seconds of audio.
 Cold backend loading took about 0.64 seconds. These are one-run debug-build
 measurements, not portable latency promises or perceptual quality scores.
-The integration remains experimental pending listening/pronunciation evaluation
-with realistic user text and a fixed benchmark corpus.
+A reproducible [quality corpus and runner](../benchmarks/paradee/README.md) now
+cover names, numbers, titles, punctuation and long text. The
+[2026-10-08 native pass](../benchmarks/results/2026-10-08-paradee-quality/RESULTS.md)
+generated valid non-silent audio for all 15 cases with no clipped PCM samples.
+Human listening and independent pronunciation scores remain pending, so the
+integration remains experimental.
 
 The author’s published model quality/performance figures are not measurements
 of this native frontend. The [support survey](CLOUD-BACKENDS-AND-PARADEE.md)

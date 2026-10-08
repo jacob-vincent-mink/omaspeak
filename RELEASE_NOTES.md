@@ -1,27 +1,28 @@
-# Omaspeak 0.1.2-rc.1
+# Omaspeak 0.1.2-rc.2
 
-Starts the next version series for these features and supersedes the incorrectly
-numbered `0.1.1-rc.3` candidate. The implementation is unchanged.
+Adds guided cloud setup, private API-key file handoff between CLI and daemon,
+ElevenLabs/Cartesia account voice discovery and alias selection, and an explicit
+smoke command reporting first PCM and generation latency. Qualification tooling
+saves repeatable results for an independent collaborator.
 
-This RC adds incremental playback for daemon and on-demand speech, cloud TTS
-through ElevenLabs, OpenAI-compatible speech APIs, Cartesia and Deepgram, and
-an experimental native Paradee OpenVINO CPU FP32 profile. Streaming starts
-with the first available PCM; cancellation terminates synthesis and playback,
-and successful WAV exports are published after playback drains. Local Kokoro
-streams bounded text segments, including its existing OpenVINO NPU path.
+Paradee's native CPU frontend now preserves clause punctuation and expands common
+English titles and unambiguous USD amounts. All 15 native corpus cases produced
+valid, non-silent 24 kHz audio with no clipped samples. Human listening and
+independent pronunciation scoring remain pending; Paradee stays experimental.
 
-Cloud adapters are opt-in and resolve API keys from environment variables.
-Provider request contracts were tested with local fixtures; paid accounts,
-voice availability and perceptual quality remain to be qualified. See
-`docs/CLOUD.md`, `docs/STREAMING.md` and `docs/PARADEE.md`.
+This series includes incremental playback for Supertonic, segmented Kokoro
+streaming (including its existing OpenVINO NPU path), cloud TTS through ElevenLabs,
+OpenAI-compatible APIs, Cartesia and Deepgram, and Paradee OpenVINO CPU FP32.
+Cancellation stops synthesis/playback; complete WAV exports publish after drain.
 
-Paradee requires separately installed OpenVINO and native `espeak-ng`; neither
-model weights nor a new inference runtime are bundled. GPU/NPU Paradee support
-remains future work. No ONNX Runtime or Python inference dependency is delivered.
-The audio.cpp handoff is recorded in `docs/AUDIOCPP-PARADEE-FOLLOWUP.md`.
+Paid-provider access, voice availability and perceptual quality remain unqualified.
+See `docs/CLOUD-QUALIFICATION.md`, `docs/STREAMING.md` and `docs/PARADEE.md`.
+Paradee requires separately installed OpenVINO and native espeak-ng; GPU/NPU and
+audio.cpp support remain follow-ups in `docs/AUDIOCPP-PARADEE-FOLLOWUP.md`.
+No ONNX Runtime or Python inference dependency is delivered.
 
-This RC excludes the separate omarchy-voice consumer-events/D-Bus work and the
-pre-existing GPU precision experiment. Existing local defaults remain in place.
+Consumer-events/D-Bus and the pre-existing GPU precision experiment remain separate.
+Existing local defaults remain in place. Previously published RCs are unchanged.
 
 ## Omaspeak 0.1.1-rc.2
 

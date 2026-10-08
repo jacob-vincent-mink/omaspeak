@@ -40,6 +40,8 @@ jobs:
           strip --strip-unneeded "${provider}"
           echo "AUDIOCPP_SOURCE=${source}" >> "${GITHUB_ENV}"
           echo "OMASPEAK_TEST_AUDIOCPP_LIBRARY=${provider}" >> "${GITHUB_ENV}"
+      - run: python3 -m unittest discover -s benchmarks/cloud -p "test_*.py"
+      - run: python3 -m unittest discover -s benchmarks/paradee -p "test_*.py"
       - run: cargo fmt --check
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo deny check licenses

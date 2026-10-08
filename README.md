@@ -286,6 +286,11 @@ See [streaming support and cancellation](docs/STREAMING.md),
 [cloud backend shortlist and Paradee qualification](docs/CLOUD-BACKENDS-AND-PARADEE.md),
 and [hardware evidence](benchmarks/results/2026-10-07-streaming/RESULTS.md).
 
+Use `omaspeak setup cloud` for guided provider configuration and
+`omaspeak cloud credential install --stdin` for a private CLI/daemon key file.
+See [collaborator qualification](docs/CLOUD-QUALIFICATION.md) for explicit smoke
+tests and reproducible results.
+
 Cloud inference is available as an explicit opt-in; see [cloud adapters](docs/CLOUD.md)
 for providers, configuration, credential references and qualification limits.
 

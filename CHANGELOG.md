@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.2-rc.2 - 2026-10-08
+
+- Add guided cloud setup, private API-key files shared by CLI/daemon, and offline client/daemon credential checks.
+- Add explicit cloud smoke tests and a repeatable collaborator qualification driver.
+- Discover ElevenLabs/Cartesia account voices with bounded pagination and save named aliases.
+- Preserve Paradee clause punctuation and normalize common titles and unambiguous USD amounts; add a 15-case native quality corpus.
+- Keep live vendor and human listening qualification pending; Paradee remains experimental.
+
 ## 0.1.2-rc.1 - 2026-10-07
 
 - Start the next version series for the cloud/audio feature set.
