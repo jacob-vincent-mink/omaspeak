@@ -1,4 +1,7 @@
-# Omaspeak 0.1.1-rc.3
+# Omaspeak 0.1.2-rc.1
+
+Starts the next version series for these features and supersedes the incorrectly
+numbered `0.1.1-rc.3` candidate. The implementation is unchanged.
 
 This RC adds incremental playback for daemon and on-demand speech, cloud TTS
 through ElevenLabs, OpenAI-compatible speech APIs, Cartesia and Deepgram, and
