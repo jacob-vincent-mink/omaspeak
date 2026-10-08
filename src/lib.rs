@@ -20,3 +20,5 @@ pub mod cloud;
 pub mod cloud_http;
 
 pub mod paradee;
+
+pub mod cloud_cli;

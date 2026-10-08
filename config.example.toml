@@ -32,3 +32,7 @@ device = "default"
 
 [daemon]
 max_text_bytes = 65536
+
+# Optional cloud configuration: see docs/CLOUD.md.
+# [backend.cloud]
+# api_key_file = "/absolute/private/key-file" # configured by cloud credential install --stdin

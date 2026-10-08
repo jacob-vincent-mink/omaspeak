@@ -10,6 +10,8 @@ pub struct CloudConfig {
     pub base_url: String,
     /// Environment variable name, never the API key itself. Empty permits keyless compatible servers.
     pub api_key_env: String,
+    /// Optional private file containing the API key; environment takes precedence.
+    pub api_key_file: String,
     pub model: String,
     pub voice: String,
     pub voices: std::collections::BTreeMap<String, String>,
@@ -21,6 +23,7 @@ impl Default for CloudConfig {
         Self {
             base_url: String::new(),
             api_key_env: String::new(),
+            api_key_file: String::new(),
             model: String::new(),
             voice: String::new(),
             voices: Default::default(),
@@ -80,9 +83,14 @@ pub fn credential(
                 && !name.as_bytes()[0].is_ascii_digit()),
         "invalid cloud api_key_env name"
     );
-    let value = (!name.is_empty())
+    let mut value = (!name.is_empty())
         .then(|| std::env::var(name).ok())
         .flatten();
+    if value.is_none() && !config.api_key_file.is_empty() {
+        value = Some(read_private_key(std::path::Path::new(
+            &config.api_key_file,
+        ))?);
+    }
     if let Some(value) = &value {
         ensure!(
             !value.is_empty() && value.len() <= 4096 && !value.contains(['\r', '\n', '\0']),
@@ -129,3 +137,31 @@ pub fn read_json(response: ureq::Response) -> Result<serde_json::Value> {
 #[cfg(test)]
 #[path = "../tests/unit/cloud_http.rs"]
 mod tests;
+
+/// Read a bounded key without following symlinks or accepting group/world access.
+pub fn read_private_key(path: &std::path::Path) -> Result<String> {
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(path)
+        .map_err(|_| anyhow::anyhow!("cloud credential file unavailable"))?;
+    let metadata = file.metadata()?;
+    ensure!(
+        metadata.is_file()
+            && metadata.uid() == unsafe { libc::geteuid() }
+            && metadata.mode() & 0o077 == 0
+            && metadata.len() <= 4096,
+        "cloud credential file must be a private, owned regular file (chmod 600)"
+    );
+    let mut key = String::new();
+    file.take(4097)
+        .read_to_string(&mut key)
+        .map_err(|_| anyhow::anyhow!("invalid cloud credential file"))?;
+    let key = key.trim_end_matches(['\r', '\n']).to_owned();
+    ensure!(
+        !key.is_empty() && key.len() <= 4096 && !key.contains(['\r', '\n', '\0']),
+        "invalid cloud credential file"
+    );
+    Ok(key)
+}

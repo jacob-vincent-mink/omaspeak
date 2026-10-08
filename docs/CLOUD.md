@@ -40,7 +40,13 @@ voice = 0
 language = "en"
 ```
 
-Export the key in the environment of the process that performs inference.
+Use `omaspeak setup cloud` for guided provider/model/voice configuration.
+`cloud voices` discovers ElevenLabs/Cartesia account voices and can save an alias;
+`cloud smoke --out FILE.wav` explicitly tests synthesis and measures first PCM.
+See [qualification and credential setup](CLOUD-QUALIFICATION.md).
+
+Export the key in the environment of the process that performs inference, or use
+`cloud credential install --stdin` to configure a private `api_key_file`.
 A running daemon needs its own environment configured and a restart; exporting
 in another terminal does not update it. The config stores the environment
 variable **name**, never the key. `config set backend.cloud.api_key_env NAME`

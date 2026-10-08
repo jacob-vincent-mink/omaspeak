@@ -1,0 +1,441 @@
+{
+  "schema": 1,
+  "status": "native signal/frontend qualification; human listening pending",
+  "platform": [
+    "Linux",
+    "ozymandias",
+    "7.2.5-4-omarchy",
+    "#1 SMP PREEMPT_DYNAMIC Wed, 16 Sep 2026 04:45:18 +0000",
+    "x86_64"
+  ],
+  "binary_sha256": "4091ebc7e40291ed9cf09f9e51df21b92045ee6f84c64f9162257484c39e1fc8",
+  "corpus_sha256": "9029de2a13cbeb58e24e8e2a5ab2fb1737001f65c5195af2ab46a9432b9c24d3",
+  "model_sha256": "77b8bb28caf3dddda0cc61d16b700febc187ee6336c695d7865b1e77e452ee11",
+  "metadata_sha256": "f24046974a3a8c747affefb45c7c504263a99d5081787908b16abe8f5ac94fcd",
+  "backend": "paradee-openvino",
+  "placement": "CPU",
+  "threads": 2,
+  "openvino_library": "/usr/lib/libopenvino_c.so.2026.4.0",
+  "openvino_plugins": "/usr/lib/openvino/plugins.xml",
+  "espeak_version": "eSpeak NG text-to-speech: 1.52.0  Data at: /tmp/paradee-espeak/install/share/espeak-ng-data",
+  "cases": [
+    {
+      "id": "plain",
+      "category": "baseline",
+      "text": "Hello world. Paradee speaks through the existing native runtime.",
+      "total_seconds": 0.9622407680144534,
+      "wav": "plain.wav",
+      "exit_code": 0,
+      "frontend_ipa": [
+        {
+          "normalized_text": "Hello world",
+          "ipa": "həlˈoʊ wˈɜːl",
+          "restored_punctuation": "."
+        },
+        {
+          "normalized_text": "Paradee speaks through the existing native runtime",
+          "ipa": "pɚɹˈeɪdiː spˈiːks θɹuː ðɪ ɛɡzˈɪstɪŋ nˈeɪɾɪv ɹˈʌntɪm",
+          "restored_punctuation": "."
+        }
+      ],
+      "samples": 113400,
+      "audio_seconds": 4.725,
+      "peak": 0.275238037109375,
+      "rms": 0.049250335744360024,
+      "clipped_samples": 0,
+      "wav_sha256": "32b6d9e313c60fc8000b1d436a6117382e9824fe84344f341a13a0dc015746dc",
+      "valid_audio": true
+    },
+    {
+      "id": "titles_names",
+      "category": "names",
+      "text": "Dr. Maya Chen met Mr. James O’Connor and Prof. Elena García.",
+      "total_seconds": 0.9431726799812168,
+      "wav": "titles_names.wav",
+      "exit_code": 0,
+      "frontend_ipa": [
+        {
+          "normalized_text": "Doctor Maya Chen met Mister James O’Connor and Professor Elena García",
+          "ipa": "dˈɑːktɚ mˈaɪə tʃˈɛn mˈɛt mˈɪstɚ dʒˈeɪmz oʊkˈɑːnɚ ænd pɹəfˈɛsɚɹ ᵻlˈiːnə ɡˈɑːɹsaɪ",
+          "restored_punctuation": "."
+        }
+      ],
+      "samples": 121800,
+      "audio_seconds": 5.075,
+      "peak": 0.42071533203125,
+      "rms": 0.05156876466684769,
+      "clipped_samples": 0,
+      "wav_sha256": "6d13bb22a7330746a49144876f375d436199ac70a56dff1fb2e8b0d5bd7f0068",
+      "valid_audio": true
+    },
+    {
+      "id": "titles_ms_mrs",
+      "category": "abbreviations",
+      "text": "Ms. Chen and Mrs. Smith met Prof. Jones.",
+      "total_seconds": 0.8671703700092621,
+      "wav": "titles_ms_mrs.wav",
+      "exit_code": 0,
+      "frontend_ipa": [
+        {
+          "normalized_text": "Miz Chen and Missus Smith met Professor Jones",
+          "ipa": "mˈɪz tʃˈɛn ænd mˈɪsəs smˈɪθ mˈɛt pɹəfˈɛsɚ dʒˈoʊn",
+          "restored_punctuation": "."
+        }
+      ],
+      "samples": 78000,
+      "audio_seconds": 3.25,
+      "peak": 0.35308837890625,
+      "rms": 0.05187255791761884,
+      "clipped_samples": 0,
+      "wav_sha256": "a1424df46409e550f7dbd0f0ead8bc5edb9404dcce413361279ed86c124794c6",
+      "valid_audio": true
+    },
+    {
+      "id": "initials",
+      "category": "names",
+      "text": "J. R. R. Tolkien and A. A. Milne wrote stories.",
+      "total_seconds": 0.8818833369878121,
+      "wav": "initials.wav",
+      "exit_code": 0,
+      "frontend_ipa": [
+        {
+          "normalized_text": "J. R. R. Tolkien and A. A. Milne wrote stories",
+          "ipa": "dʒˈeɪ\nˈɑːɹ\nˈɑːɹ\ntolkˈiːn ænd ˈeɪ\nˈeɪ\nmˈɪlni ɹˈoʊt stˈɔːɹi",
+          "restored_punctuation": "."
+        }
+      ],
+      "samples": 87600,
+      "audio_seconds": 3.65,
+      "peak": 0.286529541015625,
+      "rms": 0.05406522085693566,
+      "clipped_samples": 0,
+      "wav_sha256": "1fc7fa435fd09668ea312718c38bcabd57b354527192a07c455bdf485201b3d3",
+      "valid_audio": true
+    },
+    {
+      "id": "international_names",
+      "category": "names",
+      "text": "Siobhan Nguyen, José García, and Jean-Luc Picard are here.",
+      "total_seconds": 1.0081422069924884,
+      "wav": "international_names.wav",
+      "exit_code": 0,
+      "frontend_ipa": [
+        {
+          "normalized_text": "Siobhan Nguyen",
+          "ipa": "ʃɪvˈɔːn əŋɡˈuːj",
+          "restored_punctuation": ","
+        },
+        {
+          "normalized_text": "José García",
+          "ipa": "hoʊsˈeɪ ɡˈɑːɹsaɪ",
+          "restored_punctuation": ","
+        },
+        {
+          "normalized_text": "and Jean-Luc Picard are here",
+          "ipa": "ænd dʒˈiːnlˈuːk pˈɪkɑːɹd ɑːɹ hɜː",
+          "restored_punctuation": "."
+        }
+      ],
+      "samples": 124200,
+      "audio_seconds": 5.175,
+      "peak": 0.399993896484375,
+      "rms": 0.05037308054822944,
+      "clipped_samples": 0,
+      "wav_sha256": "825ac4258418794b4e95de85ced3dd3246e78fa7c23edb5c78fa8298c99bcdad",
+      "valid_audio": true
+    },
+    {
+      "id": "usd",
+      "category": "numbers",
+      "text": "The balance is $1,234.56, and the fee is $0.01.",
+      "total_seconds": 1.1063478190044407,
+      "wav": "usd.wav",
+      "exit_code": 0,
+      "frontend_ipa": [
+        {
+          "normalized_text": "The balance is 1234 dollars and 56 cents",
+          "ipa": "ðə bˈæləns ɪz wˈʌn θˈaʊzənd tˈuːhˈʌndɹɪd θˈɜːɾi fˈɔːɹ dˈɑːlɚz ænd fˈɪfti sˈɪks sˈɛnt",
+          "restored_punctuation": ","
+        },
+        {
+          "normalized_text": "and the fee is 0 dollars and 1 cent",
+          "ipa": "ænd ðə fˈiː ɪz zˈiəɹoʊ dˈɑːlɚz ænd wˈʌn sˈɛn",
+          "restored_punctuation": "."
+        }
+      ],
+      "samples": 186600,
+      "audio_seconds": 7.775,
+      "peak": 0.433746337890625,
+      "rms": 0.05110040291771957,
+      "clipped_samples": 0,
+      "wav_sha256": "c89b868e047061eb4b493611aa644e156f370755a0232b5adc5960b0ebe8468d",
+      "valid_audio": true
+    },
+    {
+      "id": "usd_singular",
+      "category": "numbers",
+      "text": "Pay $1, then refund $12.00; the adjustment is $-3.50.",
+      "total_seconds": 1.136209239019081,
+      "wav": "usd_singular.wav",
+      "exit_code": 0,
+      "frontend_ipa": [
+        {
+          "normalized_text": "Pay 1 dollar",
+          "ipa": "pˈeɪ wˈʌn dˈɑːlə",
+          "restored_punctuation": ","
+        },
+        {
+          "normalized_text": "then refund 12 dollars",
+          "ipa": "ðˈɛn ɹᵻfˈʌnd twˈɛlv dˈɑːlɚ",
+          "restored_punctuation": ";"
+        },
+        {
+          "normalized_text": "the adjustment is minus 3 dollars and 50 cents",
+          "ipa": "ðɪ ɐdʒˈʌstmənt ɪz mˈaɪnəs θɹˈiː dˈɑːlɚz ænd fˈɪfti sˈɛnt",
+          "restored_punctuation": "."
+        }
+      ],
+      "samples": 175800,
+      "audio_seconds": 7.325,
+      "peak": 0.36639404296875,
+      "rms": 0.05200984933183609,
+      "clipped_samples": 0,
+      "wav_sha256": "64e13057368cc08c1593ac952d90f2828bd29e4b77d07383b3dc99990ebc77e7",
+      "valid_audio": true
+    },
+    {
+      "id": "decimals_percent",
+      "category": "numbers",
+      "text": "The temperature is -3.5 degrees, and 25% is ready.",
+      "total_seconds": 1.0090578689996619,
+      "wav": "decimals_percent.wav",
+      "exit_code": 0,
+      "frontend_ipa": [
+        {
+          "normalized_text": "The temperature is -3.5 degrees",
+          "ipa": "ðə tˈɛmpɹɪtʃɚɹ ɪz mˈaɪnəs θɹˈiː pɔɪnt fˈaɪv dᵻɡɹˈiː",
+          "restored_punctuation": ","
+        },
+        {
+          "normalized_text": "and 25% is ready",
+          "ipa": "ænd twˈɛnti fˈaɪv pɚsˈɛnt ɪz ɹˈɛd",
+          "restored_punctuation": "."
+        }
+      ],
+      "samples": 132600,
+      "audio_seconds": 5.525,
+      "peak": 0.420989990234375,
+      "rms": 0.04994035231030193,
+      "clipped_samples": 0,
+      "wav_sha256": "ca91a62b4d28533512f60c354ba9f745540e187f6f05910ec740ab7073069d9c",
+      "valid_audio": true
+    },
+    {
+      "id": "clock_date",
+      "category": "numbers",
+      "text": "Meet at 3:45 PM on October 8, 2026.",
+      "total_seconds": 0.9875105129904114,
+      "wav": "clock_date.wav",
+      "exit_code": 0,
+      "frontend_ipa": [
+        {
+          "normalized_text": "Meet at 3:45 PM on October 8",
+          "ipa": "mˈiːt æt θɹˈiː fˈɔːɹɾi fˈaɪv pˌiːˈɛm ˌɔn ɑːktˈoʊbɚ",
+          "restored_punctuation": ","
+        },
+        {
+          "normalized_text": "2026",
+          "ipa": "tˈuːhˈʌndɹɪd tˈuː",
+          "restored_punctuation": "."
+        }
+      ],
+      "samples": 112200,
+      "audio_seconds": 4.675,
+      "peak": 0.337310791015625,
+      "rms": 0.04925275533890596,
+      "clipped_samples": 0,
+      "wav_sha256": "f597588ae957387d3d56591f5d90e8240e3ec5326a8c94026b4f4525df52a1f7",
+      "valid_audio": true
+    },
+    {
+      "id": "acronyms",
+      "category": "abbreviations",
+      "text": "The U.S.A. team uses HTML, CSS, and CPU tools.",
+      "total_seconds": 1.0316979470080696,
+      "wav": "acronyms.wav",
+      "exit_code": 0,
+      "frontend_ipa": [
+        {
+          "normalized_text": "The U.S.A. team uses HTML",
+          "ipa": "ðə jˌuːˌɛsˈeɪ tˈiːm jˈuːsᵻz ˌeɪtʃtˌiːˈɛm",
+          "restored_punctuation": ","
+        },
+        {
+          "normalized_text": "CSS",
+          "ipa": "sˌiːˈɛs",
+          "restored_punctuation": ","
+        },
+        {
+          "normalized_text": "and CPU tools",
+          "ipa": "ænd sˌiːpˌiːjˈuː tˈuːl",
+          "restored_punctuation": "."
+        }
+      ],
+      "samples": 130200,
+      "audio_seconds": 5.425,
+      "peak": 0.32391357421875,
+      "rms": 0.04673719794615037,
+      "clipped_samples": 0,
+      "wav_sha256": "77997cbc0cf7e99ea8b9808b299a4cc99467be7aaf181baac642d4afb8f95c36",
+      "valid_audio": true
+    },
+    {
+      "id": "examples",
+      "category": "abbreviations",
+      "text": "Use simple words, e.g. clear names; i.e. avoid ambiguity.",
+      "total_seconds": 1.054296050017001,
+      "wav": "examples.wav",
+      "exit_code": 0,
+      "frontend_ipa": [
+        {
+          "normalized_text": "Use simple words",
+          "ipa": "jˈuːs sˈɪmpəl wˈɜːd",
+          "restored_punctuation": ","
+        },
+        {
+          "normalized_text": "e.g. clear names",
+          "ipa": "fˌɔːɹɛɡzˈæmpəl klˈɪɹ nˈeɪm",
+          "restored_punctuation": ";"
+        },
+        {
+          "normalized_text": "i.e. avoid ambiguity",
+          "ipa": "ˌaɪˈiː ɐvˈɔɪd ˈæmbɪɡwˌɪt",
+          "restored_punctuation": "."
+        }
+      ],
+      "samples": 137400,
+      "audio_seconds": 5.725,
+      "peak": 0.31854248046875,
+      "rms": 0.048827163833419916,
+      "clipped_samples": 0,
+      "wav_sha256": "8d0f58ba1c6a2a09551c565e50374838dcf11dd08d5e26cfc0a7d3c2daec10ef",
+      "valid_audio": true
+    },
+    {
+      "id": "mixed_punctuation",
+      "category": "punctuation",
+      "text": "Wait, don’t leave! Are you sure? Yes—really; let’s begin.",
+      "total_seconds": 1.2030866270069964,
+      "wav": "mixed_punctuation.wav",
+      "exit_code": 0,
+      "frontend_ipa": [
+        {
+          "normalized_text": "Wait",
+          "ipa": "wˈaɪ",
+          "restored_punctuation": ","
+        },
+        {
+          "normalized_text": "don’t leave",
+          "ipa": "dˈoʊnt lˈiːv",
+          "restored_punctuation": "!"
+        },
+        {
+          "normalized_text": "Are you sure",
+          "ipa": "ɑːɹ juː sˈɜː",
+          "restored_punctuation": "?"
+        },
+        {
+          "normalized_text": "Yes",
+          "ipa": "jˈiː",
+          "restored_punctuation": "—"
+        },
+        {
+          "normalized_text": "really",
+          "ipa": "ɹˈiːɔːl",
+          "restored_punctuation": ";"
+        },
+        {
+          "normalized_text": "let’s begin",
+          "ipa": "lˈɛts bᵻdʒi",
+          "restored_punctuation": "."
+        }
+      ],
+      "samples": 164400,
+      "audio_seconds": 6.85,
+      "peak": 0.414642333984375,
+      "rms": 0.039332458182680656,
+      "clipped_samples": 0,
+      "wav_sha256": "b2815a78db47a513c252fa1bb5bac664ed1f0389144f4f1698bd6d18b6f367f6",
+      "valid_audio": true
+    },
+    {
+      "id": "ellipsis_quotes",
+      "category": "punctuation",
+      "text": "“Hello,” she said… Then she asked: “Ready?”",
+      "total_seconds": 1.1478550920146517,
+      "wav": "ellipsis_quotes.wav",
+      "exit_code": 0,
+      "frontend_ipa": [
+        {
+          "normalized_text": "“Hello",
+          "ipa": "hˈɛl",
+          "restored_punctuation": ","
+        },
+        {
+          "normalized_text": "” she said",
+          "ipa": "ʃiː sˈaɪ",
+          "restored_punctuation": "…"
+        },
+        {
+          "normalized_text": "Then she asked",
+          "ipa": "ðˈɛn ʃiː ˈæsk",
+          "restored_punctuation": ":"
+        },
+        {
+          "normalized_text": "“Ready",
+          "ipa": "ɹˈiːd",
+          "restored_punctuation": "?"
+        }
+      ],
+      "samples": 108600,
+      "audio_seconds": 4.525,
+      "peak": 0.371246337890625,
+      "rms": 0.03968386227862757,
+      "clipped_samples": 0,
+      "wav_sha256": "0714096ee06640bce7c38a5a8813b915281f2fbbede1ac21646f65299f40fe0b",
+      "valid_audio": true
+    },
+    {
+      "id": "long_text",
+      "category": "long_text",
+      "text": "First we speak a short sentence. Streaming keeps complete thoughts in order, with a pause where each clause ends. Streaming keeps complete thoughts in order, with a pause where each clause ends. Streaming keeps complete thoughts in order, with a pause where each clause ends. Streaming keeps complete thoughts in order, with a pause where each clause ends. Streaming keeps complete thoughts in order, with a pause where each clause ends. Streaming keeps complete thoughts in order, with a pause where each clause ends. Streaming keeps complete thoughts in order, with a pause where each clause ends. Streaming keeps complete thoughts in order, with a pause where each clause ends. Streaming keeps complete thoughts in order, with a pause where each clause ends. Streaming keeps complete thoughts in order, with a pause where each clause ends. Streaming keeps complete thoughts in order, with a pause where each clause ends. Streaming keeps complete thoughts in order, with a pause where each clause ends. ",
+      "total_seconds": 3.7615874579933006,
+      "wav": "long_text.wav",
+      "exit_code": 0,
+      "frontend_ipa": [],
+      "samples": 1446600,
+      "audio_seconds": 60.275,
+      "peak": 0.380889892578125,
+      "rms": 0.04948696005522533,
+      "clipped_samples": 0,
+      "wav_sha256": "83607fa42b4740e2c798bdf02541289c25dbd9946a65da3e506faf99c3dba164",
+      "valid_audio": true
+    },
+    {
+      "id": "long_unbroken",
+      "category": "long_text",
+      "text": "supercalifragilisticexpialidocioussupercalifragilisticexpialidocioussupercalifragilisticexpialidocioussupercalifragilisticexpialidocioussupercalifragilisticexpialidocioussupercalifragilisticexpialidocioussupercalifragilisticexpialidocioussupercalifragilisticexpialidocioussupercalifragilisticexpialidocioussupercalifragilisticexpialidocioussupercalifragilisticexpialidocioussupercalifragilisticexpialidocioussupercalifragilisticexpialidocioussupercalifragilisticexpialidocioussupercalifragilisticexpialidocioussupercalifragilisticexpialidocioussupercalifragilisticexpialidocioussupercalifragilisticexpialidocioussupercalifragilisticexpialidocioussupercalifragilisticexpialidocious",
+      "total_seconds": 2.2773220439848956,
+      "wav": "long_unbroken.wav",
+      "exit_code": 0,
+      "frontend_ipa": [],
+      "samples": 730800,
+      "audio_seconds": 30.45,
+      "peak": 0.367279052734375,
+      "rms": 0.04339982610095831,
+      "clipped_samples": 0,
+      "wav_sha256": "516c2387a7675874e317509eb8d2bcc1df8811c64ad2cbbfcadc02bdd7f9ffe4",
+      "valid_audio": true
+    }
+  ]
+}

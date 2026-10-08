@@ -48,6 +48,11 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum TopCommand {
+    /// Discover cloud voices, configure credentials, or explicitly test a provider.
+    Cloud {
+        #[command(subcommand)]
+        command: omaspeak::cloud_cli::CloudCommand,
+    },
     /// List available output devices without loading a model.
     AudioDevices {
         #[arg(long)]
@@ -170,6 +175,11 @@ enum ConfigCommand {
 
 #[derive(Subcommand)]
 enum SetupCommand {
+    /// Configure a remote provider; omit --provider for guided cloud setup.
+    Cloud {
+        #[command(flatten)]
+        options: omaspeak::cloud_cli::CloudOptions,
+    },
     /// Select or test the audio device without loading an inference model.
     Audio {
         #[arg(long)]
@@ -583,6 +593,13 @@ fn run_with_paths_and_prepare(
                 if let Some(error) = inventory["error"].as_str() {
                     eprintln!("{error}");
                 }
+            }
+            Ok(())
+        }
+        TopCommand::Cloud { command } => {
+            if let Some(output) = omaspeak::cloud_cli::run(command, &config_path, paths)? {
+                let config = Config::load(&config_path)?;
+                play_on(&output, &config.audio.device, || false)?;
             }
             Ok(())
         }
@@ -1688,6 +1705,7 @@ fn set_config(config: &mut Config, key: &str, value: &str) -> Result<()> {
         }
         "backend.cloud.base_url" => config.backend.cloud.base_url = value.into(),
         "backend.cloud.api_key_env" => config.backend.cloud.api_key_env = value.into(),
+        "backend.cloud.api_key_file" => config.backend.cloud.api_key_file = value.into(),
         "backend.cloud.model" => config.backend.cloud.model = value.into(),
         "backend.cloud.voice" => config.backend.cloud.voice = value.into(),
         "backend.cloud.timeout_seconds" => config.backend.cloud.timeout_seconds = value.parse()?,
@@ -1742,6 +1760,9 @@ fn unset_config(config: &mut Config, key: &str) -> Result<()> {
     let defaults = Config::default();
     match key {
         "audio.device" => config.audio.device = "default".into(),
+        "backend.cloud.api_key_file" => {
+            config.backend.cloud.api_key_file = defaults.backend.cloud.api_key_file
+        }
         "backend.cloud.base_url" => config.backend.cloud.base_url = defaults.backend.cloud.base_url,
         "backend.cloud.api_key_env" => {
             config.backend.cloud.api_key_env = defaults.backend.cloud.api_key_env
@@ -1885,6 +1906,7 @@ fn schema(path: &Path, paths: &AppPaths) -> Result<Value> {
         "keys":[
             {"key":"backend.cloud.base_url","type":"string","section":"Cloud","label":"base_url","description":"Remote provider base_url","value":config.backend.cloud.base_url,"file_value":null,"compiled":true,"restart_required":true},
             {"key":"backend.cloud.api_key_env","type":"string","section":"Cloud","label":"api_key_env","description":"Remote provider api_key_env","value":config.backend.cloud.api_key_env,"file_value":null,"compiled":true,"restart_required":true},
+            {"key":"backend.cloud.api_key_file","type":"string","section":"Cloud","label":"api_key_file","description":"Private API key file","value":config.backend.cloud.api_key_file,"file_value":null,"compiled":true,"restart_required":true},
             {"key":"backend.cloud.model","type":"string","section":"Cloud","label":"model","description":"Remote provider model","value":config.backend.cloud.model,"file_value":null,"compiled":true,"restart_required":true},
             {"key":"backend.cloud.voice","type":"string","section":"Cloud","label":"voice","description":"Remote provider voice","value":config.backend.cloud.voice,"file_value":null,"compiled":true,"restart_required":true},
             {"key":"backend.cloud.timeout_seconds","type":"integer","section":"Cloud","label":"timeout_seconds","description":"Remote provider timeout_seconds","value":config.backend.cloud.timeout_seconds,"file_value":null,"compiled":true,"restart_required":true},
@@ -2104,6 +2126,7 @@ fn setup(command: Option<SetupCommand>, config_path: &Path, paths: &AppPaths) ->
         return app_setup::print_checks(config_path, paths, false);
     };
     match command {
+        SetupCommand::Cloud { options } => omaspeak::cloud_cli::configure(options, config_path),
         SetupCommand::Audio {
             device,
             apply,

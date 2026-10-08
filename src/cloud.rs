@@ -382,3 +382,117 @@ fn decode_pcm(
 #[cfg(test)]
 #[path = "../tests/unit/cloud.rs"]
 mod tests;
+
+#[derive(Clone, serde::Serialize)]
+pub struct ProviderVoice {
+    pub id: String,
+    pub name: String,
+}
+/// Account inventory from the providers with a documented voice-list API.
+/// Bound pagination and reject malformed/repeated cursors rather than following URLs.
+pub fn discover_voices(config: &Config) -> Result<Vec<ProviderVoice>> {
+    let kind = config.backend.kind.as_str();
+    ensure!(
+        matches!(kind, "elevenlabs" | "cartesia"),
+        "account voice discovery supports ElevenLabs and Cartesia; other providers use configured preset IDs"
+    );
+    let (base, env, _, _) = defaults(kind)?;
+    let c = &config.backend.cloud;
+    let base = cloud_http::base_url(c, base)?;
+    let key = cloud_http::credential(c, env, true)?.unwrap();
+    let agent = cloud_http::agent(c);
+    let mut voices = std::collections::BTreeMap::new();
+    let mut cursors = std::collections::BTreeSet::new();
+    let mut cursor = None::<String>;
+    for _ in 0..20 {
+        let mut url = base.clone();
+        let prefix = url.path().trim_end_matches('/');
+        url.set_path(&format!(
+            "{prefix}{}",
+            if kind == "elevenlabs" {
+                "/v2/voices"
+            } else {
+                "/voices"
+            }
+        ));
+        url.query_pairs_mut().append_pair(
+            if kind == "elevenlabs" {
+                "page_size"
+            } else {
+                "limit"
+            },
+            "100",
+        );
+        if let Some(cursor) = &cursor {
+            url.query_pairs_mut().append_pair(
+                if kind == "elevenlabs" {
+                    "next_page_token"
+                } else {
+                    "starting_after"
+                },
+                cursor,
+            );
+        }
+        let request = agent.get(url.as_str()).set("Accept", "application/json");
+        let request = if kind == "elevenlabs" {
+            request.set("xi-api-key", &key)
+        } else {
+            request
+                .set("Authorization", &format!("Bearer {key}"))
+                .set("Cartesia-Version", "2026-08-14")
+        };
+        let data = cloud_http::read_json(cloud_http::response(request.call())?)?;
+        let entries = data
+            .get(if kind == "elevenlabs" {
+                "voices"
+            } else {
+                "data"
+            })
+            .and_then(|v| v.as_array())
+            .ok_or_else(|| anyhow::anyhow!("cloud voice response lacks inventory"))?;
+        for entry in entries {
+            let id = entry
+                .get(if kind == "elevenlabs" {
+                    "voice_id"
+                } else {
+                    "id"
+                })
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| anyhow::anyhow!("cloud voice lacks ID"))?;
+            let name = entry
+                .get("name")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| anyhow::anyhow!("cloud voice lacks name"))?;
+            ensure!(
+                !id.trim().is_empty()
+                    && !name.trim().is_empty()
+                    && id.len() <= 256
+                    && name.len() <= 256
+                    && !id.contains(['\r', '\n', '\0']),
+                "invalid cloud voice inventory"
+            );
+            voices.insert(id.to_owned(), name.to_owned());
+            ensure!(voices.len() <= 2000, "cloud voice inventory exceeds limit");
+        }
+        if data.get("has_more").and_then(|v| v.as_bool()) != Some(true) {
+            return Ok(voices
+                .into_iter()
+                .map(|(id, name)| ProviderVoice { id, name })
+                .collect());
+        }
+        let next = data
+            .get(if kind == "elevenlabs" {
+                "next_page_token"
+            } else {
+                "next_page"
+            })
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("cloud voice pagination lacks cursor"))?;
+        ensure!(
+            !next.is_empty() && next.len() <= 1024 && cursors.insert(next.to_owned()),
+            "invalid or repeated cloud voice cursor"
+        );
+        cursor = Some(next.to_owned());
+    }
+    bail!("cloud voice pagination exceeds 20 pages")
+}
