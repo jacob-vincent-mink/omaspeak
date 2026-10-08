@@ -18,6 +18,9 @@ python3 benchmarks/paradee/qualify.py \
 python3 -m unittest discover -s benchmarks/paradee -p 'test_*.py'
 ```
 
+The runner uses only Python 3.10+ standard library modules and reads configuration
+through the native CLI's `config get --json`, including compiled defaults.
+
 Use the CPU configuration in `docs/PARADEE.md`, with `model.directory` set to
 an absolute installed model directory. The runner checks official model and
 vocabulary SHA-256 and that `--espeak` matches the configured frontend. It records

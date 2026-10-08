@@ -11,7 +11,6 @@ import subprocess
 import shutil
 import sys
 import time
-import tomllib
 import wave
 
 
@@ -46,11 +45,13 @@ def main():
     parser.add_argument('--espeak', type=Path, required=True)
     parser.add_argument('--timeout', type=float, default=120)
     args = parser.parse_args()
-    config = tomllib.loads(args.config.read_text())
-    if (config['backend']['kind'], config['backend']['runtime'], config['backend']['device']) != ('paradee-openvino', 'openvino', 'cpu'):
-        parser.error('requires a Paradee OpenVINO CPU config; never qualify a different provider silently')
     if args.timeout <= 0:
         parser.error('timeout must be positive')
+    config = json.loads(subprocess.check_output(
+        [str(args.binary.resolve()), '--config', str(args.config.resolve()), 'config', 'get', '--json'],
+        text=True, timeout=args.timeout))
+    if (config['backend']['kind'], config['backend']['runtime'], config['backend']['device']) != ('paradee-openvino', 'openvino', 'cpu'):
+        parser.error('requires a Paradee OpenVINO CPU config; never qualify a different provider silently')
     configured_frontend = config['backend'].get('options', {}).get('g2p_executable') or shutil.which('espeak-ng')
     if not configured_frontend or Path(configured_frontend).resolve() != args.espeak.resolve():
         parser.error('--espeak must match the configured native frontend')
