@@ -1,4 +1,7 @@
-# Omaspeak 0.1.2-rc.2
+# Omaspeak 0.1.2
+
+Promotes the approved `0.1.2-rc.2` candidate to stable. Application
+implementation is unchanged.
 
 Adds guided cloud setup, private API-key file handoff between CLI and daemon,
 ElevenLabs/Cartesia account voice discovery and alias selection, and an explicit
